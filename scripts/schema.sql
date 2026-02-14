@@ -35,10 +35,14 @@ CREATE TABLE streaming_services (
     name            TEXT NOT NULL UNIQUE,                 -- 'netflix', 'hulu', etc.
     display_name    TEXT NOT NULL,                        -- 'Netflix', 'Hulu', etc.
     signup_url      TEXT NOT NULL,
-    cancel_url      TEXT,                                 -- direct link to cancel page if known
     monthly_price_cents INT NOT NULL,                     -- ad-free tier in cents (e.g., 1799)
     plan_name       TEXT NOT NULL DEFAULT 'Standard',     -- which plan we sign up for
     gift_card_supported BOOLEAN DEFAULT FALSE,
+    gift_card_provider TEXT CHECK (gift_card_provider IN ('bitrefill', 'giftly', 'tbc')),
+    gift_card_denominations_cents INT[],
+    gift_card_product_id TEXT,
+    lapse_calculation TEXT NOT NULL DEFAULT 'proportional'
+                    CHECK (lapse_calculation IN ('proportional', 'calendar_month')),
     supported       BOOLEAN DEFAULT TRUE,                 -- can we automate this service?
     logo_url        TEXT,
     notes           TEXT,                                 -- e.g., "has reCAPTCHA on signup"
@@ -46,15 +50,15 @@ CREATE TABLE streaming_services (
 );
 
 -- Seed data
-INSERT INTO streaming_services (name, display_name, signup_url, monthly_price_cents, plan_name, gift_card_supported, notes) VALUES
-('netflix',     'Netflix',         'https://www.netflix.com/signup',       1799, 'Standard',      TRUE,  'reCAPTCHA on signup page — #1 risk'),
-('hulu',        'Hulu',            'https://www.hulu.com/welcome',         1899, 'No Ads',        TRUE,  NULL),
-('disney_plus', 'Disney+',         'https://www.disneyplus.com/sign-up',   1699, 'No Ads',        TRUE,  'Gift cards work well here'),
-('max',         'Max',             'https://www.max.com/sign-up',          1699, 'Ad-Free',       FALSE, 'No gift card available'),
-('paramount',   'Paramount+',      'https://www.paramountplus.com/signup/', 1399, 'No Ads',        FALSE, 'Gift card min $25, awkward fit'),
-('peacock',     'Peacock',         'https://www.peacocktv.com/plans',      1399, 'Premium',       FALSE, 'No gift card available'),
-('apple_tv',    'Apple TV+',       'https://tv.apple.com/',                 999, 'Standard',      TRUE,  'Apple gift cards, custom amounts'),
-('prime_video', 'Prime Video',     'https://www.amazon.com/gp/video/offers', 899, 'Standard',     TRUE,  'Amazon gift cards');
+INSERT INTO streaming_services (name, display_name, signup_url, monthly_price_cents, plan_name, gift_card_supported, gift_card_provider, notes) VALUES
+('netflix',     'Netflix',         'https://www.netflix.com/signup',       1799, 'Standard',      TRUE,  'bitrefill', 'reCAPTCHA on signup page — #1 risk'),
+('hulu',        'Hulu',            'https://www.hulu.com/welcome',         1899, 'No Ads',        TRUE,  'bitrefill', NULL),
+('disney_plus', 'Disney+',         'https://www.disneyplus.com/sign-up',   1699, 'No Ads',        TRUE,  'bitrefill', 'Gift cards work well here'),
+('max',         'Max',             'https://www.max.com/sign-up',          1699, 'Ad-Free',       TRUE,  'giftly',    NULL),
+('paramount',   'Paramount+',      'https://www.paramountplus.com/signup/', 1399, 'No Ads',        TRUE,  'giftly',    'Gift card min $25, awkward fit'),
+('peacock',     'Peacock',         'https://www.peacocktv.com/plans',      1399, 'Premium',       TRUE,  'giftly',    NULL),
+('apple_tv',    'Apple TV+',       'https://tv.apple.com/',                 999, 'Standard',      TRUE,  'bitrefill', 'Apple gift cards, custom amounts'),
+('prime_video', 'Prime Video',     'https://www.amazon.com/gp/video/offers', 899, 'Standard',     TRUE,  'bitrefill', 'Amazon gift cards');
 
 -- ============================================================
 -- STREAMING CREDENTIALS (encrypted, destroyed on membership end)
@@ -70,10 +74,6 @@ CREATE TABLE streaming_credentials (
     service_id      UUID NOT NULL REFERENCES streaming_services(id),
     email_enc       BYTEA NOT NULL,                      -- 12-byte IV || ciphertext || 16-byte tag
     password_enc    BYTEA NOT NULL,                      -- 12-byte IV || ciphertext || 16-byte tag
-    card_number_enc BYTEA NOT NULL,                      -- 12-byte IV || ciphertext || 16-byte tag
-    card_expiry_enc BYTEA NOT NULL,                      -- 12-byte IV || ciphertext || 16-byte tag
-    card_cvv_enc    BYTEA NOT NULL,                      -- 12-byte IV || ciphertext || 16-byte tag
-    billing_zip_enc BYTEA,                               -- 12-byte IV || ciphertext || 16-byte tag (optional)
     created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     UNIQUE(user_id, service_id)
 );
@@ -88,6 +88,7 @@ CREATE TABLE rotation_queue (
     service_id      UUID NOT NULL REFERENCES streaming_services(id),
     position        INT NOT NULL,                        -- order in queue (1 = next up)
     never_rotate    BOOLEAN DEFAULT FALSE,               -- user wants this service always on
+    extend_current  BOOLEAN DEFAULT FALSE,
     created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     UNIQUE(user_id, service_id),
     UNIQUE(user_id, position)
@@ -103,11 +104,11 @@ CREATE TABLE subscriptions (
     service_id      UUID NOT NULL REFERENCES streaming_services(id),
     status          TEXT NOT NULL DEFAULT 'queued'
                     CHECK (status IN ('queued', 'signup_scheduled', 'active',
-                                      'cancel_scheduled', 'cancelled', 'cancel_failed')),
+                                      'lapsing', 'lapsed', 'signup_failed')),
     signed_up_at    TIMESTAMPTZ,
-    cancel_scheduled_at TIMESTAMPTZ,                     -- when we plan to cancel
-    cancel_confirmed_at TIMESTAMPTZ,                     -- when cancel was verified
-    billing_cycle_end   TIMESTAMPTZ,                     -- when the paid period ends
+    gift_card_amount_cents INT,
+    estimated_lapse_at TIMESTAMPTZ,
+    actual_lapsed_at TIMESTAMPTZ,
     plan_tier       TEXT,                                 -- 'Standard', 'No Ads', etc.
     created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -139,8 +140,8 @@ CREATE TABLE agent_jobs (
     user_id         UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     service_id      UUID NOT NULL REFERENCES streaming_services(id),
     subscription_id UUID REFERENCES subscriptions(id),
-    flow_type       TEXT NOT NULL                         -- 'signup' | 'cancel'
-                    CHECK (flow_type IN ('signup', 'cancel')),
+    flow_type       TEXT NOT NULL                         -- 'signup' | 'gift_card_purchase_giftly'
+                    CHECK (flow_type IN ('signup', 'gift_card_purchase_giftly')),
     status          TEXT NOT NULL DEFAULT 'pending'
                     CHECK (status IN ('pending', 'claimed', 'in_progress',
                                       'completed', 'failed', 'dead_letter')),
@@ -218,7 +219,7 @@ CREATE TABLE referral_codes (
 CREATE TABLE playbooks (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     service_id      UUID NOT NULL REFERENCES streaming_services(id),
-    flow_type       TEXT NOT NULL,                        -- 'signup' | 'cancel'
+    flow_type       TEXT NOT NULL,                        -- 'signup' | 'gift_card_redeem'
     version         INT NOT NULL DEFAULT 1,
     steps           JSONB NOT NULL,                      -- array of step objects
     dom_hashes      JSONB,                               -- expected hashes per step
@@ -262,6 +263,72 @@ CREATE TABLE operator_alerts (
 );
 
 -- ============================================================
+-- SERVICE CREDITS
+-- ============================================================
+
+CREATE TABLE service_credits (
+    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id         UUID NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
+    credit_sats     BIGINT NOT NULL DEFAULT 0 CHECK (credit_sats >= 0),
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- ============================================================
+-- CREDIT TRANSACTIONS
+-- ============================================================
+
+CREATE TABLE credit_transactions (
+    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id         UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    type            TEXT NOT NULL
+                    CHECK (type IN ('prepayment', 'gift_card_purchase', 'membership_fee', 'refund')),
+    amount_sats     BIGINT NOT NULL,
+    balance_after_sats BIGINT NOT NULL,
+    reference_id    UUID,
+    description     TEXT,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- ============================================================
+-- BTC PREPAYMENTS
+-- ============================================================
+
+CREATE TABLE btc_prepayments (
+    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id         UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    btcpay_invoice_id TEXT NOT NULL UNIQUE,
+    requested_amount_sats BIGINT,
+    received_amount_sats BIGINT,
+    status          TEXT NOT NULL DEFAULT 'pending'
+                    CHECK (status IN ('pending', 'paid', 'expired')),
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- ============================================================
+-- GIFT CARD PURCHASES
+-- ============================================================
+
+CREATE TABLE gift_card_purchases (
+    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id         UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    service_id      UUID NOT NULL REFERENCES streaming_services(id),
+    subscription_id UUID REFERENCES subscriptions(id),
+    provider        TEXT NOT NULL
+                    CHECK (provider IN ('bitrefill', 'giftly', 'tbc')),
+    amount_cents    INT NOT NULL,
+    cost_sats       BIGINT NOT NULL,
+    gift_card_code_enc BYTEA,
+    external_order_id TEXT,
+    status          TEXT NOT NULL DEFAULT 'pending'
+                    CHECK (status IN ('pending', 'purchased', 'redeemed', 'failed', 'refunded')),
+    purchased_at    TIMESTAMPTZ,
+    redeemed_at     TIMESTAMPTZ,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- ============================================================
 -- INDEXES
 -- ============================================================
 
@@ -275,3 +342,9 @@ CREATE INDEX idx_action_logs_created ON action_logs(created_at);
 CREATE INDEX idx_referral_codes_code ON referral_codes(code);
 CREATE INDEX idx_waitlist_email ON waitlist(email);
 CREATE INDEX idx_operator_alerts_unacked ON operator_alerts(acknowledged, created_at) WHERE acknowledged = FALSE;
+CREATE INDEX idx_credit_transactions_user ON credit_transactions(user_id, created_at);
+CREATE INDEX idx_btc_prepayments_user ON btc_prepayments(user_id);
+CREATE INDEX idx_btc_prepayments_invoice ON btc_prepayments(btcpay_invoice_id);
+CREATE INDEX idx_gift_card_purchases_user ON gift_card_purchases(user_id);
+CREATE INDEX idx_gift_card_purchases_status ON gift_card_purchases(status) WHERE status IN ('pending', 'purchased');
+CREATE INDEX idx_subscriptions_lapse ON subscriptions(estimated_lapse_at) WHERE status = 'lapsing';
