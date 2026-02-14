@@ -1,0 +1,123 @@
+{
+  "service": "netflix",
+  "flow": "signup",
+  "version": 1,
+  "last_validated": null,
+  "notes": "Netflix has reCAPTCHA on signup. This playbook is a STARTING POINT — it WILL need adjustment after real testing. Step order and selectors will change.",
+  "steps": [
+    {
+      "step": 1,
+      "action": "navigate",
+      "url": "https://www.netflix.com/signup",
+      "expected_title_contains": "Netflix",
+      "checkpoint": false,
+      "wait_after_sec": [2, 5]
+    },
+    {
+      "step": 2,
+      "action": "click",
+      "target_description": "Get Started or Next button",
+      "fallback": "infer",
+      "checkpoint": false,
+      "wait_after_sec": [1, 3]
+    },
+    {
+      "step": 3,
+      "action": "select_plan",
+      "target_description": "Standard plan option (ad-free)",
+      "checkpoint": true,
+      "checkpoint_prompt": "Is this a Netflix plan selection page showing Standard and Premium options? Which plan is highlighted?",
+      "wait_after_sec": [2, 4]
+    },
+    {
+      "step": 4,
+      "action": "click",
+      "target_description": "Continue or Next button after plan selection",
+      "checkpoint": false,
+      "wait_after_sec": [1, 3]
+    },
+    {
+      "step": 5,
+      "action": "type_text",
+      "target_description": "Email input field",
+      "value": "{user_email}",
+      "checkpoint": false,
+      "wait_after_sec": [0.5, 1.5]
+    },
+    {
+      "step": 6,
+      "action": "type_text",
+      "target_description": "Password input field",
+      "value": "{user_password}",
+      "checkpoint": false,
+      "wait_after_sec": [0.5, 1.5]
+    },
+    {
+      "step": 7,
+      "action": "click",
+      "target_description": "Continue or Next button after email/password",
+      "checkpoint": true,
+      "checkpoint_prompt": "Have we successfully entered email and password? Is there a Continue/Next button visible?",
+      "wait_after_sec": [2, 4]
+    },
+    {
+      "step": 8,
+      "action": "select_payment_method",
+      "target_description": "Credit or Debit Card payment option",
+      "checkpoint": false,
+      "wait_after_sec": [1, 3]
+    },
+    {
+      "step": 9,
+      "action": "type_text",
+      "target_description": "Card number input field",
+      "value": "{card_number}",
+      "sensitive": true,
+      "checkpoint": false,
+      "wait_after_sec": [0.5, 1.5]
+    },
+    {
+      "step": 10,
+      "action": "type_text",
+      "target_description": "Expiration date input field",
+      "value": "{card_expiry}",
+      "sensitive": true,
+      "checkpoint": false,
+      "wait_after_sec": [0.5, 1]
+    },
+    {
+      "step": 11,
+      "action": "type_text",
+      "target_description": "CVV/Security code input field",
+      "value": "{card_cvv}",
+      "sensitive": true,
+      "checkpoint": false,
+      "wait_after_sec": [0.5, 1]
+    },
+    {
+      "step": 12,
+      "action": "type_text",
+      "target_description": "Billing zip code input field (if present)",
+      "value": "{billing_zip}",
+      "optional": true,
+      "checkpoint": false,
+      "wait_after_sec": [0.5, 1]
+    },
+    {
+      "step": 13,
+      "action": "click",
+      "target_description": "Start Membership or Submit button",
+      "checkpoint": true,
+      "checkpoint_prompt": "Is this the final confirmation page before submitting payment? Are all fields filled?",
+      "wait_after_sec": [3, 6]
+    },
+    {
+      "step": 14,
+      "action": "verify_success",
+      "target_description": "Welcome screen, confirmation page, or 'Choose your profile' page",
+      "checkpoint": true,
+      "checkpoint_prompt": "Has the signup been confirmed? Do I see a welcome page, profile selection, or confirmation message?",
+      "wait_after_sec": [2, 4]
+    }
+  ]
+}

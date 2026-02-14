@@ -1,0 +1,11 @@
+# Orchestrator requirements (runs on Mac Studio)
+fastapi>=0.104.0
+uvicorn>=0.24.0
+httpx>=0.25.0
+Pillow>=10.0.0
+python-dotenv>=1.0.0
+# llama-cpp-python or mlx-lm will be needed for inference
+# Install separately based on your Metal/GPU setup:
+# pip install llama-cpp-python --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/metal
+# OR
+# pip install mlx-lm

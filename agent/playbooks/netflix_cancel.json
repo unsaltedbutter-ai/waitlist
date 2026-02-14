@@ -1,0 +1,74 @@
+{
+  "service": "netflix",
+  "flow": "cancel",
+  "version": 1,
+  "last_validated": null,
+  "notes": "Cancel flow must handle retention offers (Netflix often shows 'Are you sure?' with offers to downgrade). Agent must click through all of these. STARTING POINT — adjust after real testing.",
+  "steps": [
+    {
+      "step": 1,
+      "action": "navigate",
+      "url": "https://www.netflix.com/login",
+      "expected_title_contains": "Netflix",
+      "checkpoint": false,
+      "wait_after_sec": [2, 5]
+    },
+    {
+      "step": 2,
+      "action": "type_text",
+      "target_description": "Email or phone input field",
+      "value": "{user_email}",
+      "checkpoint": false,
+      "wait_after_sec": [0.5, 1.5]
+    },
+    {
+      "step": 3,
+      "action": "type_text",
+      "target_description": "Password input field",
+      "value": "{user_password}",
+      "checkpoint": false,
+      "wait_after_sec": [0.5, 1.5]
+    },
+    {
+      "step": 4,
+      "action": "click",
+      "target_description": "Sign In button",
+      "checkpoint": true,
+      "checkpoint_prompt": "Am I logged into Netflix? Do I see profiles or the main browse page?",
+      "wait_after_sec": [3, 6]
+    },
+    {
+      "step": 5,
+      "action": "navigate",
+      "url": "https://www.netflix.com/cancelplan",
+      "checkpoint": false,
+      "wait_after_sec": [2, 4]
+    },
+    {
+      "step": 6,
+      "action": "handle_retention",
+      "target_description": "Click 'Continue Cancellation' or 'Cancel Membership' — ignore all retention offers, downgrades, or 'Are you sure?' prompts",
+      "checkpoint": true,
+      "checkpoint_prompt": "Is this a cancellation confirmation page or a retention offer? If retention offer, I need to find and click the cancel/continue button. If confirmation, proceed.",
+      "may_repeat": true,
+      "max_repeats": 5,
+      "wait_after_sec": [2, 4]
+    },
+    {
+      "step": 7,
+      "action": "click",
+      "target_description": "Final 'Finish Cancellation' or 'Complete Cancellation' button",
+      "checkpoint": true,
+      "checkpoint_prompt": "Is the cancellation confirmed? Do I see a message like 'Your cancellation will take effect at the end of your billing period'?",
+      "wait_after_sec": [3, 6]
+    },
+    {
+      "step": 8,
+      "action": "verify_success",
+      "target_description": "Cancellation confirmation message showing end date",
+      "checkpoint": true,
+      "checkpoint_prompt": "Has the cancellation been confirmed? Do I see a message confirming the account will be cancelled at the end of the billing period?",
+      "wait_after_sec": [2, 4]
+    }
+  ]
+}

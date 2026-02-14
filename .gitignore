@@ -1,0 +1,50 @@
+# Dependencies
+node_modules/
+web/node_modules/
+agent/venv/
+orchestrator/venv/
+__pycache__/
+*.pyc
+
+# Environment files (contain secrets)
+.env
+.env.local
+.env.production
+web/.env.local
+agent/.env
+orchestrator/.env
+
+# Encryption key (NEVER commit)
+*.keyfile
+encryption.key
+
+# Chrome temp profiles
+/tmp/ub-chrome-*
+
+# Screenshots (may contain PII)
+agent/screenshots/
+*.png
+
+# Build artifacts
+web/.next/
+web/out/
+dist/
+build/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Database dumps
+*.sql.bak
+*.dump
+
+# Logs
+*.log
+logs/
