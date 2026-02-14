@@ -45,3 +45,8 @@ export async function satsToUsdCents(sats: number): Promise<number> {
   const rate = await getSatsPerUsdCent();
   return Math.round(sats / rate);
 }
+
+/** Clear cached rate (for testing). */
+export function clearPriceCache(): void {
+  cachedRate = null;
+}

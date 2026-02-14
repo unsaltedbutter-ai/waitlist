@@ -13,15 +13,17 @@ export async function POST(req: NextRequest) {
 
   const rawBody = await req.text();
 
-  if (sigHeader) {
-    const expectedSig = "sha256=" + crypto
-      .createHmac("sha256", webhookSecret)
-      .update(rawBody)
-      .digest("hex");
+  if (!sigHeader) {
+    return NextResponse.json({ error: "Missing signature" }, { status: 401 });
+  }
 
-    if (sigHeader !== expectedSig) {
-      return NextResponse.json({ error: "Invalid signature" }, { status: 401 });
-    }
+  const expectedSig = "sha256=" + crypto
+    .createHmac("sha256", webhookSecret)
+    .update(rawBody)
+    .digest("hex");
+
+  if (sigHeader !== expectedSig) {
+    return NextResponse.json({ error: "Invalid signature" }, { status: 401 });
   }
 
   const event = JSON.parse(rawBody);
