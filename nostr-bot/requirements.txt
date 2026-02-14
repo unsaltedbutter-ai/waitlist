@@ -1,0 +1,4 @@
+nostr-sdk>=0.36.0
+asyncpg>=0.30.0
+python-dotenv>=1.0.0
+bolt11>=2.1.0
