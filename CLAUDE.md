@@ -14,7 +14,7 @@ You are a Staff-Level Software Architect who loves beautiful software design and
 
 ## What This Project Is
 
-UnsaltedButter is a streaming subscription rotation service. Users pay $7.78/mo or $6.15/month if paid annually (BTC/Lightning) and we automate subscribing/cancelling streaming services one at a time so they never pay for multiple simultaneously. AI-driven browser automation on real Chrome — indistinguishable from a human.
+UnsaltedButter is a streaming subscription rotation service. Two plans: Solo ($2.99/mo, $1.99 annual — 1 rotation) and Duo ($4.99/mo, $3.99 annual — 2 simultaneous). BTC/Lightning only. We automate subscribing/cancelling streaming services using gift cards so users never pay for multiple simultaneously. AI-driven browser automation on real Chrome — indistinguishable from a human.
 
 ## Read These Files First
 
@@ -54,7 +54,7 @@ unsaltedbutter.ai/
 
 ## Critical Rules (see CONSTRAINTS.md for full list)
 
-- NEVER log, store plaintext, screenshot, or send to inference: credit card numbers or passwords
+- NEVER log, store plaintext, screenshot, or send to inference: passwords or gift card codes
 - NEVER alert users to agent failures (except cancel failures → email user)
 - NEVER start a new subscription if previous cancel isn't confirmed
 - All credentials destroyed on membership end (CASCADE delete, nothing soft-deleted)
