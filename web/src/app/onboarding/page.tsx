@@ -167,7 +167,16 @@ export default function OnboardingPage() {
     }[]
   >([]);
   const [signupAnswers, setSignupAnswers] = useState<Record<string, string>>(
-    {}
+    () => {
+      const d = new Date();
+      const minAge = 20;
+      const maxAge = 50;
+      const age = minAge + Math.floor(Math.random() * (maxAge - minAge));
+      d.setFullYear(d.getFullYear() - age);
+      d.setMonth(Math.floor(Math.random() * 12));
+      d.setDate(1 + Math.floor(Math.random() * 28));
+      return { birthdate: d.toISOString().split("T")[0] };
+    }
   );
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
   const [useSameCreds, setUseSameCreds] = useState(false);
