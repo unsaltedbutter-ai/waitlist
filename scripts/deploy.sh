@@ -195,11 +195,19 @@ ${SSH_CMD} bash << 'REMOTE_NGINX'
 set -euo pipefail
 
 REMOTE_DIR="/home/butter/unsaltedbutter"
+NGINX_CONF="/etc/nginx/sites-available/unsaltedbutter"
 
-# Install nginx config
-sudo cp "${REMOTE_DIR}/scripts/nginx/unsaltedbutter.conf" /etc/nginx/sites-available/unsaltedbutter
-sudo ln -sf /etc/nginx/sites-available/unsaltedbutter /etc/nginx/sites-enabled/unsaltedbutter
-sudo rm -f /etc/nginx/sites-enabled/default
+# Only install nginx config on first deploy (--init) or if certbot hasn't
+# touched it yet. Certbot adds "managed by Certbot" comments — if those
+# exist, the config has SSL blocks we don't want to overwrite.
+if [[ -f "${NGINX_CONF}" ]] && grep -q "managed by Certbot" "${NGINX_CONF}"; then
+    echo "nginx config has SSL (certbot) — skipping overwrite"
+else
+    sudo cp "${REMOTE_DIR}/scripts/nginx/unsaltedbutter.conf" "${NGINX_CONF}"
+    sudo ln -sf "${NGINX_CONF}" /etc/nginx/sites-enabled/unsaltedbutter
+    sudo rm -f /etc/nginx/sites-enabled/default
+    echo "nginx config installed"
+fi
 
 # Test and reload
 sudo nginx -t
