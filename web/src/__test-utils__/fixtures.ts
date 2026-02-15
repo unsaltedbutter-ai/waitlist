@@ -23,7 +23,7 @@ export function createTestKeyFileWithSize(size: number): string {
 }
 
 /** Build a pg-shaped QueryResult from rows. */
-export function mockQueryResult<T>(rows: T[]): QueryResult<T> {
+export function mockQueryResult<T extends Record<string, unknown>>(rows: T[]): QueryResult<T> {
   return {
     rows,
     rowCount: rows.length,

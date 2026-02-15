@@ -79,7 +79,7 @@ export default function LoginPage() {
       }
 
       localStorage.setItem(TOKEN_KEY, data.token);
-      router.replace("/dashboard");
+      router.replace(emailMode === "signup" ? "/onboarding" : "/dashboard");
     } catch {
       setError("Connection failed. Try again.");
       setLoading(false);
@@ -128,8 +128,11 @@ export default function LoginPage() {
         {tab === "nostr" && (
           <div className="space-y-6">
             <p className="text-sm text-muted">
-              Sign in with a Nostr browser extension (nos2x, Alby, etc.).
+              Use a Nostr browser extension (nos2x, Alby, etc.).
               Your npub is your identity — no email required.
+            </p>
+            <p className="text-xs text-muted/60">
+              No account? One will be created automatically.
             </p>
             <button
               type="button"
@@ -137,7 +140,7 @@ export default function LoginPage() {
               disabled={loading}
               className="w-full py-3 px-4 bg-accent text-background font-semibold rounded hover:bg-accent/90 transition-colors disabled:opacity-50"
             >
-              {loading ? "Signing..." : "Sign in with Nostr"}
+              {loading ? "Signing..." : "Continue with Nostr"}
             </button>
           </div>
         )}

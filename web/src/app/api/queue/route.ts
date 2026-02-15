@@ -42,26 +42,34 @@ export const PUT = withAuth(async (req: NextRequest, { userId }) => {
     );
   }
 
-  // Verify all serviceIds belong to this user's queue
+  // Check existing queue
   const existing = await query(
     "SELECT service_id FROM rotation_queue WHERE user_id = $1",
     [userId]
   );
   const existingIds = new Set(existing.rows.map((r) => r.service_id));
 
-  for (const id of order) {
-    if (!existingIds.has(id)) {
-      return NextResponse.json(
-        { error: `Service ${id} not in your queue` },
-        { status: 400 }
-      );
-    }
-  }
-  if (order.length !== existingIds.size) {
-    return NextResponse.json(
-      { error: "Order must include all services in queue" },
-      { status: 400 }
+  // Reorder if the submitted set matches existing exactly
+  const isReorder =
+    existingIds.size > 0 &&
+    order.length === existingIds.size &&
+    order.every((id) => existingIds.has(id));
+
+  if (!isReorder) {
+    // Creation or replacement: validate credentials exist for each service
+    const creds = await query(
+      "SELECT service_id FROM streaming_credentials WHERE user_id = $1",
+      [userId]
     );
+    const credIds = new Set(creds.rows.map((r) => r.service_id));
+    for (const id of order) {
+      if (!credIds.has(id)) {
+        return NextResponse.json(
+          { error: `No credentials for service ${id}` },
+          { status: 400 }
+        );
+      }
+    }
   }
 
   await transaction(async (txQuery) => {

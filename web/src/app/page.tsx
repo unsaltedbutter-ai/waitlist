@@ -1,24 +1,14 @@
 "use client";
 
 import { useState } from "react";
-import { SERVICES } from "@/lib/services";
 
 export default function WaitlistPage() {
-  const [contactType, setContactType] = useState<"email" | "npub">("email");
+  const [contactType, setContactType] = useState<"email" | "npub">("npub");
   const [contactValue, setContactValue] = useState("");
-  const [selectedServices, setSelectedServices] = useState<string[]>([]);
-  const [monthlySpend, setMonthlySpend] = useState("");
-  const [referralSource, setReferralSource] = useState("");
   const [status, setStatus] = useState<
     "idle" | "submitting" | "success" | "error"
   >("idle");
   const [errorMsg, setErrorMsg] = useState("");
-
-  function toggleService(id: string) {
-    setSelectedServices((prev) =>
-      prev.includes(id) ? prev.filter((s) => s !== id) : [...prev, id]
-    );
-  }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -32,9 +22,7 @@ export default function WaitlistPage() {
         body: JSON.stringify({
           contactType,
           contactValue,
-          currentServices: selectedServices,
-          monthlySpend: monthlySpend ? parseFloat(monthlySpend) : undefined,
-          referralSource: referralSource || undefined,
+          currentServices: [],
         }),
       });
 
@@ -58,10 +46,11 @@ export default function WaitlistPage() {
       <main className="min-h-screen flex items-center justify-center px-4">
         <div className="max-w-lg w-full text-center">
           <h1 className="text-3xl font-bold mb-4 text-foreground">
-            You&apos;re in.
+            You&apos;re on the list.
           </h1>
           <p className="text-muted text-lg">
-            First rule: you don&apos;t talk about the waitlist.
+            The first rule about UnsaltedButter: you do not talk about
+            UnsaltedButter.
             <br />
             We&apos;ll reach out when it&apos;s your turn.
           </p>
@@ -76,11 +65,10 @@ export default function WaitlistPage() {
         {/* Header */}
         <div className="mb-12 text-center">
           <h1 className="text-4xl font-bold tracking-tight mb-4 text-foreground">
-            Stop paying for streaming you&apos;re not watching.
+            Not watching? Stop paying.
           </h1>
           <p className="text-lg text-muted leading-relaxed">
-            One subscription at a time, rotated automatically. You watch
-            what&apos;s on, we handle the rest. $9.99/mo&nbsp;in&nbsp;Bitcoin.
+            Let us help you manage your streaming costs.
           </p>
         </div>
 
@@ -94,17 +82,6 @@ export default function WaitlistPage() {
             <div className="flex gap-2">
               <button
                 type="button"
-                onClick={() => setContactType("email")}
-                className={`flex-1 py-2 px-4 rounded text-sm font-medium border transition-colors ${
-                  contactType === "email"
-                    ? "bg-accent text-background border-accent"
-                    : "bg-surface text-muted border-border hover:border-muted"
-                }`}
-              >
-                Email
-              </button>
-              <button
-                type="button"
                 onClick={() => setContactType("npub")}
                 className={`flex-1 py-2 px-4 rounded text-sm font-medium border transition-colors ${
                   contactType === "npub"
@@ -113,6 +90,17 @@ export default function WaitlistPage() {
                 }`}
               >
                 Nostr npub
+              </button>
+              <button
+                type="button"
+                onClick={() => setContactType("email")}
+                className={`flex-1 py-2 px-4 rounded text-sm font-medium border transition-colors ${
+                  contactType === "email"
+                    ? "bg-accent text-background border-accent"
+                    : "bg-surface text-muted border-border hover:border-muted"
+                }`}
+              >
+                Email
               </button>
             </div>
           </div>
@@ -127,62 +115,6 @@ export default function WaitlistPage() {
               placeholder={
                 contactType === "email" ? "you@example.com" : "npub1..."
               }
-              className="w-full py-3 px-4 bg-surface border border-border rounded text-foreground placeholder:text-muted/50 focus:outline-none focus:border-accent"
-            />
-          </div>
-
-          {/* Streaming services */}
-          <div>
-            <label className="block text-sm font-medium text-muted mb-3">
-              What are you paying for right now?
-            </label>
-            <div className="grid grid-cols-2 gap-2">
-              {SERVICES.map((svc) => (
-                <button
-                  key={svc.id}
-                  type="button"
-                  onClick={() => toggleService(svc.id)}
-                  className={`py-2 px-3 rounded text-sm border transition-colors text-left ${
-                    selectedServices.includes(svc.id)
-                      ? "bg-accent/10 text-accent border-accent/40"
-                      : "bg-surface text-muted border-border hover:border-muted"
-                  }`}
-                >
-                  {svc.label}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {/* Monthly spend */}
-          <div>
-            <label className="block text-sm font-medium text-muted mb-2">
-              Monthly streaming spend (optional)
-            </label>
-            <div className="relative">
-              <span className="absolute left-4 top-3 text-muted">$</span>
-              <input
-                type="number"
-                min="0"
-                step="1"
-                value={monthlySpend}
-                onChange={(e) => setMonthlySpend(e.target.value)}
-                placeholder="0"
-                className="w-full py-3 pl-8 pr-4 bg-surface border border-border rounded text-foreground placeholder:text-muted/50 focus:outline-none focus:border-accent"
-              />
-            </div>
-          </div>
-
-          {/* Referral */}
-          <div>
-            <label className="block text-sm font-medium text-muted mb-2">
-              How&apos;d you hear about us? (optional)
-            </label>
-            <input
-              type="text"
-              value={referralSource}
-              onChange={(e) => setReferralSource(e.target.value)}
-              placeholder="A friend, Twitter, etc."
               className="w-full py-3 px-4 bg-surface border border-border rounded text-foreground placeholder:text-muted/50 focus:outline-none focus:border-accent"
             />
           </div>
@@ -204,8 +136,7 @@ export default function WaitlistPage() {
 
         {/* Footer */}
         <p className="text-center text-muted/60 text-xs mt-12">
-          Spots limited. Bitcoin only. No refunds on time wasted paying for five
-          services at once.
+          Invite only. Bitcoin only.
         </p>
       </div>
     </main>

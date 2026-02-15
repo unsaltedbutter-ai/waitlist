@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 
@@ -13,9 +13,14 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "UnsaltedButter — Stop Paying for Streaming You're Not Watching",
+  title: "UnsaltedButter",
   description:
-    "One subscription at a time. Automated rotation. $9.99/mo in Bitcoin. Spots limited.",
+    "Not watching? Stop paying.",
+};
+
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
 };
 
 export default function RootLayout({

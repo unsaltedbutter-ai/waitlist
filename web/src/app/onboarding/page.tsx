@@ -1,9 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth, authFetch } from "@/lib/hooks/use-auth";
-import { SERVICES } from "@/lib/services";
 import {
   DndContext,
   closestCenter,
@@ -23,21 +22,36 @@ import {
 import { CSS } from "@dnd-kit/utilities";
 import QRCode from "react-qr-code";
 
-interface CredentialEntry {
+interface Plan {
+  id: string;
+  service_group: string;
+  display_name: string;
+  monthly_price_cents: number;
+  has_ads: boolean;
+  is_bundle: boolean;
+}
+
+interface ServiceGroup {
+  id: string;
+  label: string;
   serviceId: string;
-  email: string;
-  password: string;
+  plans: Plan[];
 }
 
 interface QueueItem {
   serviceId: string;
-  label: string;
+  groupLabel: string;
+  planName: string;
+  isBundle: boolean;
+  priceCents: number;
 }
+
+const TOTAL_STEPS = 5;
 
 function StepIndicator({ current }: { current: number }) {
   return (
     <div className="flex items-center justify-center gap-3 mb-10">
-      {[1, 2, 3, 4].map((s) => (
+      {Array.from({ length: TOTAL_STEPS }, (_, i) => i + 1).map((s) => (
         <div key={s} className="flex items-center gap-3">
           <div
             className={`w-2.5 h-2.5 rounded-full transition-colors ${
@@ -48,10 +62,12 @@ function StepIndicator({ current }: { current: number }) {
                   : "bg-border"
             }`}
           />
-          {s < 4 && <div className="w-6 h-px bg-border" />}
+          {s < TOTAL_STEPS && <div className="w-6 h-px bg-border" />}
         </div>
       ))}
-      <span className="ml-3 text-sm text-muted">Step {current} of 4</span>
+      <span className="ml-3 text-sm text-muted">
+        Step {current} of {TOTAL_STEPS}
+      </span>
     </div>
   );
 }
@@ -77,6 +93,12 @@ function SortableItem({
     transition,
   };
 
+  const displayLabel = item.isBundle
+    ? item.planName
+    : item.groupLabel === item.planName
+      ? item.groupLabel
+      : `${item.groupLabel} (${item.planName})`;
+
   return (
     <div
       ref={setNodeRef}
@@ -94,7 +116,10 @@ function SortableItem({
         &#8801;
       </button>
       <span className="text-sm font-medium text-muted w-6">{position}</span>
-      <span className="text-foreground font-medium">{item.label}</span>
+      <span className="text-foreground font-medium flex-1">{displayLabel}</span>
+      <span className="text-muted/60 text-sm">
+        ${(item.priceCents / 100).toFixed(2)}/mo
+      </span>
     </div>
   );
 }
@@ -107,17 +132,20 @@ export default function OnboardingPage() {
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
-  // Step 2 state
-  const [credentials, setCredentials] = useState<CredentialEntry[]>([
-    { serviceId: "", email: "", password: "" },
-    { serviceId: "", email: "", password: "" },
-  ]);
+  // Step 3 state (plan selection)
+  const [groups, setGroups] = useState<ServiceGroup[]>([]);
+  const [selectedPlans, setSelectedPlans] = useState<Record<string, string>>(
+    {}
+  );
+  const [creds, setCreds] = useState<
+    Record<string, { email: string; password: string }>
+  >({});
 
-  // Step 3 state
+  // Step 4 state (rotation queue)
   const [queue, setQueue] = useState<QueueItem[]>([]);
 
-  // Step 4 state
-  const [amountUsd, setAmountUsd] = useState("");
+  // Step 5 state (payment)
+  const [membership, setMembership] = useState<"monthly" | "annual">("annual");
   const [invoice, setInvoice] = useState<{
     invoiceId: string;
     checkoutLink: string;
@@ -125,6 +153,14 @@ export default function OnboardingPage() {
   } | null>(null);
   const [copied, setCopied] = useState(false);
   const [paid, setPaid] = useState(false);
+
+  // Fetch plans on mount
+  useEffect(() => {
+    fetch("/api/service-plans")
+      .then((r) => r.json())
+      .then((data) => setGroups(data.groups))
+      .catch(() => {});
+  }, []);
 
   // DnD sensors
   const sensors = useSensors(
@@ -142,33 +178,178 @@ export default function OnboardingPage() {
     );
   }
 
-  // --- Step 1: Disclaimer ---
+  // --- Helpers ---
+  function togglePlan(groupId: string, planId: string) {
+    setSelectedPlans((prev) => {
+      if (prev[groupId] === planId) {
+        const next = { ...prev };
+        delete next[groupId];
+        setCreds((c) => {
+          const n = { ...c };
+          delete n[groupId];
+          return n;
+        });
+        return next;
+      }
+      return { ...prev, [groupId]: planId };
+    });
+  }
+
+  function updateCred(
+    groupId: string,
+    field: "email" | "password",
+    value: string
+  ) {
+    setCreds((prev) => ({
+      ...prev,
+      [groupId]: {
+        email: prev[groupId]?.email ?? "",
+        password: prev[groupId]?.password ?? "",
+        [field]: value,
+      },
+    }));
+  }
+
+  function getSelectedPlan(groupId: string): Plan | undefined {
+    const planId = selectedPlans[groupId];
+    if (!planId) return undefined;
+    for (const g of groups) {
+      const plan = g.plans.find((p) => p.id === planId);
+      if (plan) return plan;
+    }
+    return undefined;
+  }
+
+  function getSelectedPlanPrice(groupId: string): number {
+    return getSelectedPlan(groupId)?.monthly_price_cents ?? 0;
+  }
+
+  const selectedGroupIds = Object.keys(selectedPlans);
+  const selectedPrices = selectedGroupIds.map((gid) =>
+    getSelectedPlanPrice(gid)
+  );
+  const monthlyTotal = selectedPrices.reduce((s, p) => s + p, 0);
+  const minPrice = selectedPrices.length > 0 ? Math.min(...selectedPrices) : 0;
+  const maxPrice = selectedPrices.length > 0 ? Math.max(...selectedPrices) : 0;
+
+  // First service info (used in steps 4-5)
+  const firstQueueItem = queue[0];
+  const firstServiceLabel = firstQueueItem?.groupLabel ?? "your first service";
+
+  // Membership pricing (cents)
+  const MEMBERSHIP_MONTHLY = 778;
+  const MEMBERSHIP_ANNUAL = 7380;
+  const membershipCents =
+    membership === "monthly" ? MEMBERSHIP_MONTHLY : MEMBERSHIP_ANNUAL;
+  const firstServicePrice = firstQueueItem?.priceCents ?? 0;
+  const totalCents = membershipCents + firstServicePrice;
+
+  // Annual savings
+  const savingsCents = MEMBERSHIP_MONTHLY * 12 - MEMBERSHIP_ANNUAL; // 1956 = $19.56
+  const cheapestInQueue = queue.length > 0
+    ? [...queue].sort((a, b) => a.priceCents - b.priceCents)[0]
+    : null;
+  const cheapestLabel = cheapestInQueue
+    ? cheapestInQueue.isBundle
+      ? cheapestInQueue.planName
+      : cheapestInQueue.groupLabel
+    : null;
+
+  // --- Consent capture ---
+  async function recordConsent(consentType: "authorization" | "confirmation") {
+    const res = await authFetch("/api/consent", {
+      method: "POST",
+      body: JSON.stringify({ consentType }),
+    });
+    return res.ok;
+  }
+
+  // --- Step 1: Authorization ---
+  async function handleAuthorize() {
+    setError("");
+    setSubmitting(true);
+    try {
+      const ok = await recordConsent("authorization");
+      if (!ok) {
+        setError("Failed to record authorization. Try again.");
+        setSubmitting(false);
+        return;
+      }
+      setSubmitting(false);
+      setStep(2);
+    } catch {
+      setError("Connection failed. Try again.");
+      setSubmitting(false);
+    }
+  }
+
   function renderStep1() {
     return (
       <div className="space-y-8">
         <div>
           <h1 className="text-4xl font-bold tracking-tight text-foreground mb-6">
-            Before we begin.
+            Authorization
           </h1>
-          <div className="space-y-4 text-muted leading-relaxed">
-            <p>
-              UnsaltedButter manages your streaming subscriptions by signing up
-              for services on your behalf. We buy gift cards with your BTC
-              balance to activate services. When the gift card balance runs out,
-              the service ends naturally — no cancellation needed.
-            </p>
-            <p>
-              This works. But it is not magic, and you need to understand how it
-              works.
-            </p>
-          </div>
+          <p className="text-muted leading-relaxed text-lg">
+            Do you authorize UnsaltedButter and its agents to act on your behalf
+            with third parties to initiate and terminate streaming service
+            accounts?
+          </p>
+        </div>
+
+        {error && <p className="text-red-400 text-sm">{error}</p>}
+
+        <button
+          type="button"
+          onClick={handleAuthorize}
+          disabled={submitting}
+          className="w-full py-3 px-4 bg-accent text-background font-semibold rounded hover:bg-accent/90 transition-colors disabled:opacity-50"
+        >
+          {submitting ? "Recording..." : "I authorize"}
+        </button>
+      </div>
+    );
+  }
+
+  // --- Step 2: How it works + Confirmation ---
+  async function handleConfirm() {
+    setError("");
+    setSubmitting(true);
+    try {
+      const ok = await recordConsent("confirmation");
+      if (!ok) {
+        setError("Failed to record confirmation. Try again.");
+        setSubmitting(false);
+        return;
+      }
+      setSubmitting(false);
+      setStep(3);
+    } catch {
+      setError("Connection failed. Try again.");
+      setSubmitting(false);
+    }
+  }
+
+  function renderStep2() {
+    return (
+      <div className="space-y-8">
+        <div>
+          <h1 className="text-4xl font-bold tracking-tight text-foreground mb-6">
+            How it works
+          </h1>
+          <p className="text-muted leading-relaxed">
+            We use gift cards &mdash; not credit cards &mdash; to activate
+            services. One subscription runs at a time. When the gift card is
+            depleted, the subscription ends and the next one in your queue
+            starts.
+          </p>
         </div>
 
         <div className="bg-surface border border-border rounded p-6">
           <p className="text-foreground font-bold leading-relaxed">
-            We purchase gift cards to activate your streaming services. When the
-            gift card balance runs out, the service ends naturally. No
-            cancellation needed, no risk of extra charges.
+            We purchase gift cards to activate your streaming services. Gift
+            cards mean no recurring charges, no stored credit cards, and no
+            surprise bills.
           </p>
         </div>
 
@@ -183,19 +364,6 @@ export default function OnboardingPage() {
           <li className="flex gap-2">
             <span className="text-muted/60 shrink-0">&bull;</span>
             <span>
-              We buy gift cards with your BTC balance to activate services. Gift
-              card codes are encrypted and destroyed after redemption.
-            </span>
-          </li>
-          <li className="flex gap-2">
-            <span className="text-muted/60 shrink-0">&bull;</span>
-            <span>
-              We never store screenshots containing your personal information.
-            </span>
-          </li>
-          <li className="flex gap-2">
-            <span className="text-muted/60 shrink-0">&bull;</span>
-            <span>
               We do not share your data with anyone. There is no one to share it
               with.
             </span>
@@ -203,226 +371,240 @@ export default function OnboardingPage() {
           <li className="flex gap-2">
             <span className="text-muted/60 shrink-0">&bull;</span>
             <span>
-              Membership is $9.99/month, deducted from your BTC balance.
+              Membership is $7.78/month, or $6.15/month paid annually.
             </span>
           </li>
           <li className="flex gap-2">
             <span className="text-muted/60 shrink-0">&bull;</span>
-            <span>No refunds for partial months except at our discretion.</span>
+            <span>
+              Membership &amp; service credits payable in Bitcoin only.
+            </span>
+          </li>
+          <li className="flex gap-2">
+            <span className="text-muted/60 shrink-0">&bull;</span>
+            <span>
+              Unspent service credits can be returned, minus network fees.
+            </span>
           </li>
         </ul>
 
-        <button
-          type="button"
-          onClick={() => setStep(2)}
-          className="w-full py-3 px-4 bg-accent text-background font-semibold rounded hover:bg-accent/90 transition-colors"
-        >
-          I understand. Continue.
-        </button>
+        <div>
+          <p className="text-muted leading-relaxed mb-4">
+            Are you still onboard with letting UnsaltedButter act on your
+            behalf?
+          </p>
+
+          {error && <p className="text-red-400 text-sm mb-4">{error}</p>}
+
+          <button
+            type="button"
+            onClick={handleConfirm}
+            disabled={submitting}
+            className="w-full py-3 px-4 bg-accent text-background font-semibold rounded hover:bg-accent/90 transition-colors disabled:opacity-50"
+          >
+            {submitting
+              ? "Recording..."
+              : "Yes. I authorize UnsaltedButter to act on my behalf."}
+          </button>
+        </div>
       </div>
     );
   }
 
-  // --- Step 2: Add Streaming Credentials ---
-  function updateCredential(
-    index: number,
-    field: keyof CredentialEntry,
-    value: string
-  ) {
-    setCredentials((prev) => {
-      const next = [...prev];
-      next[index] = { ...next[index], [field]: value };
-      return next;
-    });
-  }
-
-  function addCredential() {
-    setCredentials((prev) => [
-      ...prev,
-      { serviceId: "", email: "", password: "" },
-    ]);
-  }
-
-  function removeCredential(index: number) {
-    if (credentials.length <= 2) return;
-    setCredentials((prev) => prev.filter((_, i) => i !== index));
-  }
-
-  function usedServiceIds(): Set<string> {
-    return new Set(credentials.map((c) => c.serviceId).filter(Boolean));
-  }
-
+  // --- Step 3: Select Plans & Add Credentials ---
   async function saveCredentials() {
     setError("");
 
-    // Validate minimum 2
-    const filled = credentials.filter(
-      (c) => c.serviceId && c.email && c.password
-    );
-    if (filled.length < 2) {
-      setError("Add at least two services with complete credentials.");
+    const complete = selectedGroupIds.filter((gid) => {
+      const c = creds[gid];
+      return c?.email && c?.password;
+    });
+    if (complete.length < 2) {
+      setError("Select and provide credentials for at least two services.");
       return;
     }
 
-    // Validate no empty fields in filled entries
-    for (let i = 0; i < credentials.length; i++) {
-      const c = credentials[i];
-      if (c.serviceId || c.email || c.password) {
-        if (!c.serviceId || !c.email || !c.password) {
-          setError(`Entry ${i + 1} is incomplete. Fill all fields or remove it.`);
-          return;
-        }
+    for (const gid of selectedGroupIds) {
+      const c = creds[gid];
+      if (!c?.email || !c?.password) {
+        const group = groups.find((g) => g.id === gid);
+        setError(`Enter credentials for ${group?.label ?? gid}.`);
+        return;
       }
     }
 
-    // Validate no duplicate services
-    const serviceIds = credentials.filter((c) => c.serviceId).map((c) => c.serviceId);
-    if (new Set(serviceIds).size !== serviceIds.length) {
-      setError("Each service can only appear once.");
-      return;
-    }
-
     setSubmitting(true);
-
     try {
-      const entries = credentials.filter(
-        (c) => c.serviceId && c.email && c.password
-      );
+      for (const gid of selectedGroupIds) {
+        const group = groups.find((g) => g.id === gid);
+        if (!group) continue;
+        const c = creds[gid];
 
-      for (const entry of entries) {
         const res = await authFetch("/api/credentials", {
           method: "POST",
           body: JSON.stringify({
-            serviceId: entry.serviceId,
-            email: entry.email,
-            password: entry.password,
+            serviceId: group.serviceId,
+            email: c.email,
+            password: c.password,
           }),
         });
 
         if (!res.ok) {
           const data = await res.json();
-          setError(data.error || `Failed to save credentials for ${entry.serviceId}.`);
+          setError(
+            data.error || `Failed to save credentials for ${group.label}.`
+          );
           setSubmitting(false);
           return;
         }
       }
 
-      // Build queue from saved credentials
-      const savedQueue: QueueItem[] = entries.map((e) => {
-        const svc = SERVICES.find((s) => s.id === e.serviceId);
-        return { serviceId: e.serviceId, label: svc?.label ?? e.serviceId };
+      // Build queue from selected groups with full plan info
+      const savedQueue: QueueItem[] = selectedGroupIds.map((gid) => {
+        const group = groups.find((g) => g.id === gid)!;
+        const plan = getSelectedPlan(gid)!;
+        return {
+          serviceId: group.serviceId,
+          groupLabel: group.label,
+          planName: plan.display_name,
+          isBundle: plan.is_bundle,
+          priceCents: plan.monthly_price_cents,
+        };
       });
       setQueue(savedQueue);
       setSubmitting(false);
-      setStep(3);
+      setStep(4);
     } catch {
       setError("Connection failed. Try again.");
       setSubmitting(false);
     }
   }
 
-  function renderStep2() {
-    const used = usedServiceIds();
+  function renderStep3() {
+    const canSave = selectedGroupIds.length >= 2;
 
     return (
-      <div className="space-y-8">
+      <div className="space-y-6">
         <div>
-          <h1 className="text-4xl font-bold tracking-tight text-foreground mb-4">
-            Your streaming accounts
+          <h1 className="text-4xl font-bold tracking-tight text-foreground mb-3">
+            Your streaming plans
           </h1>
-          <p className="text-muted leading-relaxed">
-            Add the login credentials for each streaming service you want in
-            your rotation. We need these to sign up on your behalf using gift
-            cards. If you have an existing subscription, let it lapse or cancel
-            it — we&apos;ll resubscribe with a gift card when your turn comes.
+          <p className="text-muted leading-relaxed text-sm">
+            Select the plans you want us to rotate. If you get a service bundled
+            with something else (phone plan, internet, etc.), skip it. Add at
+            least two for rotation to work.
           </p>
         </div>
 
-        <div className="space-y-6">
-          {credentials.map((cred, i) => (
-            <div key={i} className="bg-surface border border-border rounded p-5 space-y-4">
-              <div className="flex items-center justify-between">
-                <span className="text-sm font-medium text-muted">
-                  Service {i + 1}
-                </span>
-                {credentials.length > 2 && (
-                  <button
-                    type="button"
-                    onClick={() => removeCredential(i)}
-                    className="text-muted hover:text-foreground transition-colors text-sm"
-                    aria-label="Remove entry"
-                  >
-                    &#10005;
-                  </button>
+        <div className="space-y-4">
+          {groups.map((group) => {
+            const selectedPlanId = selectedPlans[group.id];
+            const isSelected = !!selectedPlanId;
+
+            return (
+              <div key={group.id}>
+                <p className="text-xs font-semibold text-muted/70 uppercase tracking-wider mb-1.5">
+                  {group.label}
+                </p>
+                <div className="space-y-1">
+                  {group.plans.map((plan) => {
+                    const selected = selectedPlanId === plan.id;
+                    return (
+                      <button
+                        key={plan.id}
+                        type="button"
+                        onClick={() => togglePlan(group.id, plan.id)}
+                        className={`w-full flex items-center justify-between py-2 px-3 rounded text-sm border transition-colors ${
+                          selected
+                            ? "bg-accent/10 text-accent border-accent/40"
+                            : "bg-surface text-muted border-border hover:border-muted"
+                        }`}
+                      >
+                        <span>{plan.display_name}</span>
+                        <span
+                          className={
+                            selected ? "text-accent" : "text-muted/60"
+                          }
+                        >
+                          ${(plan.monthly_price_cents / 100).toFixed(2)}/mo
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+
+                {isSelected && (
+                  <div className="grid grid-cols-2 gap-3 mt-2">
+                    <input
+                      type="email"
+                      value={creds[group.id]?.email ?? ""}
+                      onChange={(e) =>
+                        updateCred(group.id, "email", e.target.value)
+                      }
+                      placeholder="Login email"
+                      className="py-2 px-3 bg-surface border border-border rounded text-foreground placeholder:text-muted/50 text-sm focus:outline-none focus:border-accent"
+                    />
+                    <input
+                      type="password"
+                      value={creds[group.id]?.password ?? ""}
+                      onChange={(e) =>
+                        updateCred(group.id, "password", e.target.value)
+                      }
+                      placeholder="Password"
+                      className="py-2 px-3 bg-surface border border-border rounded text-foreground placeholder:text-muted/50 text-sm focus:outline-none focus:border-accent"
+                    />
+                  </div>
                 )}
               </div>
-
-              <div>
-                <label className="block text-sm font-medium text-muted mb-2">
-                  Service
-                </label>
-                <select
-                  value={cred.serviceId}
-                  onChange={(e) => updateCredential(i, "serviceId", e.target.value)}
-                  className="w-full py-3 px-4 bg-surface border border-border rounded text-foreground focus:outline-none focus:border-accent"
-                >
-                  <option value="">Select a service</option>
-                  {SERVICES.map((svc) => (
-                    <option
-                      key={svc.id}
-                      value={svc.id}
-                      disabled={used.has(svc.id) && cred.serviceId !== svc.id}
-                    >
-                      {svc.label}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-muted mb-2">
-                  Login email
-                </label>
-                <input
-                  type="email"
-                  value={cred.email}
-                  onChange={(e) => updateCredential(i, "email", e.target.value)}
-                  placeholder="you@example.com"
-                  className="w-full py-3 px-4 bg-surface border border-border rounded text-foreground placeholder:text-muted/50 focus:outline-none focus:border-accent"
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-muted mb-2">
-                  Password
-                </label>
-                <input
-                  type="password"
-                  value={cred.password}
-                  onChange={(e) => updateCredential(i, "password", e.target.value)}
-                  placeholder="Enter password"
-                  className="w-full py-3 px-4 bg-surface border border-border rounded text-foreground placeholder:text-muted/50 focus:outline-none focus:border-accent"
-                />
-                <p className="text-xs text-muted mt-1.5">
-                  Use a strong, unique password. We encrypt it immediately. You
-                  can update it anytime.
-                </p>
-              </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
 
-        <button
-          type="button"
-          onClick={addCredential}
-          className="py-2 px-4 text-muted border border-border rounded hover:border-muted transition-colors text-sm"
-        >
-          + Add another service
-        </button>
+        {monthlyTotal > 0 && (
+          <div className="space-y-1">
+            <p className="text-sm text-muted">
+              This would cost you{" "}
+              <span className="text-foreground font-medium">
+                ${(monthlyTotal / 100).toFixed(2)}/month
+              </span>
+              , but with UnsaltedButter you&apos;ll spend way less.
+            </p>
+            {selectedGroupIds.length >= 2 && (
+              <p className="text-sm text-muted">
+                You will need between{" "}
+                <span className="text-foreground font-medium">
+                  ${(minPrice / 100).toFixed(2)}
+                </span>{" "}
+                and{" "}
+                <span className="text-foreground font-medium">
+                  ${(maxPrice / 100).toFixed(2)}
+                </span>{" "}
+                worth of service credits every month. You can pay up front, or
+                just in time if you&apos;ve given us a real Nostr or email
+                contact.
+              </p>
+            )}
+          </div>
+        )}
+
+        <div className="bg-surface border border-border rounded p-4 space-y-2 text-sm text-muted leading-relaxed">
+          <p>
+            <span className="text-foreground font-medium">
+              Fresh accounts are cleanest.
+            </span>{" "}
+            Create new accounts for each service and we handle everything from
+            scratch.
+          </p>
+          <p>
+            If you&apos;re using existing accounts, cancel all but one service
+            now and try to remove your credit card from each. If you can&apos;t
+            remove it, we&apos;ll take care of that when we next activate the
+            subscription.
+          </p>
+        </div>
 
         <p className="text-sm text-muted">
-          Add at least two services to enable rotation. One service alone has
-          nothing to rotate with.
+          You&apos;ll be able to change the rotation order on the next step.
         </p>
 
         {error && <p className="text-red-400 text-sm">{error}</p>}
@@ -430,7 +612,7 @@ export default function OnboardingPage() {
         <button
           type="button"
           onClick={saveCredentials}
-          disabled={submitting}
+          disabled={submitting || !canSave}
           className="w-full py-3 px-4 bg-accent text-background font-semibold rounded hover:bg-accent/90 transition-colors disabled:opacity-50"
         >
           {submitting ? "Saving..." : "Save credentials"}
@@ -439,7 +621,7 @@ export default function OnboardingPage() {
     );
   }
 
-  // --- Step 3: Set Rotation Order ---
+  // --- Step 4: Set Rotation Order ---
   function handleDragEnd(event: DragEndEvent) {
     const { active, over } = event;
     if (!over || active.id === over.id) return;
@@ -469,14 +651,14 @@ export default function OnboardingPage() {
       }
 
       setSubmitting(false);
-      setStep(4);
+      setStep(5);
     } catch {
       setError("Connection failed. Try again.");
       setSubmitting(false);
     }
   }
 
-  function renderStep3() {
+  function renderStep4() {
     return (
       <div className="space-y-8">
         <div>
@@ -485,9 +667,18 @@ export default function OnboardingPage() {
           </h1>
           <p className="text-muted leading-relaxed">
             Drag to reorder. The service at the top starts first. Each service
-            stays active until the gift card runs out (roughly 30–40 days), then
-            the next one in line activates. The queue loops — after the last
-            service, it starts over at the top.
+            stays active until the gift card runs out (roughly 30-40 days), then
+            the next one in line activates. The queue loops.
+          </p>
+        </div>
+
+        <div className="bg-red-500/10 border border-red-500/30 rounded p-4">
+          <p className="text-red-400 font-semibold text-sm">
+            Cancel all your existing streaming subscriptions before we start.
+          </p>
+          <p className="text-muted text-sm mt-1">
+            We&apos;ll handle everything from here. If you leave active
+            subscriptions running, you&apos;ll be double-paying.
           </p>
         </div>
 
@@ -513,8 +704,8 @@ export default function OnboardingPage() {
         </DndContext>
 
         <p className="text-sm text-muted">
-          Each rotation is roughly 30–40 days depending on gift card value vs.
-          monthly price. Some variation is normal.
+          We&apos;ll keep you up to date as services rotate, or you can ping us
+          on Nostr for details.
         </p>
 
         {error && <p className="text-red-400 text-sm">{error}</p>}
@@ -531,26 +722,15 @@ export default function OnboardingPage() {
     );
   }
 
-  // --- Step 4: Prepay for Service ---
+  // --- Step 5: Payment ---
   async function createInvoice() {
     setError("");
     setSubmitting(true);
 
     try {
-      const body: { amount_usd_cents?: number } = {};
-      if (amountUsd) {
-        const cents = Math.round(parseFloat(amountUsd) * 100);
-        if (isNaN(cents) || cents <= 0) {
-          setError("Enter a valid dollar amount.");
-          setSubmitting(false);
-          return;
-        }
-        body.amount_usd_cents = cents;
-      }
-
       const res = await authFetch("/api/credits/prepay", {
         method: "POST",
-        body: JSON.stringify(body),
+        body: JSON.stringify({ amount_usd_cents: totalCents }),
       });
 
       if (!res.ok) {
@@ -580,7 +760,16 @@ export default function OnboardingPage() {
     }
   }
 
-  function renderStep4() {
+  function savingsCallout(): string {
+    const saved = (savingsCents / 100).toFixed(2);
+    if (!cheapestLabel) return `That saves you $${saved}/yr.`;
+    if (cheapestInQueue && savingsCents >= cheapestInQueue.priceCents) {
+      return `That saves you $${saved}/yr \u2014 a free month of ${cheapestLabel}.`;
+    }
+    return `That saves you $${saved}/yr \u2014 almost a free month of ${cheapestLabel}.`;
+  }
+
+  function renderStep5() {
     if (paid) {
       return (
         <div className="space-y-8">
@@ -589,10 +778,9 @@ export default function OnboardingPage() {
               Credits added.
             </h1>
             <p className="text-muted leading-relaxed">
-              Your credits are loaded. Your first rotation starts within 24
-              hours — we&apos;ll buy a gift card for the top service in your
-              queue and activate it. After that, everything is automatic. Check
-              your dashboard anytime — but you won&apos;t need to.
+              Your first rotation starts within 24 hours &mdash; we&apos;ll
+              activate {firstServiceLabel} and take it from there. Check your
+              dashboard anytime, but you won&apos;t need to.
             </p>
           </div>
 
@@ -612,7 +800,7 @@ export default function OnboardingPage() {
         <div className="space-y-8">
           <div>
             <h1 className="text-4xl font-bold tracking-tight text-foreground mb-4">
-              Prepay for service
+              Fund your account
             </h1>
             <p className="text-muted leading-relaxed">
               Scan the Lightning invoice QR code or copy the invoice to pay from
@@ -655,31 +843,74 @@ export default function OnboardingPage() {
       <div className="space-y-8">
         <div>
           <h1 className="text-4xl font-bold tracking-tight text-foreground mb-4">
-            Prepay for service
+            Fund your account
           </h1>
           <p className="text-muted leading-relaxed">
-            Your service credits cover everything: membership ($9.99/mo) and
-            gift card purchases for your streaming services. Add credits in any
-            amount via Lightning Network. More credits = more rotations without
-            interruption.
+            Your first payment covers your membership and the service credit for{" "}
+            {firstServiceLabel}. We&apos;ll activate it within 24 hours.
           </p>
         </div>
 
+        {/* Membership toggle */}
         <div>
           <label className="block text-sm font-medium text-muted mb-2">
-            Amount (USD)
+            Membership
           </label>
-          <div className="relative">
-            <span className="absolute left-4 top-3 text-muted">$</span>
-            <input
-              type="number"
-              min="0"
-              step="0.01"
-              value={amountUsd}
-              onChange={(e) => setAmountUsd(e.target.value)}
-              placeholder="Leave empty for open amount"
-              className="w-full py-3 pl-8 pr-4 bg-surface border border-border rounded text-foreground placeholder:text-muted/50 focus:outline-none focus:border-accent"
-            />
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={() => setMembership("annual")}
+              className={`flex-1 py-2 px-4 rounded text-sm font-medium border transition-colors ${
+                membership === "annual"
+                  ? "bg-accent text-background border-accent"
+                  : "bg-surface text-muted border-border hover:border-muted"
+              }`}
+            >
+              Annual &mdash; $6.15/mo
+            </button>
+            <button
+              type="button"
+              onClick={() => setMembership("monthly")}
+              className={`flex-1 py-2 px-4 rounded text-sm font-medium border transition-colors ${
+                membership === "monthly"
+                  ? "bg-accent text-background border-accent"
+                  : "bg-surface text-muted border-border hover:border-muted"
+              }`}
+            >
+              Monthly &mdash; $7.78/mo
+            </button>
+          </div>
+          {membership === "annual" && (
+            <p className="text-sm text-accent mt-2">{savingsCallout()}</p>
+          )}
+        </div>
+
+        {/* Breakdown */}
+        <div className="bg-surface border border-border rounded p-4">
+          <div className="space-y-2 text-sm">
+            <div className="flex justify-between">
+              <span className="text-muted">
+                Membership (
+                {membership === "monthly" ? "1 month" : "12 months"})
+              </span>
+              <span className="text-foreground">
+                ${(membershipCents / 100).toFixed(2)}
+              </span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-muted">
+                {firstServiceLabel} (first month)
+              </span>
+              <span className="text-foreground">
+                ${(firstServicePrice / 100).toFixed(2)}
+              </span>
+            </div>
+            <div className="border-t border-border pt-2 mt-2 flex justify-between font-medium">
+              <span className="text-foreground">Total due today</span>
+              <span className="text-foreground">
+                ${(totalCents / 100).toFixed(2)}
+              </span>
+            </div>
           </div>
         </div>
 
@@ -705,6 +936,7 @@ export default function OnboardingPage() {
         {step === 2 && renderStep2()}
         {step === 3 && renderStep3()}
         {step === 4 && renderStep4()}
+        {step === 5 && renderStep5()}
       </div>
     </main>
   );

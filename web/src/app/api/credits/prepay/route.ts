@@ -40,17 +40,25 @@ export const POST = withAuth(async (req: NextRequest, { userId }) => {
     invoicePayload.amount = (amountSats / 100_000_000).toFixed(8);
   }
 
-  const invoiceRes = await fetch(
-    `${btcpayUrl}/api/v1/stores/${btcpayStoreId}/invoices`,
-    {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `token ${btcpayApiKey}`,
-      },
-      body: JSON.stringify(invoicePayload),
-    }
-  );
+  let invoiceRes: Response;
+  try {
+    invoiceRes = await fetch(
+      `${btcpayUrl}/api/v1/stores/${btcpayStoreId}/invoices`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `token ${btcpayApiKey}`,
+        },
+        body: JSON.stringify(invoicePayload),
+      }
+    );
+  } catch {
+    return NextResponse.json(
+      { error: "Payment server unreachable" },
+      { status: 502 }
+    );
+  }
 
   if (!invoiceRes.ok) {
     const errText = await invoiceRes.text();

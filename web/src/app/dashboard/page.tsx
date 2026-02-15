@@ -598,7 +598,7 @@ export default function DashboardPage() {
                     disabled={deleteInput !== "destroy" || deleteLoading}
                     className="py-2 px-4 bg-red-900 text-red-200 font-semibold rounded hover:bg-red-800 transition-colors disabled:opacity-50 text-sm"
                   >
-                    {deleteLoading ? "Deleting..." : "Delete account"}
+                    {deleteLoading ? "Destroying..." : "Destroy account"}
                   </button>
                 </div>
               </div>
