@@ -33,6 +33,19 @@ interface QueueItem {
   subscription_end_date: string | null;
 }
 
+interface SlotData {
+  slot_number: number;
+  current_service_id: string | null;
+  current_service_name: string | null;
+  next_service_id: string | null;
+  next_service_name: string | null;
+  locked_at: string | null;
+  subscription_status: "active" | "cancel_scheduled" | "signup_scheduled" | null;
+  subscription_end_date: string | null;
+}
+
+type LockInState = "unlocked" | "imminent" | "locked";
+
 interface Credits {
   credit_sats: number;
   credit_usd_cents: number;
@@ -105,21 +118,64 @@ function activeDescription(item: QueueItem): string {
   switch (item.subscription_status) {
     case "active":
       return date
-        ? `${item.service_name} — active, ends ~${date}`
-        : `${item.service_name} — active`;
+        ? `Active through ~${date}`
+        : "Active";
     case "cancel_scheduled":
       return date
-        ? `${item.service_name} — cancel pending, ends ~${date}`
-        : `${item.service_name} — cancel pending`;
+        ? `Cancel pending, ends ~${date}`
+        : "Cancel pending";
     case "signup_scheduled":
-      return `${item.service_name} — signing up now`;
+      return "Signing up now";
     default:
-      return `${item.service_name} — queued`;
+      return "Queued";
   }
 }
 
+/** Determine lock-in state for a slot. */
+function getLockInState(slot: SlotData): LockInState {
+  // If locked_at is set, the gift card has been purchased
+  if (slot.locked_at) return "locked";
+
+  // If there's an active subscription, check how far along we are
+  if (slot.subscription_status === "active" && slot.subscription_end_date) {
+    // Lock-in happens around day 14. If cancel is already scheduled, it's imminent or locked.
+    return "unlocked";
+  }
+
+  if (slot.subscription_status === "cancel_scheduled") {
+    return "imminent";
+  }
+
+  if (slot.subscription_status === "signup_scheduled") {
+    return "imminent";
+  }
+
+  return "unlocked";
+}
+
+/** Border class for lock-in state. */
+function lockInBorderClass(state: LockInState): string {
+  switch (state) {
+    case "locked":
+      return "border-green-600";
+    case "imminent":
+      return "border-amber-600";
+    default:
+      return "border-border";
+  }
+}
+
+/** Whether a queue item is "pinned" (not draggable). */
+function isItemPinned(item: QueueItem): boolean {
+  return (
+    item.subscription_status === "active" ||
+    item.subscription_status === "cancel_scheduled" ||
+    item.subscription_status === "signup_scheduled"
+  );
+}
+
 // ---------------------------------------------------------------------------
-// SortableItem
+// SortableItem (draggable queue item)
 // ---------------------------------------------------------------------------
 
 interface SortableItemProps {
@@ -172,6 +228,156 @@ function SortableItem({ item }: SortableItemProps) {
 }
 
 // ---------------------------------------------------------------------------
+// PinnedItem (non-draggable, locked/imminent queue item)
+// ---------------------------------------------------------------------------
+
+interface PinnedItemProps {
+  item: QueueItem;
+}
+
+function PinnedItem({ item }: PinnedItemProps) {
+  const borderColor =
+    item.subscription_status === "active"
+      ? "border-green-600"
+      : item.subscription_status === "cancel_scheduled"
+        ? "border-amber-600"
+        : "border-blue-600";
+
+  return (
+    <div
+      className={`flex items-center gap-3 bg-surface border ${borderColor} rounded px-4 py-3`}
+    >
+      <span className="text-muted/40 text-lg leading-none select-none">
+        &#8801;
+      </span>
+      <span className="flex-1 text-foreground font-medium">
+        {item.service_name}
+      </span>
+      {item.subscription_status && (
+        <span
+          className={`text-xs font-medium px-2 py-0.5 rounded ${statusColor(item.subscription_status)}`}
+        >
+          {statusLabel(item.subscription_status)}
+        </span>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// SlotCard
+// ---------------------------------------------------------------------------
+
+interface SlotCardProps {
+  slot: SlotData;
+  slotLabel: string;
+  onStay: (serviceId: string, serviceName: string) => void;
+  onSkip: (serviceId: string, serviceName: string) => void;
+  onSendBackToQueue: (serviceId: string) => void;
+}
+
+function SlotCard({ slot, slotLabel, onStay, onSkip, onSendBackToQueue }: SlotCardProps) {
+  const lockInState = getLockInState(slot);
+  const borderClass = lockInBorderClass(lockInState);
+
+  const hasCurrentService = slot.current_service_id && slot.current_service_name;
+  const hasNextService = slot.next_service_id && slot.next_service_name;
+
+  return (
+    <div className={`bg-surface border ${borderClass} rounded p-6`}>
+      <h2 className="text-sm font-medium text-muted mb-4">
+        {slotLabel}
+      </h2>
+
+      {hasCurrentService ? (
+        <div>
+          <div className="flex items-center gap-3 mb-2">
+            <span className="text-2xl font-bold text-foreground">
+              {slot.current_service_name}
+            </span>
+            {slot.subscription_status && (
+              <span
+                className={`text-xs font-medium px-2 py-0.5 rounded ${statusColor(slot.subscription_status)}`}
+              >
+                {statusLabel(slot.subscription_status)}
+              </span>
+            )}
+          </div>
+
+          <p className="text-muted text-sm mb-4">
+            {activeDescription({
+              service_id: slot.current_service_id!,
+              service_name: slot.current_service_name!,
+              position: 0,
+              subscription_status: slot.subscription_status,
+              subscription_end_date: slot.subscription_end_date,
+            })}
+          </p>
+
+          <div className="flex gap-3">
+            <button
+              type="button"
+              onClick={() =>
+                onStay(slot.current_service_id!, slot.current_service_name!)
+              }
+              className="py-2 px-4 bg-accent text-background font-semibold rounded hover:bg-accent/90 transition-colors text-sm"
+            >
+              Stay
+            </button>
+            <button
+              type="button"
+              onClick={() =>
+                onSkip(slot.current_service_id!, slot.current_service_name!)
+              }
+              className="py-2 px-4 bg-surface border border-border text-foreground font-semibold rounded hover:border-muted transition-colors text-sm"
+            >
+              Skip
+            </button>
+          </div>
+        </div>
+      ) : (
+        <p className="text-muted text-sm">
+          No active subscription in this slot.
+        </p>
+      )}
+
+      {/* Next service info */}
+      {hasNextService && (
+        <div className="mt-4 pt-4 border-t border-border">
+          <div className="flex items-center justify-between">
+            <div>
+              <span className="text-xs font-medium text-muted">Next up: </span>
+              <span className="text-sm font-medium text-foreground">
+                {slot.next_service_name}
+              </span>
+              {lockInState === "locked" && (
+                <span className="ml-2 text-xs font-medium px-2 py-0.5 rounded bg-green-900/50 text-green-400 border border-green-700">
+                  Locked in
+                </span>
+              )}
+              {lockInState === "imminent" && (
+                <span className="ml-2 text-xs font-medium px-2 py-0.5 rounded bg-amber-900/50 text-amber-400 border border-amber-700">
+                  Locking soon
+                </span>
+              )}
+            </div>
+            {lockInState === "unlocked" && (
+              <button
+                type="button"
+                onClick={() => onSendBackToQueue(slot.next_service_id!)}
+                className="py-1.5 px-3 bg-surface border border-border text-muted font-medium rounded hover:border-muted hover:text-foreground transition-colors text-xs"
+              >
+                Send back to queue
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Dashboard Page
 // ---------------------------------------------------------------------------
 
@@ -179,6 +385,7 @@ export default function DashboardPage() {
   const { user, loading: authLoading, logout } = useAuth();
 
   const [queue, setQueue] = useState<QueueItem[]>([]);
+  const [slots, setSlots] = useState<SlotData[]>([]);
   const [credits, setCredits] = useState<Credits | null>(null);
   const [loadingData, setLoadingData] = useState(true);
   const [error, setError] = useState("");
@@ -195,16 +402,24 @@ export default function DashboardPage() {
   const [deleteInput, setDeleteInput] = useState("");
   const [deleteLoading, setDeleteLoading] = useState(false);
 
+  const isDuo = user?.membership_plan === "duo";
+
   // ---------- Data fetching ----------
 
   const fetchData = useCallback(async () => {
     setLoadingData(true);
     setError("");
     try {
-      const [qRes, cRes] = await Promise.all([
+      const fetches: Promise<Response>[] = [
         authFetch("/api/queue"),
         authFetch("/api/credits"),
-      ]);
+      ];
+
+      // Fetch slots for all users (Solo gets 1, Duo gets 2)
+      fetches.push(authFetch("/api/slots"));
+
+      const responses = await Promise.all(fetches);
+      const [qRes, cRes, sRes] = responses;
 
       if (!qRes.ok || !cRes.ok) {
         setError("Failed to load dashboard data.");
@@ -216,6 +431,11 @@ export default function DashboardPage() {
       const cData = await cRes.json();
       setQueue(qData.queue);
       setCredits(cData);
+
+      if (sRes && sRes.ok) {
+        const sData = await sRes.json();
+        setSlots(sData.slots);
+      }
     } catch {
       setError("Failed to load dashboard data.");
     } finally {
@@ -228,6 +448,20 @@ export default function DashboardPage() {
       fetchData();
     }
   }, [authLoading, user, fetchData]);
+
+  // ---------- Derived data ----------
+
+  // Split queue into pinned (active/scheduled) and sortable (queued)
+  const pinnedItems = queue.filter(isItemPinned);
+  const sortableItems = queue.filter((q) => !isItemPinned(q));
+
+  // For Solo users without slot data, fall back to the old active item detection
+  const activeItem = queue.find(
+    (q) =>
+      q.subscription_status === "active" ||
+      q.subscription_status === "cancel_scheduled" ||
+      q.subscription_status === "signup_scheduled"
+  );
 
   // ---------- Drag and drop ----------
 
@@ -243,16 +477,28 @@ export default function DashboardPage() {
       const { active, over } = event;
       if (!over || active.id === over.id) return;
 
-      const oldIndex = queue.findIndex((q) => q.service_id === active.id);
-      const newIndex = queue.findIndex((q) => q.service_id === over.id);
-      const reordered = arrayMove(queue, oldIndex, newIndex);
-      setQueue(reordered);
+      // Only reorder within sortable items, then reconstruct full queue
+      const oldSortableIndex = sortableItems.findIndex(
+        (q) => q.service_id === active.id
+      );
+      const newSortableIndex = sortableItems.findIndex(
+        (q) => q.service_id === over.id
+      );
+      if (oldSortableIndex === -1 || newSortableIndex === -1) return;
+
+      const reorderedSortable = arrayMove(
+        sortableItems,
+        oldSortableIndex,
+        newSortableIndex
+      );
+      const fullReordered = [...pinnedItems, ...reorderedSortable];
+      setQueue(fullReordered);
 
       try {
         await authFetch("/api/queue", {
           method: "PUT",
           body: JSON.stringify({
-            order: reordered.map((q) => q.service_id),
+            order: fullReordered.map((q) => q.service_id),
           }),
         });
       } catch {
@@ -260,7 +506,7 @@ export default function DashboardPage() {
         setQueue(queue);
       }
     },
-    [queue]
+    [queue, pinnedItems, sortableItems]
   );
 
   // ---------- Stay / Skip ----------
@@ -286,6 +532,41 @@ export default function DashboardPage() {
       setConfirmAction(null);
     }
   }, [confirmAction, fetchData]);
+
+  // ---------- Send back to queue ----------
+
+  const handleSendBackToQueue = useCallback(
+    async (serviceId: string) => {
+      // Move the service from next_service on its slot back to the end of the queue.
+      // Reorder: put it at the end of the current queue order.
+      const currentOrder = queue.map((q) => q.service_id);
+      // If the service is already in the queue, move it to the end
+      const filtered = currentOrder.filter((id) => id !== serviceId);
+      const newOrder = [...filtered, serviceId];
+
+      // Optimistic update
+      const serviceInQueue = queue.find((q) => q.service_id === serviceId);
+      if (serviceInQueue) {
+        const reordered = [
+          ...queue.filter((q) => q.service_id !== serviceId),
+          { ...serviceInQueue, subscription_status: null as QueueItem["subscription_status"], subscription_end_date: null },
+        ];
+        setQueue(reordered);
+      }
+
+      try {
+        await authFetch("/api/queue", {
+          method: "PUT",
+          body: JSON.stringify({ order: newOrder }),
+        });
+        await fetchData();
+      } catch {
+        setError("Failed to send service back to queue.");
+        await fetchData(); // Revert by re-fetching
+      }
+    },
+    [queue, fetchData]
+  );
 
   // ---------- Delete account ----------
 
@@ -319,20 +600,14 @@ export default function DashboardPage() {
 
   if (!user) return null;
 
-  // ---------- Derived data ----------
-
-  const activeItem = queue.find(
-    (q) =>
-      q.subscription_status === "active" ||
-      q.subscription_status === "cancel_scheduled" ||
-      q.subscription_status === "signup_scheduled"
-  );
-
   // ---------- Render ----------
+
+  const containerWidth = isDuo ? "max-w-4xl" : "max-w-2xl";
+  const hasSlots = slots.length > 0;
 
   return (
     <main className="min-h-screen">
-      <div className="max-w-2xl mx-auto px-4 py-12 space-y-8">
+      <div className={`${containerWidth} mx-auto px-4 py-12 space-y-8`}>
         <h1 className="text-4xl font-bold tracking-tight text-foreground">
           Your rotation
         </h1>
@@ -344,65 +619,95 @@ export default function DashboardPage() {
         ) : (
           <>
             {/* --------------------------------------------------------- */}
-            {/* 1. Active Subscription Card                               */}
+            {/* 1. Slot Cards (or single active subscription card)        */}
             {/* --------------------------------------------------------- */}
-            <section className="bg-surface border border-border rounded p-6">
-              <h2 className="text-sm font-medium text-muted mb-4">
-                Current subscription
-              </h2>
+            {hasSlots ? (
+              <div
+                className={
+                  isDuo
+                    ? "grid grid-cols-1 md:grid-cols-2 gap-4"
+                    : ""
+                }
+              >
+                {slots.map((slot) => (
+                  <SlotCard
+                    key={slot.slot_number}
+                    slot={slot}
+                    slotLabel={
+                      isDuo
+                        ? `Slot ${slot.slot_number}`
+                        : "Current subscription"
+                    }
+                    onStay={(serviceId, serviceName) =>
+                      setConfirmAction({ type: "stay", serviceId, serviceName })
+                    }
+                    onSkip={(serviceId, serviceName) =>
+                      setConfirmAction({ type: "skip", serviceId, serviceName })
+                    }
+                    onSendBackToQueue={handleSendBackToQueue}
+                  />
+                ))}
+              </div>
+            ) : (
+              /* Fallback: no slots exist yet (Solo, pre-orchestrator) */
+              <section className="bg-surface border border-border rounded p-6">
+                <h2 className="text-sm font-medium text-muted mb-4">
+                  Current subscription
+                </h2>
 
-              {activeItem ? (
-                <div>
-                  <div className="flex items-center gap-3 mb-2">
-                    <span className="text-2xl font-bold text-foreground">
-                      {activeItem.service_name}
-                    </span>
-                    <span
-                      className={`text-xs font-medium px-2 py-0.5 rounded ${statusColor(activeItem.subscription_status)}`}
-                    >
-                      {statusLabel(activeItem.subscription_status)}
-                    </span>
+                {activeItem ? (
+                  <div>
+                    <div className="flex items-center gap-3 mb-2">
+                      <span className="text-2xl font-bold text-foreground">
+                        {activeItem.service_name}
+                      </span>
+                      <span
+                        className={`text-xs font-medium px-2 py-0.5 rounded ${statusColor(activeItem.subscription_status)}`}
+                      >
+                        {statusLabel(activeItem.subscription_status)}
+                      </span>
+                    </div>
+
+                    <p className="text-muted text-sm mb-4">
+                      {activeDescription(activeItem)}
+                    </p>
+
+                    <div className="flex gap-3">
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setConfirmAction({
+                            type: "stay",
+                            serviceId: activeItem.service_id,
+                            serviceName: activeItem.service_name,
+                          })
+                        }
+                        className="py-2 px-4 bg-accent text-background font-semibold rounded hover:bg-accent/90 transition-colors text-sm"
+                      >
+                        Stay
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setConfirmAction({
+                            type: "skip",
+                            serviceId: activeItem.service_id,
+                            serviceName: activeItem.service_name,
+                          })
+                        }
+                        className="py-2 px-4 bg-surface border border-border text-foreground font-semibold rounded hover:border-muted transition-colors text-sm"
+                      >
+                        Skip
+                      </button>
+                    </div>
                   </div>
-
-                  <p className="text-muted text-sm mb-4">
-                    {activeDescription(activeItem)}
+                ) : (
+                  <p className="text-muted text-sm">
+                    No active subscription right now.
                   </p>
-
-                  <div className="flex gap-3">
-                    <button
-                      type="button"
-                      onClick={() =>
-                        setConfirmAction({
-                          type: "stay",
-                          serviceId: activeItem.service_id,
-                          serviceName: activeItem.service_name,
-                        })
-                      }
-                      className="py-2 px-4 bg-accent text-background font-semibold rounded hover:bg-accent/90 transition-colors text-sm"
-                    >
-                      Stay
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() =>
-                        setConfirmAction({
-                          type: "skip",
-                          serviceId: activeItem.service_id,
-                          serviceName: activeItem.service_name,
-                        })
-                      }
-                      className="py-2 px-4 bg-surface border border-border text-foreground font-semibold rounded hover:border-muted transition-colors text-sm"
-                    >
-                      Skip
-                    </button>
-                  </div>
-                </div>
-              ) : (
-                <p className="text-muted text-sm">
-                  No active subscription right now.
-                </p>
-              )}
-            </section>
+                )}
+              </section>
+            )}
 
             {/* --------------------------------------------------------- */}
             {/* Confirmation Dialog                                       */}
@@ -476,22 +781,32 @@ export default function DashboardPage() {
                   </p>
                 </>
               ) : (
-                <DndContext
-                  sensors={sensors}
-                  collisionDetection={closestCenter}
-                  onDragEnd={handleDragEnd}
-                >
-                  <SortableContext
-                    items={queue.map((q) => q.service_id)}
-                    strategy={verticalListSortingStrategy}
-                  >
-                    <div className="space-y-2">
-                      {queue.map((item) => (
-                        <SortableItem key={item.service_id} item={item} />
-                      ))}
-                    </div>
-                  </SortableContext>
-                </DndContext>
+                <div className="space-y-2">
+                  {/* Pinned items (active/scheduled) - not draggable */}
+                  {pinnedItems.map((item) => (
+                    <PinnedItem key={item.service_id} item={item} />
+                  ))}
+
+                  {/* Sortable items (queued) - draggable */}
+                  {sortableItems.length > 0 && (
+                    <DndContext
+                      sensors={sensors}
+                      collisionDetection={closestCenter}
+                      onDragEnd={handleDragEnd}
+                    >
+                      <SortableContext
+                        items={sortableItems.map((q) => q.service_id)}
+                        strategy={verticalListSortingStrategy}
+                      >
+                        <div className="space-y-2">
+                          {sortableItems.map((item) => (
+                            <SortableItem key={item.service_id} item={item} />
+                          ))}
+                        </div>
+                      </SortableContext>
+                    </DndContext>
+                  )}
+                </div>
               )}
             </section>
 
@@ -563,13 +878,29 @@ export default function DashboardPage() {
             <section className="bg-surface border border-border rounded p-6 space-y-6">
               <h2 className="text-sm font-medium text-muted mb-4">Account</h2>
 
-              <div className="text-sm text-foreground">
-                <span className="text-muted">Membership:</span>{" "}
-                <span className="font-medium">
-                  {user.status === "active" ? "Active" : user.status}
-                  {user.membership_expires_at &&
-                    ` — renews ${formatDate(user.membership_expires_at)}`}
-                </span>
+              <div className="text-sm text-foreground space-y-2">
+                <div>
+                  <span className="text-muted">Membership:</span>{" "}
+                  <span className="font-medium">
+                    {user.status === "active" ? "Active" : user.status}
+                    {user.membership_expires_at &&
+                      ` \u2014 renews ${formatDate(user.membership_expires_at)}`}
+                  </span>
+                </div>
+                <div>
+                  <span className="text-muted">Plan:</span>{" "}
+                  <span className="font-medium capitalize">
+                    {user.membership_plan}
+                  </span>
+                  {user.membership_plan === "solo" && (
+                    <Link
+                      href="/dashboard/upgrade"
+                      className="ml-3 text-xs text-accent hover:text-accent/80 transition-colors"
+                    >
+                      Upgrade to Duo
+                    </Link>
+                  )}
+                </div>
               </div>
 
               {/* Danger zone */}
