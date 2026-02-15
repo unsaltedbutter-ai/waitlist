@@ -54,7 +54,7 @@ interface MembershipPrice {
   approx_usd_cents: number;
 }
 
-const TOTAL_STEPS = 5;
+const TOTAL_STEPS = 4;
 
 function formatSats(sats: number): string {
   return sats.toLocaleString();
@@ -70,9 +70,9 @@ function StepIndicator({ current }: { current: number }) {
       {Array.from({ length: TOTAL_STEPS }, (_, i) => i + 1).map((s) => (
         <div key={s} className="flex items-center gap-3">
           <div
-            className={`w-2.5 h-2.5 rounded-full transition-colors ${
+            className={`w-3.5 h-3.5 rounded-full transition-colors ${
               s === current
-                ? "bg-accent"
+                ? "bg-accent ring-2 ring-accent/30"
                 : s < current
                   ? "bg-accent/40"
                   : "bg-border"
@@ -147,6 +147,7 @@ export default function OnboardingPage() {
   const [step, setStep] = useState(1);
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [authorized, setAuthorized] = useState(false);
 
   // Step 3 state (plan selection)
   const [groups, setGroups] = useState<ServiceGroup[]>([]);
@@ -328,14 +329,21 @@ export default function OnboardingPage() {
     return res.ok;
   }
 
-  // --- Step 1: Authorization ---
-  async function handleAuthorize() {
+  // --- Step 1: How it works + Authorization ---
+  async function handleLetsGo() {
     setError("");
     setSubmitting(true);
     try {
-      const ok = await recordConsent("authorization");
-      if (!ok) {
+      // Record both consent types
+      const authOk = await recordConsent("authorization");
+      if (!authOk) {
         setError("Failed to record authorization. Try again.");
+        setSubmitting(false);
+        return;
+      }
+      const confirmOk = await recordConsent("confirmation");
+      if (!confirmOk) {
+        setError("Failed to record confirmation. Try again.");
         setSubmitting(false);
         return;
       }
@@ -352,68 +360,11 @@ export default function OnboardingPage() {
       <div className="space-y-8">
         <div>
           <h1 className="text-4xl font-bold tracking-tight text-foreground mb-6">
-            Authorization
-          </h1>
-          <p className="text-muted leading-relaxed text-lg">
-            Do you authorize UnsaltedButter and its agents to access your
-            streaming service accounts using the credentials you provide, and
-            to act on your behalf &mdash; including signing up, cancelling,
-            and managing subscriptions &mdash; by communicating electronically
-            with third-party services?
-          </p>
-        </div>
-
-        {error && <p className="text-red-400 text-sm">{error}</p>}
-
-        <button
-          type="button"
-          onClick={handleAuthorize}
-          disabled={submitting}
-          className="w-full py-3 px-4 bg-accent text-background font-semibold rounded hover:bg-accent/90 transition-colors disabled:opacity-50"
-        >
-          {submitting ? "Recording..." : "I authorize"}
-        </button>
-      </div>
-    );
-  }
-
-  // --- Step 2: How it works + Confirmation ---
-  async function handleConfirm() {
-    setError("");
-    setSubmitting(true);
-    try {
-      const ok = await recordConsent("confirmation");
-      if (!ok) {
-        setError("Failed to record confirmation. Try again.");
-        setSubmitting(false);
-        return;
-      }
-      setSubmitting(false);
-      setStep(3);
-    } catch {
-      setError("Connection failed. Try again.");
-      setSubmitting(false);
-    }
-  }
-
-  function renderStep2() {
-    return (
-      <div className="space-y-8">
-        <button
-          type="button"
-          onClick={() => setStep(1)}
-          className="text-sm text-muted hover:text-foreground transition-colors"
-        >
-          &larr; Back
-        </button>
-        <div>
-          <h1 className="text-4xl font-bold tracking-tight text-foreground mb-6">
             How it works
           </h1>
           <p className="text-muted leading-relaxed">
-            We use gift cards &mdash; not credit cards &mdash; to manage your
-            streaming services. We subscribe, cancel after a short period, and
-            rotate to the next service in your queue. The queue loops forever.
+            We handle starting and cancelling your streaming subscriptions.
+            One month per service, in the order you choose.
           </p>
         </div>
 
@@ -423,12 +374,10 @@ export default function OnboardingPage() {
             no surprise bills.
           </p>
           <p className="text-muted text-sm leading-relaxed">
-            We purchase gift cards and apply them to your accounts. After
-            subscribing, we cancel within a few weeks so you only pay for one
-            month at a time. Gift card denominations don&apos;t always match
-            monthly prices exactly, so you may carry a small balance with a
-            service. When your balance is enough to cover another month, we
-            just reactivate &mdash; no new gift card needed.
+            Gift card denominations don&apos;t always match monthly prices
+            exactly, so you may carry a small balance with a service. When
+            your balance is enough to cover another month, we just
+            reactivate &mdash; no new gift card needed.
           </p>
         </div>
 
@@ -466,6 +415,13 @@ export default function OnboardingPage() {
           </li>
         </ul>
 
+        <div className="border-l-4 border-amber-500 bg-amber-500/[0.08] rounded-r-lg px-5 py-4">
+          <p className="text-amber-200 text-sm font-medium leading-relaxed">
+            If you have active streaming subscriptions, cancel them before we
+            start. Anything you leave running means you&apos;re paying twice.
+          </p>
+        </div>
+
         <div className="bg-amber-950/40 border border-amber-700/50 rounded p-5 space-y-3">
           <p className="text-amber-400 font-semibold text-sm">
             Understand the risks
@@ -484,30 +440,35 @@ export default function OnboardingPage() {
           </p>
         </div>
 
-        <div>
-          <p className="text-muted leading-relaxed mb-4">
-            Are you still onboard with letting UnsaltedButter act on your
-            behalf?
-          </p>
+        <label className="flex items-start gap-3 cursor-pointer">
+          <input
+            type="checkbox"
+            checked={authorized}
+            onChange={(e) => setAuthorized(e.target.checked)}
+            className="w-4 h-4 mt-0.5 rounded border-border bg-surface text-accent accent-amber-500"
+          />
+          <span className="text-sm text-foreground leading-relaxed">
+            I authorize UnsaltedButter to act on my behalf &mdash; including
+            signing up, cancelling, and managing streaming subscriptions using
+            the credentials I provide.
+          </span>
+        </label>
 
-          {error && <p className="text-red-400 text-sm mb-4">{error}</p>}
+        {error && <p className="text-red-400 text-sm">{error}</p>}
 
-          <button
-            type="button"
-            onClick={handleConfirm}
-            disabled={submitting}
-            className="w-full py-3 px-4 bg-accent text-background font-semibold rounded hover:bg-accent/90 transition-colors disabled:opacity-50"
-          >
-            {submitting
-              ? "Recording..."
-              : "Yes. I authorize UnsaltedButter to act on my behalf."}
-          </button>
-        </div>
+        <button
+          type="button"
+          onClick={handleLetsGo}
+          disabled={submitting || !authorized}
+          className="w-full py-3 px-4 bg-accent text-background font-semibold rounded hover:bg-accent/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          {submitting ? "Recording..." : "Let\u2019s go"}
+        </button>
       </div>
     );
   }
 
-  // --- Step 3: Select Plans & Add Credentials ---
+  // --- Step 2: Select Plans & Add Credentials ---
 
   async function saveCredentials() {
     setError("");
@@ -595,7 +556,7 @@ export default function OnboardingPage() {
       });
       setQueue(savedQueue);
       setSubmitting(false);
-      setStep(4);
+      setStep(3);
     } catch {
       setError("Connection failed. Try again.");
       setSubmitting(false);
@@ -618,7 +579,7 @@ export default function OnboardingPage() {
     return Math.min(...group.plans.map((p) => p.monthly_price_cents));
   }
 
-  function renderStep3() {
+  function renderStep2() {
     const hasEnoughServices = selectedGroupIds.length >= 2;
     const canSave = useSameCreds
       ? hasEnoughServices && !!sharedCreds.email && !!sharedCreds.password
@@ -631,7 +592,7 @@ export default function OnboardingPage() {
       <div className="space-y-6">
         <button
           type="button"
-          onClick={() => setStep(2)}
+          onClick={() => setStep(1)}
           className="text-sm text-muted hover:text-foreground transition-colors"
         >
           &larr; Back
@@ -740,7 +701,10 @@ export default function OnboardingPage() {
                     {group.label}
                   </span>
                   {isSelected && selectedPlan ? (
-                    <span className="text-accent text-xs">
+                    <span className="flex items-center gap-2 text-accent text-xs">
+                      {!useSameCreds && (!creds[group.id]?.email || !creds[group.id]?.password) && (
+                        <span className="w-2 h-2 rounded-full bg-amber-500 shrink-0" title="Needs credentials" />
+                      )}
                       {selectedPlan.display_name} &mdash; $
                       {(selectedPlan.monthly_price_cents / 100).toFixed(2)}/mo
                     </span>
@@ -830,7 +794,7 @@ export default function OnboardingPage() {
               <span className="text-foreground font-medium">
                 ${(monthlyTotal / 100).toFixed(2)}/month
               </span>
-              , but with UnsaltedButter you&apos;ll spend way less.
+              .
             </p>
             {selectedGroupIds.length >= 2 && (
               <p className="text-sm text-muted">
@@ -984,19 +948,19 @@ export default function OnboardingPage() {
       }
 
       setSubmitting(false);
-      setStep(5);
+      setStep(4);
     } catch {
       setError("Connection failed. Try again.");
       setSubmitting(false);
     }
   }
 
-  function renderStep4() {
+  function renderStep3() {
     return (
       <div className="space-y-8">
         <button
           type="button"
-          onClick={() => setStep(3)}
+          onClick={() => setStep(2)}
           className="text-sm text-muted hover:text-foreground transition-colors"
         >
           &larr; Back
@@ -1117,7 +1081,7 @@ export default function OnboardingPage() {
     }
   }
 
-  function renderStep5() {
+  function renderStep4() {
     if (paid) {
       return (
         <div className="space-y-8">
@@ -1126,9 +1090,9 @@ export default function OnboardingPage() {
               You&apos;re in.
             </h1>
             <p className="text-muted leading-relaxed">
-              Your first rotation starts within 24 hours &mdash; we&apos;ll
-              activate {firstServiceLabel} and take it from there. Check your
-              dashboard anytime, but you won&apos;t need to.
+              We&apos;re getting your {firstServiceLabel} account ready now.
+              Expect it to be active within 24 hours. We&apos;ll notify you
+              when it&apos;s live.
             </p>
           </div>
 
@@ -1199,7 +1163,7 @@ export default function OnboardingPage() {
       <div className="space-y-8">
         <button
           type="button"
-          onClick={() => setStep(4)}
+          onClick={() => setStep(3)}
           className="text-sm text-muted hover:text-foreground transition-colors"
         >
           &larr; Back
@@ -1358,7 +1322,6 @@ export default function OnboardingPage() {
         {step === 2 && renderStep2()}
         {step === 3 && renderStep3()}
         {step === 4 && renderStep4()}
-        {step === 5 && renderStep5()}
       </div>
     </main>
   );

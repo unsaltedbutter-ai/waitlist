@@ -196,6 +196,14 @@ export default function LoginPage() {
                   ? "Create account with Nostr"
                   : "Sign in with Nostr"}
             </button>
+            {!canSignup && (
+              <p className="text-center text-sm text-muted">
+                Need an account?{" "}
+                <a href="/" className="text-accent hover:underline">
+                  Join the waitlist
+                </a>
+              </p>
+            )}
           </div>
         )}
 

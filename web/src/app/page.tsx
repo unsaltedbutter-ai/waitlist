@@ -67,9 +67,6 @@ export default function WaitlistPage() {
           <h1 className="text-4xl font-bold tracking-tight mb-4 text-foreground">
             Not watching? Stop paying.
           </h1>
-          <p className="text-lg text-muted leading-relaxed">
-            Let us help you manage your streaming costs.
-          </p>
         </div>
 
         {/* Form */}
