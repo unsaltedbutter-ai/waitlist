@@ -51,6 +51,22 @@ interface Alert {
   created_at: string;
 }
 
+interface WaitlistEntry {
+  id: string;
+  email: string | null;
+  nostr_npub: string | null;
+  current_services: string[] | null;
+  invited: boolean;
+  invited_at: string | null;
+  created_at: string;
+}
+
+interface CapacityInfo {
+  activeUsers: number;
+  cap: number;
+  availableSlots: number;
+}
+
 interface Metrics {
   jobs_today: {
     by_status: Record<string, number>;
@@ -149,6 +165,12 @@ export default function OperatorPage() {
   const [error, setError] = useState("");
   const [perfWindow, setPerfWindow] = useState<"7d" | "30d">("7d");
   const [ackingIds, setAckingIds] = useState<Set<string>>(new Set());
+  const [waitlist, setWaitlist] = useState<WaitlistEntry[]>([]);
+  const [capacity, setCapacity] = useState<CapacityInfo | null>(null);
+  const [generatingInvite, setGeneratingInvite] = useState<Set<string>>(
+    new Set()
+  );
+  const [inviteLinks, setInviteLinks] = useState<Record<string, string>>({});
 
   // ---------- Fetch ----------
 
@@ -156,9 +178,10 @@ export default function OperatorPage() {
     setLoading(true);
     setError("");
     try {
-      const [mRes, aRes] = await Promise.all([
+      const [mRes, aRes, wRes] = await Promise.all([
         authFetch("/api/operator/metrics"),
         authFetch("/api/operator/alerts"),
+        authFetch("/api/operator/waitlist"),
       ]);
 
       if (mRes.status === 403 || aRes.status === 403) {
@@ -177,6 +200,12 @@ export default function OperatorPage() {
       const aData = await aRes.json();
       setMetrics(mData);
       setAlerts(aData.alerts);
+
+      if (wRes.ok) {
+        const wData = await wRes.json();
+        setWaitlist(wData.entries);
+        setCapacity(wData.capacity);
+      }
     } catch {
       setError("Failed to load operator data.");
     } finally {
@@ -212,6 +241,44 @@ export default function OperatorPage() {
       }
     },
     []
+  );
+
+  // ---------- Generate Invite ----------
+
+  const generateInvite = useCallback(
+    async (waitlistId: string) => {
+      setGeneratingInvite((prev) => new Set(prev).add(waitlistId));
+      try {
+        const res = await authFetch("/api/operator/invite", {
+          method: "POST",
+          body: JSON.stringify({ waitlistId }),
+        });
+        if (res.ok) {
+          const data = await res.json();
+          setInviteLinks((prev) => ({ ...prev, [waitlistId]: data.inviteLink }));
+          setWaitlist((prev) =>
+            prev.map((e) =>
+              e.id === waitlistId
+                ? { ...e, invited: true, invited_at: new Date().toISOString() }
+                : e
+            )
+          );
+          if (capacity) {
+            setCapacity({
+              ...capacity,
+              availableSlots: capacity.availableSlots - 1,
+            });
+          }
+        }
+      } finally {
+        setGeneratingInvite((prev) => {
+          const next = new Set(prev);
+          next.delete(waitlistId);
+          return next;
+        });
+      }
+    },
+    [capacity]
   );
 
   // ---------- Loading / Auth ----------
@@ -516,7 +583,132 @@ export default function OperatorPage() {
               </section>
 
               {/* --------------------------------------------------------- */}
-              {/* 6. Dead Letter                                            */}
+              {/* 6. Waitlist Management                                    */}
+              {/* --------------------------------------------------------- */}
+              <section>
+                <SectionHeader>Waitlist Management</SectionHeader>
+
+                {/* Capacity bar */}
+                {capacity && (
+                  <div className="mb-4">
+                    <div className="flex justify-between text-xs text-muted mb-1">
+                      <span>
+                        {capacity.activeUsers.toLocaleString()} /{" "}
+                        {capacity.cap.toLocaleString()} active users
+                      </span>
+                      <span>
+                        {capacity.availableSlots.toLocaleString()} slots
+                        available
+                      </span>
+                    </div>
+                    <div className="w-full h-2 bg-surface border border-border rounded overflow-hidden">
+                      <div
+                        className={`h-full transition-all ${
+                          capacity.activeUsers / capacity.cap > 0.9
+                            ? "bg-red-500"
+                            : capacity.activeUsers / capacity.cap > 0.7
+                              ? "bg-amber-500"
+                              : "bg-green-500"
+                        }`}
+                        style={{
+                          width: `${Math.min(100, (capacity.activeUsers / capacity.cap) * 100)}%`,
+                        }}
+                      />
+                    </div>
+                  </div>
+                )}
+
+                {/* Waitlist table */}
+                {waitlist.length > 0 ? (
+                  <div className="overflow-x-auto">
+                    <table className="w-full">
+                      <thead>
+                        <tr className="border-b border-border">
+                          <th className={thClass}>Contact</th>
+                          <th className={thClass}>Services</th>
+                          <th className={thClass}>Signed Up</th>
+                          <th className={thClass}>Status</th>
+                          <th className={thClass}>Action</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {waitlist.map((entry) => (
+                          <tr
+                            key={entry.id}
+                            className="border-b border-border/50"
+                          >
+                            <td className={tdClass}>
+                              {entry.email ??
+                                (entry.nostr_npub
+                                  ? `${entry.nostr_npub.slice(0, 12)}...`
+                                  : "—")}
+                            </td>
+                            <td className={tdMuted}>
+                              {entry.current_services?.join(", ") ?? "—"}
+                            </td>
+                            <td className={tdMuted}>
+                              {formatDate(entry.created_at)}
+                            </td>
+                            <td className={tdClass}>
+                              {entry.invited ? (
+                                <span className="text-xs px-2 py-0.5 bg-green-900/40 text-green-400 rounded">
+                                  Invited{" "}
+                                  {entry.invited_at
+                                    ? formatDate(entry.invited_at)
+                                    : ""}
+                                </span>
+                              ) : (
+                                <span className="text-xs text-muted">
+                                  Waiting
+                                </span>
+                              )}
+                            </td>
+                            <td className="px-3 py-2">
+                              {entry.invited ? (
+                                inviteLinks[entry.id] ? (
+                                  <input
+                                    readOnly
+                                    value={inviteLinks[entry.id]}
+                                    onClick={(e) => {
+                                      (e.target as HTMLInputElement).select();
+                                      navigator.clipboard.writeText(
+                                        inviteLinks[entry.id]
+                                      );
+                                    }}
+                                    className="text-xs bg-surface border border-border rounded px-2 py-1 text-foreground w-48 cursor-pointer"
+                                    title="Click to copy"
+                                  />
+                                ) : (
+                                  <span className="text-xs text-muted">—</span>
+                                )
+                              ) : (
+                                <button
+                                  type="button"
+                                  onClick={() => generateInvite(entry.id)}
+                                  disabled={
+                                    generatingInvite.has(entry.id) ||
+                                    (capacity?.availableSlots ?? 0) === 0
+                                  }
+                                  className="text-xs px-2 py-1 rounded border border-accent text-accent hover:bg-accent hover:text-background transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+                                >
+                                  {generatingInvite.has(entry.id)
+                                    ? "Generating..."
+                                    : "Generate Invite"}
+                                </button>
+                              )}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                ) : (
+                  <p className="text-muted text-sm">No waitlist entries.</p>
+                )}
+              </section>
+
+              {/* --------------------------------------------------------- */}
+              {/* 7. Dead Letter                                            */}
               {/* --------------------------------------------------------- */}
               <section>
                 <SectionHeader>Dead Letter Queue</SectionHeader>

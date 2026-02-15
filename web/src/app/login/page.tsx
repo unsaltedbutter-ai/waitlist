@@ -1,7 +1,7 @@
 "use client";
 
-import { useState } from "react";
-import { useRouter } from "next/navigation";
+import { useState, useEffect } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 
 type Tab = "nostr" | "email";
 type EmailMode = "login" | "signup";
@@ -10,12 +10,51 @@ const TOKEN_KEY = "ub_token";
 
 export default function LoginPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [tab, setTab] = useState<Tab>("nostr");
   const [emailMode, setEmailMode] = useState<EmailMode>("login");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+
+  // Invite code state
+  const [inviteCode, setInviteCode] = useState<string | null>(null);
+  const [codeValid, setCodeValid] = useState<boolean | null>(null);
+  const [codeChecking, setCodeChecking] = useState(false);
+
+  // Validate invite code from URL on mount
+  useEffect(() => {
+    const code = searchParams.get("code");
+    if (!code) {
+      setCodeValid(false);
+      return;
+    }
+
+    setInviteCode(code);
+    setCodeChecking(true);
+
+    fetch("/api/invite/validate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ code }),
+    })
+      .then((res) => res.json())
+      .then((data) => {
+        setCodeValid(data.valid === true);
+        if (data.valid) {
+          setEmailMode("signup");
+        }
+      })
+      .catch(() => {
+        setCodeValid(false);
+      })
+      .finally(() => {
+        setCodeChecking(false);
+      });
+  }, [searchParams]);
+
+  const canSignup = codeValid === true;
 
   async function handleNostrLogin() {
     setError("");
@@ -39,7 +78,10 @@ export default function LoginPage() {
       const res = await fetch("/api/auth/nostr", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ event }),
+        body: JSON.stringify({
+          event,
+          ...(canSignup && inviteCode ? { inviteCode } : {}),
+        }),
       });
 
       const data = await res.json();
@@ -68,7 +110,11 @@ export default function LoginPage() {
       const res = await fetch(endpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, password }),
+        body: JSON.stringify({
+          email,
+          password,
+          ...(emailMode === "signup" && inviteCode ? { inviteCode } : {}),
+        }),
       });
 
       const data = await res.json();
@@ -94,7 +140,9 @@ export default function LoginPage() {
             Sign in
           </h1>
           <p className="text-muted">
-            Welcome back. Or welcome for the first time.
+            {canSignup
+              ? "You've been invited. Create your account."
+              : "Welcome back."}
           </p>
         </div>
 
@@ -131,16 +179,22 @@ export default function LoginPage() {
               Use a Nostr browser extension (nos2x, Alby, etc.).
               Your npub is your identity — no email required.
             </p>
-            <p className="text-xs text-muted/60">
-              No account? One will be created automatically.
-            </p>
+            {canSignup && (
+              <p className="text-xs text-green-400">
+                New here? An account will be created with your invite code.
+              </p>
+            )}
             <button
               type="button"
               onClick={handleNostrLogin}
-              disabled={loading}
+              disabled={loading || codeChecking}
               className="w-full py-3 px-4 bg-accent text-background font-semibold rounded hover:bg-accent/90 transition-colors disabled:opacity-50"
             >
-              {loading ? "Signing..." : "Continue with Nostr"}
+              {loading
+                ? "Signing..."
+                : canSignup
+                  ? "Create account with Nostr"
+                  : "Sign in with Nostr"}
             </button>
           </div>
         )}
@@ -177,7 +231,7 @@ export default function LoginPage() {
             </div>
             <button
               type="submit"
-              disabled={loading}
+              disabled={loading || codeChecking}
               className="w-full py-3 px-4 bg-accent text-background font-semibold rounded hover:bg-accent/90 transition-colors disabled:opacity-50"
             >
               {loading
@@ -188,16 +242,25 @@ export default function LoginPage() {
             </button>
             <p className="text-center text-sm text-muted">
               {emailMode === "login" ? (
-                <>
-                  No account?{" "}
-                  <button
-                    type="button"
-                    onClick={() => setEmailMode("signup")}
-                    className="text-accent hover:underline"
-                  >
-                    Create one
-                  </button>
-                </>
+                canSignup ? (
+                  <>
+                    New here?{" "}
+                    <button
+                      type="button"
+                      onClick={() => setEmailMode("signup")}
+                      className="text-accent hover:underline"
+                    >
+                      Create account
+                    </button>
+                  </>
+                ) : (
+                  <span>
+                    Need an account?{" "}
+                    <a href="/" className="text-accent hover:underline">
+                      Join the waitlist
+                    </a>
+                  </span>
+                )
               ) : (
                 <>
                   Already have an account?{" "}
