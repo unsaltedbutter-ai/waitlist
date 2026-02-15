@@ -21,6 +21,7 @@ import {
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import QRCode from "react-qr-code";
+import { getCredsForGroup } from "@/lib/creds-resolver";
 
 interface Plan {
   id: string;
@@ -507,10 +508,6 @@ export default function OnboardingPage() {
   }
 
   // --- Step 3: Select Plans & Add Credentials ---
-  function getCredsForGroup(gid: string): { email: string; password: string } {
-    if (useSameCreds) return sharedCreds;
-    return creds[gid] ?? { email: "", password: "" };
-  }
 
   async function saveCredentials() {
     setError("");
@@ -549,7 +546,7 @@ export default function OnboardingPage() {
       for (const gid of selectedGroupIds) {
         const group = groups.find((g) => g.id === gid);
         if (!group) continue;
-        const c = getCredsForGroup(gid);
+        const c = getCredsForGroup(gid, useSameCreds, sharedCreds, creds);
 
         const res = await authFetch("/api/credentials", {
           method: "POST",
