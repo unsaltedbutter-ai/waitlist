@@ -27,6 +27,7 @@ DROP TABLE IF EXISTS rotation_slots CASCADE;
 DROP TABLE IF EXISTS service_account_balances CASCADE;
 DROP TABLE IF EXISTS rotation_queue CASCADE;
 DROP TABLE IF EXISTS streaming_credentials CASCADE;
+DROP TABLE IF EXISTS membership_pricing CASCADE;
 DROP TABLE IF EXISTS membership_payments CASCADE;
 DROP TABLE IF EXISTS streaming_services CASCADE;
 DROP TABLE IF EXISTS users CASCADE;
@@ -161,6 +162,24 @@ VALUES
     ('peacock_premium_plus',  'peacock',     'Premium Plus',            1699, FALSE, FALSE, NULL, 72);
 
 -- ============================================================
+-- MEMBERSHIP PRICING (operator-set, sats-denominated)
+-- ============================================================
+
+CREATE TABLE membership_pricing (
+    plan       TEXT NOT NULL CHECK (plan IN ('solo', 'duo')),
+    period     TEXT NOT NULL CHECK (period IN ('monthly', 'annual')),
+    price_sats INT NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (plan, period)
+);
+
+INSERT INTO membership_pricing (plan, period, price_sats) VALUES
+    ('solo', 'monthly', 4400),
+    ('solo', 'annual',  3500),
+    ('duo',  'monthly', 7300),
+    ('duo',  'annual',  5850);
+
+-- ============================================================
 -- STREAMING CREDENTIALS (encrypted, destroyed on membership end)
 -- ============================================================
 
@@ -266,7 +285,7 @@ CREATE TABLE membership_payments (
     user_id           UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     btcpay_invoice_id TEXT NOT NULL UNIQUE,
     amount_sats       BIGINT NOT NULL,
-    amount_usd_cents  INT NOT NULL,                            -- Solo: 299/199, Duo: 499/399
+    amount_usd_cents  INT NOT NULL,                            -- approximate USD value at payment time (via live BTC/USD rate)
     period_start      TIMESTAMPTZ NOT NULL,
     period_end        TIMESTAMPTZ NOT NULL,
     status            TEXT NOT NULL DEFAULT 'pending'

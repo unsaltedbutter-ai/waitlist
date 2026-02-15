@@ -46,7 +46,22 @@ interface QueueItem {
   priceCents: number;
 }
 
+interface MembershipPrice {
+  plan: "solo" | "duo";
+  period: "monthly" | "annual";
+  price_sats: number;
+  approx_usd_cents: number;
+}
+
 const TOTAL_STEPS = 5;
+
+function formatSats(sats: number): string {
+  return sats.toLocaleString();
+}
+
+function formatUsdFromCents(cents: number): string {
+  return `$${(cents / 100).toFixed(2)}`;
+}
 
 function StepIndicator({ current }: { current: number }) {
   return (
@@ -145,7 +160,9 @@ export default function OnboardingPage() {
   const [queue, setQueue] = useState<QueueItem[]>([]);
 
   // Step 5 state (payment)
+  const [membershipPlan, setMembershipPlan] = useState<"solo" | "duo">("solo");
   const [membership, setMembership] = useState<"monthly" | "annual">("annual");
+  const [pricing, setPricing] = useState<MembershipPrice[]>([]);
   const [invoice, setInvoice] = useState<{
     invoiceId: string;
     checkoutLink: string;
@@ -154,11 +171,15 @@ export default function OnboardingPage() {
   const [copied, setCopied] = useState(false);
   const [paid, setPaid] = useState(false);
 
-  // Fetch plans on mount
+  // Fetch plans + pricing on mount
   useEffect(() => {
     fetch("/api/service-plans")
       .then((r) => r.json())
       .then((data) => setGroups(data.groups))
+      .catch(() => {});
+    fetch("/api/membership-pricing")
+      .then((r) => r.json())
+      .then((data) => setPricing(data.pricing))
       .catch(() => {});
   }, []);
 
@@ -236,24 +257,26 @@ export default function OnboardingPage() {
   const firstQueueItem = queue[0];
   const firstServiceLabel = firstQueueItem?.groupLabel ?? "your first service";
 
-  // Membership pricing (cents)
-  const MEMBERSHIP_MONTHLY = 778;
-  const MEMBERSHIP_ANNUAL = 7380;
-  const membershipCents =
-    membership === "monthly" ? MEMBERSHIP_MONTHLY : MEMBERSHIP_ANNUAL;
-  const firstServicePrice = firstQueueItem?.priceCents ?? 0;
-  const totalCents = membershipCents + firstServicePrice;
+  // Membership pricing (sats, from DB)
+  function getPrice(plan: "solo" | "duo", period: "monthly" | "annual"): MembershipPrice | undefined {
+    return pricing.find((p) => p.plan === plan && p.period === period);
+  }
 
-  // Annual savings
-  const savingsCents = MEMBERSHIP_MONTHLY * 12 - MEMBERSHIP_ANNUAL; // 1956 = $19.56
-  const cheapestInQueue = queue.length > 0
-    ? [...queue].sort((a, b) => a.priceCents - b.priceCents)[0]
-    : null;
-  const cheapestLabel = cheapestInQueue
-    ? cheapestInQueue.isBundle
-      ? cheapestInQueue.planName
-      : cheapestInQueue.groupLabel
-    : null;
+  const currentPrice = getPrice(membershipPlan, membership);
+  const membershipSats = currentPrice?.price_sats ?? 0;
+  const membershipUsdCents = currentPrice?.approx_usd_cents ?? 0;
+  const membershipTotalSats = membership === "annual" ? membershipSats * 12 : membershipSats;
+  const membershipTotalUsdCents = membership === "annual" ? membershipUsdCents * 12 : membershipUsdCents;
+
+  // First service price in sats (approximate — gift cards are USD-denominated)
+  const firstServicePriceCents = firstQueueItem?.priceCents ?? 0;
+
+  // Annual savings in sats
+  const monthlyPrice = getPrice(membershipPlan, "monthly");
+  const annualPrice = getPrice(membershipPlan, "annual");
+  const savingsSats = monthlyPrice && annualPrice
+    ? (monthlyPrice.price_sats * 12) - (annualPrice.price_sats * 12)
+    : 0;
 
   // --- Consent capture ---
   async function recordConsent(consentType: "authorization" | "confirmation") {
@@ -371,7 +394,8 @@ export default function OnboardingPage() {
           <li className="flex gap-2">
             <span className="text-muted/60 shrink-0">&bull;</span>
             <span>
-              Membership is $7.78/month, or $6.15/month paid annually.
+              Membership is payable in Bitcoin (Lightning). Current pricing is
+              shown at checkout.
             </span>
           </li>
           <li className="flex gap-2">
@@ -727,10 +751,18 @@ export default function OnboardingPage() {
     setError("");
     setSubmitting(true);
 
+    // Total sats: membership + first service credit (converted from USD cents)
+    // The prepay endpoint accepts amount_sats directly
+    const totalSats = membershipTotalSats;
+
     try {
       const res = await authFetch("/api/credits/prepay", {
         method: "POST",
-        body: JSON.stringify({ amount_usd_cents: totalCents }),
+        body: JSON.stringify({
+          amount_sats: totalSats,
+          membership_plan: membershipPlan,
+          billing_period: membership,
+        }),
       });
 
       if (!res.ok) {
@@ -758,15 +790,6 @@ export default function OnboardingPage() {
     } catch {
       // Clipboard API not available
     }
-  }
-
-  function savingsCallout(): string {
-    const saved = (savingsCents / 100).toFixed(2);
-    if (!cheapestLabel) return `That saves you $${saved}/yr.`;
-    if (cheapestInQueue && savingsCents >= cheapestInQueue.priceCents) {
-      return `That saves you $${saved}/yr \u2014 a free month of ${cheapestLabel}.`;
-    }
-    return `That saves you $${saved}/yr \u2014 almost a free month of ${cheapestLabel}.`;
   }
 
   function renderStep5() {
@@ -839,6 +862,14 @@ export default function OnboardingPage() {
       );
     }
 
+    const soloPriceMonthly = getPrice("solo", "monthly");
+    const soloPriceAnnual = getPrice("solo", "annual");
+    const duoPriceMonthly = getPrice("duo", "monthly");
+    const duoPriceAnnual = getPrice("duo", "annual");
+
+    const soloDisplay = membership === "monthly" ? soloPriceMonthly : soloPriceAnnual;
+    const duoDisplay = membership === "monthly" ? duoPriceMonthly : duoPriceAnnual;
+
     return (
       <div className="space-y-8">
         <div>
@@ -851,10 +882,63 @@ export default function OnboardingPage() {
           </p>
         </div>
 
-        {/* Membership toggle */}
+        {/* Plan selection */}
         <div>
           <label className="block text-sm font-medium text-muted mb-2">
-            Membership
+            Plan
+          </label>
+          <div className="grid grid-cols-2 gap-3">
+            <button
+              type="button"
+              onClick={() => setMembershipPlan("solo")}
+              className={`p-4 rounded border text-left transition-colors ${
+                membershipPlan === "solo"
+                  ? "border-accent bg-accent/5"
+                  : "border-border bg-surface hover:border-muted"
+              }`}
+            >
+              <p className={`font-semibold ${membershipPlan === "solo" ? "text-accent" : "text-foreground"}`}>
+                Solo
+              </p>
+              <p className="text-sm text-muted mt-1">1 service at a time</p>
+              {soloDisplay && (
+                <p className={`text-sm mt-2 ${membershipPlan === "solo" ? "text-accent" : "text-muted/60"}`}>
+                  {formatSats(soloDisplay.price_sats)} sats/mo
+                  <span className="text-muted/40 ml-1">
+                    (~{formatUsdFromCents(soloDisplay.approx_usd_cents)})
+                  </span>
+                </p>
+              )}
+            </button>
+            <button
+              type="button"
+              onClick={() => setMembershipPlan("duo")}
+              className={`p-4 rounded border text-left transition-colors ${
+                membershipPlan === "duo"
+                  ? "border-accent bg-accent/5"
+                  : "border-border bg-surface hover:border-muted"
+              }`}
+            >
+              <p className={`font-semibold ${membershipPlan === "duo" ? "text-accent" : "text-foreground"}`}>
+                Duo
+              </p>
+              <p className="text-sm text-muted mt-1">2 services at once</p>
+              {duoDisplay && (
+                <p className={`text-sm mt-2 ${membershipPlan === "duo" ? "text-accent" : "text-muted/60"}`}>
+                  {formatSats(duoDisplay.price_sats)} sats/mo
+                  <span className="text-muted/40 ml-1">
+                    (~{formatUsdFromCents(duoDisplay.approx_usd_cents)})
+                  </span>
+                </p>
+              )}
+            </button>
+          </div>
+        </div>
+
+        {/* Billing period toggle */}
+        <div>
+          <label className="block text-sm font-medium text-muted mb-2">
+            Billing
           </label>
           <div className="flex gap-2">
             <button
@@ -866,7 +950,7 @@ export default function OnboardingPage() {
                   : "bg-surface text-muted border-border hover:border-muted"
               }`}
             >
-              Annual &mdash; $6.15/mo
+              Annual
             </button>
             <button
               type="button"
@@ -877,11 +961,13 @@ export default function OnboardingPage() {
                   : "bg-surface text-muted border-border hover:border-muted"
               }`}
             >
-              Monthly &mdash; $7.78/mo
+              Monthly
             </button>
           </div>
-          {membership === "annual" && (
-            <p className="text-sm text-accent mt-2">{savingsCallout()}</p>
+          {membership === "annual" && savingsSats > 0 && (
+            <p className="text-sm text-accent mt-2">
+              Save {formatSats(savingsSats)} sats/yr with annual billing
+            </p>
           )}
         </div>
 
@@ -890,11 +976,14 @@ export default function OnboardingPage() {
           <div className="space-y-2 text-sm">
             <div className="flex justify-between">
               <span className="text-muted">
-                Membership (
+                Membership ({membershipPlan === "solo" ? "Solo" : "Duo"},{" "}
                 {membership === "monthly" ? "1 month" : "12 months"})
               </span>
               <span className="text-foreground">
-                ${(membershipCents / 100).toFixed(2)}
+                {formatSats(membershipTotalSats)} sats
+                <span className="text-muted/40 ml-1">
+                  (~{formatUsdFromCents(membershipTotalUsdCents)})
+                </span>
               </span>
             </div>
             <div className="flex justify-between">
@@ -902,27 +991,32 @@ export default function OnboardingPage() {
                 {firstServiceLabel} (first month)
               </span>
               <span className="text-foreground">
-                ${(firstServicePrice / 100).toFixed(2)}
+                ~${(firstServicePriceCents / 100).toFixed(2)}
               </span>
             </div>
             <div className="border-t border-border pt-2 mt-2 flex justify-between font-medium">
               <span className="text-foreground">Total due today</span>
               <span className="text-foreground">
-                ${(totalCents / 100).toFixed(2)}
+                ~{formatSats(membershipTotalSats)} sats + ${(firstServicePriceCents / 100).toFixed(2)}
               </span>
             </div>
           </div>
         </div>
+
+        <p className="text-xs text-muted/60">
+          Service credits for {firstServiceLabel} are a separate Lightning
+          invoice based on the gift card amount needed.
+        </p>
 
         {error && <p className="text-red-400 text-sm">{error}</p>}
 
         <button
           type="button"
           onClick={createInvoice}
-          disabled={submitting}
+          disabled={submitting || membershipSats === 0}
           className="w-full py-3 px-4 bg-accent text-background font-semibold rounded hover:bg-accent/90 transition-colors disabled:opacity-50"
         >
-          {submitting ? "Creating invoice..." : "Add service credits"}
+          {submitting ? "Creating invoice..." : "Create membership invoice"}
         </button>
       </div>
     );
