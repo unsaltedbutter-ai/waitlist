@@ -28,6 +28,7 @@ DROP TABLE IF EXISTS rotation_slots CASCADE;
 DROP TABLE IF EXISTS service_account_balances CASCADE;
 DROP TABLE IF EXISTS rotation_queue CASCADE;
 DROP TABLE IF EXISTS streaming_credentials CASCADE;
+DROP TABLE IF EXISTS signup_questions CASCADE;
 DROP TABLE IF EXISTS membership_pricing CASCADE;
 DROP TABLE IF EXISTS membership_payments CASCADE;
 DROP TABLE IF EXISTS streaming_services CASCADE;
@@ -51,9 +52,30 @@ CREATE TABLE users (
                           CHECK (billing_period IN ('monthly', 'annual')),
     membership_expires_at TIMESTAMPTZ,                          -- when current paid period ends
     free_days_remaining   INT DEFAULT 0,                        -- manually allocated by operator
+    signup_answers_enc    BYTEA,                                -- AES-256-GCM encrypted JSON: {question_id: answer}
     created_at            TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at            TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+-- ============================================================
+-- SIGNUP QUESTIONS (DB-driven list of questions streaming services ask during signup)
+-- ============================================================
+
+CREATE TABLE signup_questions (
+    id           TEXT PRIMARY KEY,              -- e.g. 'zip_code', 'birthdate', 'full_name', 'gender'
+    label        TEXT NOT NULL,                 -- display label: 'Zip Code', 'Birthdate (MM/DD/YYYY)', etc.
+    field_type   TEXT NOT NULL DEFAULT 'text'   -- 'text', 'date', 'select'
+                 CHECK (field_type IN ('text', 'date', 'select')),
+    options      TEXT[],                        -- for 'select' type: e.g. {'Male','Female','Non-binary','Prefer Not To Say'}
+    placeholder  TEXT,                          -- input placeholder text
+    display_order INT NOT NULL DEFAULT 0
+);
+
+INSERT INTO signup_questions (id, label, field_type, options, placeholder, display_order) VALUES
+    ('full_name',  'Full Name',              'text',   NULL, 'Your full name', 10),
+    ('zip_code',   'Zip Code',               'text',   NULL, '00000', 20),
+    ('birthdate',  'Birthdate (MM/DD/YYYY)', 'text',   NULL, 'MM/DD/YYYY', 30),
+    ('gender',     'Gender',                 'select', '{"Male","Female","Non-binary","Prefer Not To Say"}', NULL, 40);
 
 -- ============================================================
 -- STREAMING SERVICES (catalog)

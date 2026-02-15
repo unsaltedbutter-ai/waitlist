@@ -24,7 +24,7 @@ import QRCode from "react-qr-code";
 
 interface Plan {
   id: string;
-  service_group: string;
+  service_id: string;
   display_name: string;
   monthly_price_cents: number;
   has_ads: boolean;
@@ -155,6 +155,18 @@ export default function OnboardingPage() {
   const [creds, setCreds] = useState<
     Record<string, { email: string; password: string }>
   >({});
+  const [signupQuestions, setSignupQuestions] = useState<
+    {
+      id: string;
+      label: string;
+      field_type: "text" | "date" | "select";
+      options: string[] | null;
+      placeholder: string | null;
+    }[]
+  >([]);
+  const [signupAnswers, setSignupAnswers] = useState<Record<string, string>>(
+    {}
+  );
 
   // Step 4 state (rotation queue)
   const [queue, setQueue] = useState<QueueItem[]>([]);
@@ -180,6 +192,10 @@ export default function OnboardingPage() {
     fetch("/api/membership-pricing")
       .then((r) => r.json())
       .then((data) => setPricing(data.pricing))
+      .catch(() => {});
+    fetch("/api/signup-questions")
+      .then((r) => r.json())
+      .then((data) => setSignupQuestions(data.questions))
       .catch(() => {});
   }, []);
 
@@ -416,13 +432,6 @@ export default function OnboardingPage() {
               it with.
             </span>
           </li>
-          <li className="flex gap-2">
-            <span className="text-muted/60 shrink-0">&bull;</span>
-            <span>
-              Everything is payable in Bitcoin (Lightning) only. Pricing shown
-              at checkout.
-            </span>
-          </li>
         </ul>
 
         <div className="bg-amber-950/40 border border-amber-700/50 rounded p-5 space-y-3">
@@ -509,6 +518,20 @@ export default function OnboardingPage() {
           setError(
             data.error || `Failed to save credentials for ${group.label}.`
           );
+          setSubmitting(false);
+          return;
+        }
+      }
+
+      // Save signup answers (optional — don't block if empty)
+      if (Object.keys(signupAnswers).length > 0) {
+        const answersRes = await authFetch("/api/signup-answers", {
+          method: "POST",
+          body: JSON.stringify({ answers: signupAnswers }),
+        });
+        if (!answersRes.ok) {
+          const data = await answersRes.json();
+          setError(data.error || "Failed to save account details.");
           setSubmitting(false);
           return;
         }
@@ -651,16 +674,73 @@ export default function OnboardingPage() {
             scratch.
           </p>
           <p>
-            If you&apos;re using existing accounts, cancel all but one service
-            now and try to remove your credit card from each. If you can&apos;t
-            remove it, we&apos;ll take care of that when we next activate the
-            subscription.
+            If you&apos;re using existing accounts, cancel all of them. Remove
+            your credit card where you can. We&apos;ll wait for your first
+            queued service to expire on its own, then activate the next one in
+            your queue from there.
           </p>
         </div>
 
         <p className="text-sm text-muted">
           You&apos;ll be able to change the rotation order on the next step.
         </p>
+
+        {signupQuestions.length > 0 && (
+          <div className="space-y-3">
+            <div>
+              <p className="text-xs font-semibold text-muted/70 uppercase tracking-wider">
+                Account details
+              </p>
+              <p className="text-sm text-muted mt-1">
+                Streaming services ask for these during signup. Same answers for
+                all services.
+              </p>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              {signupQuestions.map((q) => {
+                if (q.field_type === "select" && q.options) {
+                  return (
+                    <select
+                      key={q.id}
+                      value={signupAnswers[q.id] ?? ""}
+                      onChange={(e) =>
+                        setSignupAnswers((prev) => ({
+                          ...prev,
+                          [q.id]: e.target.value,
+                        }))
+                      }
+                      className="py-2 px-3 bg-surface border border-border rounded text-foreground text-sm focus:outline-none focus:border-accent appearance-none"
+                    >
+                      <option value="" disabled>
+                        {q.label}
+                      </option>
+                      {q.options.map((opt) => (
+                        <option key={opt} value={opt}>
+                          {opt}
+                        </option>
+                      ))}
+                    </select>
+                  );
+                }
+                return (
+                  <input
+                    key={q.id}
+                    type="text"
+                    value={signupAnswers[q.id] ?? ""}
+                    onChange={(e) =>
+                      setSignupAnswers((prev) => ({
+                        ...prev,
+                        [q.id]: e.target.value,
+                      }))
+                    }
+                    placeholder={q.placeholder ?? q.label}
+                    className="py-2 px-3 bg-surface border border-border rounded text-foreground placeholder:text-muted/50 text-sm focus:outline-none focus:border-accent"
+                  />
+                );
+              })}
+            </div>
+          </div>
+        )}
 
         {error && <p className="text-red-400 text-sm">{error}</p>}
 
