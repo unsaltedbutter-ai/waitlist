@@ -17,6 +17,8 @@ export const GET = withOperator(async (_req: NextRequest) => {
       satsOut,
       deadLetter,
       marginCallUsers,
+      creditLiability,
+      refundLiability,
     ] = await Promise.all([
       // Section 1: Jobs Today
       query(`
@@ -129,6 +131,18 @@ export const GET = withOperator(async (_req: NextRequest) => {
 
       // Section 4: Margin call risk count
       checkMarginCalls().catch(() => []),
+
+      // Section 4: Total credit liability
+      query(`
+        SELECT COALESCE(SUM(credit_sats), 0)::bigint AS total_credit_liability
+        FROM service_credits
+      `),
+
+      // Section 4: Total refund liability
+      query(`
+        SELECT COALESCE(SUM(amount_sats), 0)::bigint AS total_refund_liability
+        FROM pending_refunds
+      `),
     ]);
 
     // Transform jobs today into structured shape
@@ -222,6 +236,8 @@ export const GET = withOperator(async (_req: NextRequest) => {
         sats_in_30d: Number(satsIn.rows[0]?.sats_in ?? 0),
         sats_out_30d: Number(satsOut.rows[0]?.sats_out ?? 0),
         margin_call_count: marginCallUsers.length,
+        total_credit_liability: Number(creditLiability.rows[0]?.total_credit_liability ?? 0),
+        total_refund_liability: Number(refundLiability.rows[0]?.total_refund_liability ?? 0),
       },
       dead_letter: deadLetter.rows.map((r) => ({
         id: r.id,

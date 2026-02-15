@@ -74,6 +74,15 @@ interface PendingRefund {
   created_at: string;
 }
 
+interface LedgerMonth {
+  month: string;
+  membership_revenue: number;
+  credit_deposits: number;
+  gift_card_purchases: number;
+  refunds: number;
+  net_flow: number;
+}
+
 interface Metrics {
   jobs_today: {
     by_status: Record<string, number>;
@@ -90,6 +99,8 @@ interface Metrics {
     sats_in_30d: number;
     sats_out_30d: number;
     margin_call_count: number;
+    total_credit_liability: number;
+    total_refund_liability: number;
   };
   dead_letter: DeadLetterRow[];
 }
@@ -180,6 +191,7 @@ export default function OperatorPage() {
   const [inviteLinks, setInviteLinks] = useState<Record<string, string>>({});
   const [refunds, setRefunds] = useState<PendingRefund[]>([]);
   const [ackingRefunds, setAckingRefunds] = useState<Set<string>>(new Set());
+  const [ledger, setLedger] = useState<LedgerMonth[]>([]);
 
   // ---------- Fetch ----------
 
@@ -187,11 +199,12 @@ export default function OperatorPage() {
     setLoading(true);
     setError("");
     try {
-      const [mRes, aRes, wRes, rRes] = await Promise.all([
+      const [mRes, aRes, wRes, rRes, lRes] = await Promise.all([
         authFetch("/api/operator/metrics"),
         authFetch("/api/operator/alerts"),
         authFetch("/api/operator/waitlist"),
         authFetch("/api/operator/refunds"),
+        authFetch("/api/operator/ledger"),
       ]);
 
       if (mRes.status === 403 || aRes.status === 403) {
@@ -220,6 +233,11 @@ export default function OperatorPage() {
       if (rRes.ok) {
         const rData = await rRes.json();
         setRefunds(rData.refunds);
+      }
+
+      if (lRes.ok) {
+        const lData = await lRes.json();
+        setLedger(lData.months);
       }
     } catch {
       setError("Failed to load operator data.");
@@ -616,6 +634,77 @@ export default function OperatorPage() {
                     }
                   />
                 </div>
+                <div className="grid grid-cols-2 gap-3 mt-3">
+                  <StatCard
+                    label="Credit Liability"
+                    value={`${formatSats(biz?.total_credit_liability ?? 0)} sats`}
+                    sub="total user balances"
+                  />
+                  <StatCard
+                    label="Refund Liability"
+                    value={`${formatSats(biz?.total_refund_liability ?? 0)} sats`}
+                    sub="owed to deleted users"
+                  />
+                </div>
+              </section>
+
+              {/* --------------------------------------------------------- */}
+              {/* Monthly Ledger                                             */}
+              {/* --------------------------------------------------------- */}
+              <section>
+                <SectionHeader>Monthly Ledger</SectionHeader>
+                {ledger.length > 0 ? (
+                  <div className="overflow-x-auto">
+                    <table className="w-full">
+                      <thead>
+                        <tr className="border-b border-border">
+                          <th className={thClass}>Month</th>
+                          <th className={thClass}>Membership</th>
+                          <th className={thClass}>Deposits</th>
+                          <th className={thClass}>Gift Cards</th>
+                          <th className={thClass}>Refunds</th>
+                          <th className={thClass}>Net Flow</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {ledger.map((m) => (
+                          <tr
+                            key={m.month}
+                            className="border-b border-border/50"
+                          >
+                            <td className={tdClass}>{m.month}</td>
+                            <td className={tdMuted}>
+                              {formatSats(m.membership_revenue)}
+                            </td>
+                            <td className="px-3 py-2 text-sm text-green-400">
+                              {formatSats(m.credit_deposits)}
+                            </td>
+                            <td className="px-3 py-2 text-sm text-red-400">
+                              {formatSats(m.gift_card_purchases)}
+                            </td>
+                            <td className="px-3 py-2 text-sm text-red-400">
+                              {formatSats(m.refunds)}
+                            </td>
+                            <td
+                              className={`px-3 py-2 text-sm font-medium ${
+                                m.net_flow >= 0
+                                  ? "text-green-400"
+                                  : "text-red-400"
+                              }`}
+                            >
+                              {m.net_flow >= 0 ? "+" : ""}
+                              {formatSats(m.net_flow)}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                ) : (
+                  <p className="text-muted text-sm">
+                    No transaction data yet.
+                  </p>
+                )}
               </section>
 
               {/* --------------------------------------------------------- */}

@@ -283,7 +283,7 @@ CREATE TABLE credit_transactions (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id         UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     type            TEXT NOT NULL
-                    CHECK (type IN ('prepayment', 'gift_card_purchase', 'membership_fee', 'refund')),
+                    CHECK (type IN ('prepayment', 'zap_topup', 'gift_card_purchase', 'membership_fee', 'refund')),
     amount_sats     BIGINT NOT NULL,
     balance_after_sats BIGINT NOT NULL,
     reference_id    UUID,
