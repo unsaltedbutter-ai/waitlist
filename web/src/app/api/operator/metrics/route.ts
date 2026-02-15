@@ -112,9 +112,9 @@ export const GET = withOperator(async (_req: NextRequest) => {
 
       // Section 4: Business — Sats out (30d)
       query(`
-        SELECT COALESCE(SUM(cost_sats), 0)::bigint AS sats_out
-        FROM gift_card_purchases
-        WHERE status IN ('purchased', 'redeemed') AND created_at > NOW() - INTERVAL '30 days'
+        SELECT COALESCE(SUM(ABS(amount_sats)), 0)::bigint AS sats_out
+        FROM credit_transactions
+        WHERE amount_sats < 0 AND created_at > NOW() - INTERVAL '30 days'
       `),
 
       // Section 5: Dead Letter Jobs

@@ -255,6 +255,7 @@ CREATE TABLE operator_alerts (
     alert_type      TEXT NOT NULL,                        -- 'cancel_failed', 'playbook_stale', 'hardware_down', etc.
     severity        TEXT NOT NULL DEFAULT 'warning'
                     CHECK (severity IN ('info', 'warning', 'critical')),
+    title           TEXT NOT NULL DEFAULT '',
     message         TEXT NOT NULL,
     related_job_id  UUID REFERENCES agent_jobs(id),
     related_user_id UUID REFERENCES users(id),

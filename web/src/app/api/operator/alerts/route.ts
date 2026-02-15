@@ -5,7 +5,7 @@ import { query } from "@/lib/db";
 export const GET = withOperator(async (_req: NextRequest) => {
   try {
     const result = await query(`
-      SELECT id, alert_type, severity, title, message, metadata, created_at
+      SELECT id, alert_type, severity, title, message, created_at
       FROM operator_alerts
       WHERE acknowledged = FALSE
       ORDER BY
