@@ -43,11 +43,7 @@ describe("POST /api/operator/invite", () => {
     vi.mocked(query).mockResolvedValueOnce(
       mockQueryResult([{ id: "wl-1", invited: false }])
     );
-    // INSERT referral_codes
-    vi.mocked(query).mockResolvedValueOnce(
-      mockQueryResult([{ id: "code-1" }])
-    );
-    // UPDATE waitlist
+    // UPDATE waitlist (set invite_code + invited)
     vi.mocked(query).mockResolvedValueOnce(mockQueryResult([]));
 
     const res = await POST(

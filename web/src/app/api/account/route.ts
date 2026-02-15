@@ -38,9 +38,9 @@ export const DELETE = withAuth(async (_req: NextRequest, { userId }) => {
       [contact, amountSats]
     );
 
-    // 4. CASCADE delete user — wipes credentials, queue, subscriptions,
-    //    consents, credits, transactions, prepayments, jobs, action_logs,
-    //    referral_codes, zap_receipts
+    // 4. CASCADE delete user — wipes credentials, queue, rotation_slots,
+    //    subscriptions, consents, credits, transactions, prepayments,
+    //    gift_card_purchases, jobs, action_logs
     await txQuery("DELETE FROM users WHERE id = $1", [userId]);
   });
 

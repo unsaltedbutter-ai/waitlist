@@ -101,7 +101,7 @@ export const GET = withOperator(async (_req: NextRequest) => {
       query(`
         SELECT status, COUNT(*)::int AS count
         FROM subscriptions
-        WHERE status IN ('active', 'lapsing', 'signup_scheduled')
+        WHERE status IN ('active', 'cancel_scheduled', 'signup_scheduled')
         GROUP BY status
       `),
 

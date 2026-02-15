@@ -29,9 +29,8 @@ interface QueueItem {
   service_id: string;
   service_name: string;
   position: number;
-  never_rotate: boolean;
-  subscription_status: "active" | "lapsing" | "signup_scheduled" | null;
-  estimated_lapse_at: string | null;
+  subscription_status: "active" | "cancel_scheduled" | "signup_scheduled" | null;
+  subscription_end_date: string | null;
 }
 
 interface Credits {
@@ -76,7 +75,7 @@ function statusColor(
   switch (status) {
     case "active":
       return "bg-green-900/50 text-green-400 border border-green-700";
-    case "lapsing":
+    case "cancel_scheduled":
       return "bg-amber-900/50 text-amber-400 border border-amber-700";
     case "signup_scheduled":
       return "bg-blue-900/50 text-blue-400 border border-blue-700";
@@ -89,33 +88,33 @@ function statusLabel(status: QueueItem["subscription_status"]): string {
   switch (status) {
     case "active":
       return "Active";
-    case "lapsing":
-      return "Lapsing";
+    case "cancel_scheduled":
+      return "Cancelling";
     case "signup_scheduled":
       return "Signing up";
     default:
-      return "Ended";
+      return "Queued";
   }
 }
 
 function activeDescription(item: QueueItem): string {
-  const date = item.estimated_lapse_at
-    ? formatDate(item.estimated_lapse_at)
+  const date = item.subscription_end_date
+    ? formatDate(item.subscription_end_date)
     : null;
 
   switch (item.subscription_status) {
     case "active":
       return date
-        ? `${item.service_name} — active through ${date}`
+        ? `${item.service_name} — active, ends ~${date}`
         : `${item.service_name} — active`;
-    case "lapsing":
+    case "cancel_scheduled":
       return date
-        ? `${item.service_name} — winding down, ends ~${date}`
-        : `${item.service_name} — winding down`;
+        ? `${item.service_name} — cancel pending, ends ~${date}`
+        : `${item.service_name} — cancel pending`;
     case "signup_scheduled":
       return `${item.service_name} — signing up now`;
     default:
-      return `${item.service_name} — ended`;
+      return `${item.service_name} — queued`;
   }
 }
 
@@ -325,7 +324,7 @@ export default function DashboardPage() {
   const activeItem = queue.find(
     (q) =>
       q.subscription_status === "active" ||
-      q.subscription_status === "lapsing" ||
+      q.subscription_status === "cancel_scheduled" ||
       q.subscription_status === "signup_scheduled"
   );
 

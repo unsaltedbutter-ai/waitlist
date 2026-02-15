@@ -1,24 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { query } from "@/lib/db";
 
-const VALID_SERVICES = [
-  "netflix",
-  "hulu",
-  "disney_plus",
-  "max",
-  "paramount",
-  "peacock",
-  "apple_tv",
-  "prime_video",
-];
-
 export async function POST(req: NextRequest) {
   let body: {
     contactType: "email" | "npub";
     contactValue: string;
-    currentServices: string[];
-    monthlySpend?: number;
-    referralSource?: string;
   };
   try {
     body = await req.json();
@@ -26,7 +12,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
   }
 
-  const { contactType, contactValue, currentServices, monthlySpend, referralSource } = body;
+  const { contactType, contactValue } = body;
 
   if (!contactType || !contactValue) {
     return NextResponse.json(
@@ -58,14 +44,6 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  // Filter to valid services
-  const validServices = (currentServices || []).filter((s) =>
-    VALID_SERVICES.includes(s)
-  );
-
-  // Convert monthly spend to cents
-  const spendCents = monthlySpend ? Math.round(monthlySpend * 100) : null;
-
   // Check for duplicate
   if (contactType === "email") {
     const existing = await query(
@@ -92,14 +70,11 @@ export async function POST(req: NextRequest) {
   }
 
   await query(
-    `INSERT INTO waitlist (email, nostr_npub, current_services, monthly_spend_cents, referral_source)
-     VALUES ($1, $2, $3, $4, $5)`,
+    `INSERT INTO waitlist (email, nostr_npub)
+     VALUES ($1, $2)`,
     [
       contactType === "email" ? contactValue.toLowerCase() : null,
       contactType === "npub" ? contactValue : null,
-      validServices.length > 0 ? validServices : null,
-      spendCents,
-      referralSource || null,
     ]
   );
 

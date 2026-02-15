@@ -9,12 +9,11 @@ export const GET = withOperator(async (_req: NextRequest) => {
       id: string;
       email: string | null;
       nostr_npub: string | null;
-      current_services: string[] | null;
       invited: boolean;
       invited_at: string | null;
       created_at: string;
     }>(
-      `SELECT id, email, nostr_npub, current_services, invited, invited_at, created_at
+      `SELECT id, email, nostr_npub, invited, invited_at, created_at
        FROM waitlist
        ORDER BY created_at ASC`
     ),

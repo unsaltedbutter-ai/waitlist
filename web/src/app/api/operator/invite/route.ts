@@ -5,7 +5,7 @@ import { generateInviteCode, isAtCapacity } from "@/lib/capacity";
 
 const BASE_URL = process.env.NEXT_PUBLIC_BASE_URL ?? "http://localhost:3000";
 
-export const POST = withOperator(async (req: NextRequest, { userId }) => {
+export const POST = withOperator(async (req: NextRequest) => {
   let body: { waitlistId: string };
   try {
     body = await req.json();
@@ -49,25 +49,14 @@ export const POST = withOperator(async (req: NextRequest, { userId }) => {
     );
   }
 
-  // Generate invite code
+  // Generate invite code and store on waitlist entry
   const code = generateInviteCode();
 
-  // Insert referral code (operator-owned)
-  const codeResult = await query<{ id: string }>(
-    `INSERT INTO referral_codes (owner_id, code, status, expires_at)
-     VALUES ($1, $2, 'active', NOW() + INTERVAL '7 days')
-     RETURNING id`,
-    [userId, code]
-  );
-
-  const codeId = codeResult.rows[0].id;
-
-  // Update waitlist entry
   await query(
     `UPDATE waitlist
-     SET invited = TRUE, invited_at = NOW(), invite_code_id = $1
+     SET invited = TRUE, invited_at = NOW(), invite_code = $1
      WHERE id = $2`,
-    [codeId, waitlistId]
+    [code, waitlistId]
   );
 
   const inviteLink = `${BASE_URL}/login?code=${code}`;

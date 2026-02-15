@@ -72,7 +72,7 @@ export default function BusinessPage() {
             label="Active Subs"
             value={
               (biz.subscriptions?.active ?? 0) +
-              (biz.subscriptions?.lapsing ?? 0) +
+              (biz.subscriptions?.cancel_scheduled ?? 0) +
               (biz.subscriptions?.signup_scheduled ?? 0)
             }
           />

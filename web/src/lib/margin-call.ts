@@ -9,54 +9,45 @@ interface MarginCallUser {
   email: string | null;
   currentServiceName: string;
   nextServiceName: string;
-  estimatedLapseAt: Date;
+  subscriptionEndDate: Date;
   giftCardCostCents: number;
   giftCardCostSats: number;
   creditSats: number;
-  daysUntilLapse: number;
+  daysUntilEnd: number;
   alertLevel: AlertLevel;
 }
 
 /**
- * Daily margin call check. For each user with an active/lapsing subscription
- * approaching estimated_lapse_at, compare service credit balance against the
- * cost of the next gift card in their queue.
+ * Daily margin call check. For each user with a rotation slot approaching
+ * lock-in, compare service credit balance against the cost of the next
+ * gift card in their queue.
  *
  * Returns users who need alerts, grouped by severity.
  */
 export async function checkMarginCalls(): Promise<MarginCallUser[]> {
-  // Find users with subscriptions lapsing in the next 10 days
+  // Find users with active/cancel_scheduled subscriptions ending in the next 10 days
+  // where the next service in their rotation slot needs a gift card
   const result = await query(
     `SELECT
-       s.user_id,
+       rs.user_id,
        u.email,
        ss_current.display_name AS current_service_name,
-       s.estimated_lapse_at,
-       s.service_id AS current_service_id,
-       rq_next.service_id AS next_service_id,
+       s.subscription_end_date,
+       rs.next_service_id,
        ss_next.display_name AS next_service_name,
        COALESCE(w.credit_sats, 0) AS credit_sats
-     FROM subscriptions s
-     JOIN users u ON u.id = s.user_id
-     JOIN streaming_services ss_current ON ss_current.id = s.service_id
-     LEFT JOIN service_credits w ON w.user_id = s.user_id
-     -- Find the next service in the queue (position after current)
-     LEFT JOIN rotation_queue rq_current
-       ON rq_current.user_id = s.user_id AND rq_current.service_id = s.service_id
-     LEFT JOIN rotation_queue rq_next
-       ON rq_next.user_id = s.user_id
-       AND rq_next.position = (
-         SELECT MIN(rq2.position) FROM rotation_queue rq2
-         WHERE rq2.user_id = s.user_id
-           AND rq2.position > COALESCE(rq_current.position, 0)
-       )
-     LEFT JOIN streaming_services ss_next ON ss_next.id = rq_next.service_id
-     WHERE s.status IN ('active', 'lapsing')
-       AND s.estimated_lapse_at IS NOT NULL
-       AND s.estimated_lapse_at <= NOW() + INTERVAL '10 days'
-       AND rq_next.service_id IS NOT NULL
-       AND (rq_current.extend_current IS NOT TRUE)
-     ORDER BY s.estimated_lapse_at`,
+     FROM rotation_slots rs
+     JOIN users u ON u.id = rs.user_id
+     JOIN subscriptions s ON s.id = rs.current_subscription_id
+     JOIN streaming_services ss_current ON ss_current.id = rs.current_service_id
+     LEFT JOIN service_credits w ON w.user_id = rs.user_id
+     LEFT JOIN streaming_services ss_next ON ss_next.id = rs.next_service_id
+     WHERE s.status IN ('active', 'cancel_scheduled')
+       AND s.subscription_end_date IS NOT NULL
+       AND s.subscription_end_date <= NOW() + INTERVAL '10 days'
+       AND rs.next_service_id IS NOT NULL
+       AND rs.locked_at IS NULL
+     ORDER BY s.subscription_end_date`,
     []
   );
 
@@ -65,10 +56,10 @@ export async function checkMarginCalls(): Promise<MarginCallUser[]> {
   for (const row of result.rows) {
     const nextServiceId: string = row.next_service_id;
     const creditSats = Number(row.credit_sats);
-    const lapseAt = new Date(row.estimated_lapse_at);
+    const endDate = new Date(row.subscription_end_date);
     const now = new Date();
-    const daysUntilLapse = Math.ceil(
-      (lapseAt.getTime() - now.getTime()) / (1000 * 60 * 60 * 24)
+    const daysUntilEnd = Math.ceil(
+      (endDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24)
     );
 
     let giftCardCostCents: number;
@@ -85,11 +76,11 @@ export async function checkMarginCalls(): Promise<MarginCallUser[]> {
     }
 
     let alertLevel: AlertLevel;
-    if (daysUntilLapse <= 0) {
+    if (daysUntilEnd <= 0) {
       alertLevel = "paused";
-    } else if (daysUntilLapse <= 3) {
+    } else if (daysUntilEnd <= 3) {
       alertLevel = "critical";
-    } else if (daysUntilLapse <= 5) {
+    } else if (daysUntilEnd <= 5) {
       alertLevel = "email";
     } else {
       alertLevel = "warning";
@@ -100,11 +91,11 @@ export async function checkMarginCalls(): Promise<MarginCallUser[]> {
       email: row.email,
       currentServiceName: row.current_service_name,
       nextServiceName: row.next_service_name,
-      estimatedLapseAt: lapseAt,
+      subscriptionEndDate: endDate,
       giftCardCostCents,
       giftCardCostSats,
       creditSats,
-      daysUntilLapse,
+      daysUntilEnd,
       alertLevel,
     });
   }
@@ -118,38 +109,23 @@ export async function checkMarginCalls(): Promise<MarginCallUser[]> {
 export async function getUserMarginStatus(
   userId: string
 ): Promise<{ needsTopUp: boolean; shortfallSats: number; shortfallUsdCents: number } | null> {
-  const sub = await query(
-    `SELECT s.service_id, s.estimated_lapse_at,
-            rq_current.position AS current_pos,
-            rq_current.extend_current
-     FROM subscriptions s
-     JOIN rotation_queue rq_current
-       ON rq_current.user_id = s.user_id AND rq_current.service_id = s.service_id
-     WHERE s.user_id = $1 AND s.status IN ('active', 'lapsing')
-       AND s.estimated_lapse_at IS NOT NULL
-     ORDER BY s.estimated_lapse_at
+  // Find the user's rotation slots that need gift cards
+  const slot = await query(
+    `SELECT rs.next_service_id, s.subscription_end_date
+     FROM rotation_slots rs
+     JOIN subscriptions s ON s.id = rs.current_subscription_id
+     WHERE rs.user_id = $1
+       AND s.status IN ('active', 'cancel_scheduled')
+       AND rs.next_service_id IS NOT NULL
+       AND rs.locked_at IS NULL
+     ORDER BY s.subscription_end_date
      LIMIT 1`,
     [userId]
   );
 
-  if (sub.rows.length === 0) return null;
+  if (slot.rows.length === 0) return null;
 
-  const { current_pos, extend_current } = sub.rows[0];
-
-  // If extending current, the cost is for the same service
-  let nextServiceId: string;
-  if (extend_current) {
-    nextServiceId = sub.rows[0].service_id;
-  } else {
-    const next = await query(
-      `SELECT service_id FROM rotation_queue
-       WHERE user_id = $1 AND position > $2
-       ORDER BY position LIMIT 1`,
-      [userId, current_pos]
-    );
-    if (next.rows.length === 0) return null;
-    nextServiceId = next.rows[0].service_id;
-  }
+  const nextServiceId: string = slot.rows[0].next_service_id;
 
   let costCents: number;
   try {

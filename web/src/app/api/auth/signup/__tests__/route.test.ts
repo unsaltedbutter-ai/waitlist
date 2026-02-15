@@ -9,21 +9,11 @@ vi.mock("@/lib/auth", () => ({
   hashPassword: vi.fn().mockResolvedValue("hashed-pw"),
 }));
 vi.mock("@/lib/capacity", () => ({
-  validateInviteCode: vi.fn(),
-  consumeInviteCode: vi.fn(),
   isAtCapacity: vi.fn(),
-  getActiveUserCount: vi.fn(),
-  generateReferralCodes: vi.fn(),
 }));
 
 import { query } from "@/lib/db";
-import {
-  validateInviteCode,
-  consumeInviteCode,
-  isAtCapacity,
-  getActiveUserCount,
-  generateReferralCodes,
-} from "@/lib/capacity";
+import { isAtCapacity } from "@/lib/capacity";
 import { POST } from "../route";
 
 function makeRequest(body: object): Request {
@@ -36,31 +26,17 @@ function makeRequest(body: object): Request {
 
 beforeEach(() => {
   vi.mocked(query).mockReset();
-  vi.mocked(validateInviteCode).mockReset();
-  vi.mocked(consumeInviteCode).mockReset();
   vi.mocked(isAtCapacity).mockReset();
-  vi.mocked(getActiveUserCount).mockReset();
-  vi.mocked(generateReferralCodes).mockReset();
-
-  // Default: invite code passes all gates
-  vi.mocked(validateInviteCode).mockResolvedValue({
-    valid: true,
-    codeRow: {
-      id: "code-123",
-      owner_id: "owner-1",
-      status: "active",
-      expires_at: null,
-    },
-  });
   vi.mocked(isAtCapacity).mockResolvedValue(false);
-  vi.mocked(consumeInviteCode).mockResolvedValue(undefined);
-  vi.mocked(getActiveUserCount).mockResolvedValue(100);
-  vi.mocked(generateReferralCodes).mockResolvedValue(undefined);
 });
 
 describe("POST /api/auth/signup", () => {
   it("valid signup → 201 + token", async () => {
-    // Check existing: none
+    // SELECT waitlist: code found
+    vi.mocked(query).mockResolvedValueOnce(
+      mockQueryResult([{ id: "wl-1" }])
+    );
+    // Check existing user: none
     vi.mocked(query).mockResolvedValueOnce(mockQueryResult([]));
     // Insert returning id
     vi.mocked(query).mockResolvedValueOnce(
@@ -107,6 +83,10 @@ describe("POST /api/auth/signup", () => {
   });
 
   it("duplicate email → 409", async () => {
+    // SELECT waitlist: code found
+    vi.mocked(query).mockResolvedValueOnce(
+      mockQueryResult([{ id: "wl-1" }])
+    );
     // Existing user found
     vi.mocked(query).mockResolvedValueOnce(
       mockQueryResult([{ id: "existing-user" }])
@@ -153,7 +133,8 @@ describe("POST /api/auth/signup", () => {
   });
 
   it("invalid invite code → 403", async () => {
-    vi.mocked(validateInviteCode).mockResolvedValueOnce({ valid: false });
+    // SELECT waitlist: code not found
+    vi.mocked(query).mockResolvedValueOnce(mockQueryResult([]));
 
     const res = await POST(
       makeRequest({
@@ -167,40 +148,11 @@ describe("POST /api/auth/signup", () => {
     expect(data.error).toMatch(/invalid or expired/i);
   });
 
-  it("expired invite code → 403", async () => {
-    vi.mocked(validateInviteCode).mockResolvedValueOnce({
-      valid: false,
-      expired: true,
-    });
-
-    const res = await POST(
-      makeRequest({
-        email: "test@example.com",
-        password: "strongpassword",
-        inviteCode: "EXPIREDCODE",
-      }) as any
-    );
-    expect(res.status).toBe(403);
-    const data = await res.json();
-    expect(data.error).toMatch(/invalid or expired/i);
-  });
-
-  it("already-used invite code → 403", async () => {
-    vi.mocked(validateInviteCode).mockResolvedValueOnce({ valid: false });
-
-    const res = await POST(
-      makeRequest({
-        email: "test@example.com",
-        password: "strongpassword",
-        inviteCode: "USEDCODE",
-      }) as any
-    );
-    expect(res.status).toBe(403);
-    const data = await res.json();
-    expect(data.error).toMatch(/invalid or expired/i);
-  });
-
   it("at capacity → 403", async () => {
+    // SELECT waitlist: code found
+    vi.mocked(query).mockResolvedValueOnce(
+      mockQueryResult([{ id: "wl-1" }])
+    );
     vi.mocked(isAtCapacity).mockResolvedValueOnce(true);
 
     const res = await POST(
@@ -213,29 +165,5 @@ describe("POST /api/auth/signup", () => {
     expect(res.status).toBe(403);
     const data = await res.json();
     expect(data.error).toMatch(/at capacity/i);
-  });
-
-  it("valid code → 201, consumes code and generates referral codes", async () => {
-    // Check existing: none
-    vi.mocked(query).mockResolvedValueOnce(mockQueryResult([]));
-    // Insert returning id
-    vi.mocked(query).mockResolvedValueOnce(
-      mockQueryResult([{ id: "new-user-456" }])
-    );
-
-    const res = await POST(
-      makeRequest({
-        email: "new@example.com",
-        password: "strongpassword",
-        inviteCode: "VALIDCODE123",
-      }) as any
-    );
-    expect(res.status).toBe(201);
-    const data = await res.json();
-    expect(data.userId).toBe("new-user-456");
-
-    expect(consumeInviteCode).toHaveBeenCalledWith("code-123", "new-user-456");
-    expect(getActiveUserCount).toHaveBeenCalled();
-    expect(generateReferralCodes).toHaveBeenCalledWith("new-user-456", 100);
   });
 });

@@ -1,10 +1,11 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
+import { mockQueryResult } from "@/__test-utils__/fixtures";
 
-vi.mock("@/lib/capacity", () => ({
-  validateInviteCode: vi.fn(),
+vi.mock("@/lib/db", () => ({
+  query: vi.fn(),
 }));
 
-import { validateInviteCode } from "@/lib/capacity";
+import { query } from "@/lib/db";
 import { POST } from "../route";
 
 function makeRequest(body: object): Request {
@@ -16,20 +17,14 @@ function makeRequest(body: object): Request {
 }
 
 beforeEach(() => {
-  vi.mocked(validateInviteCode).mockReset();
+  vi.mocked(query).mockReset();
 });
 
 describe("POST /api/invite/validate", () => {
   it("valid code → { valid: true }", async () => {
-    vi.mocked(validateInviteCode).mockResolvedValueOnce({
-      valid: true,
-      codeRow: {
-        id: "code-1",
-        owner_id: "user-1",
-        status: "active",
-        expires_at: null,
-      },
-    });
+    vi.mocked(query).mockResolvedValueOnce(
+      mockQueryResult([{ id: "wl-1" }])
+    );
 
     const res = await POST(makeRequest({ code: "VALIDCODE123" }) as any);
     expect(res.status).toBe(200);
@@ -38,30 +33,9 @@ describe("POST /api/invite/validate", () => {
   });
 
   it("nonexistent code → { valid: false }", async () => {
-    vi.mocked(validateInviteCode).mockResolvedValueOnce({ valid: false });
+    vi.mocked(query).mockResolvedValueOnce(mockQueryResult([]));
 
     const res = await POST(makeRequest({ code: "DOESNOTEXIST" }) as any);
-    expect(res.status).toBe(200);
-    const data = await res.json();
-    expect(data).toEqual({ valid: false });
-  });
-
-  it("expired code → { valid: false, expired: true }", async () => {
-    vi.mocked(validateInviteCode).mockResolvedValueOnce({
-      valid: false,
-      expired: true,
-    });
-
-    const res = await POST(makeRequest({ code: "EXPIREDCODE1" }) as any);
-    expect(res.status).toBe(200);
-    const data = await res.json();
-    expect(data).toEqual({ valid: false, expired: true });
-  });
-
-  it("used code → { valid: false }", async () => {
-    vi.mocked(validateInviteCode).mockResolvedValueOnce({ valid: false });
-
-    const res = await POST(makeRequest({ code: "USEDCODE1234" }) as any);
     expect(res.status).toBe(200);
     const data = await res.json();
     expect(data).toEqual({ valid: false });

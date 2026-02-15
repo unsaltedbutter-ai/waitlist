@@ -136,7 +136,6 @@ export default function WaitlistPage() {
               <thead>
                 <tr className="border-b border-border">
                   <th className={thClass}>Contact</th>
-                  <th className={thClass}>Services</th>
                   <th className={thClass}>Signed Up</th>
                   <th className={thClass}>Status</th>
                   <th className={thClass}>Action</th>
@@ -150,9 +149,6 @@ export default function WaitlistPage() {
                         (entry.nostr_npub
                           ? `${entry.nostr_npub.slice(0, 12)}...`
                           : "\u2014")}
-                    </td>
-                    <td className={tdMuted}>
-                      {entry.current_services?.join(", ") ?? "\u2014"}
                     </td>
                     <td className={tdMuted}>{formatDate(entry.created_at)}</td>
                     <td className={tdClass}>

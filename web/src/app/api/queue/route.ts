@@ -4,12 +4,12 @@ import { query, transaction } from "@/lib/db";
 
 export const GET = withAuth(async (_req: NextRequest, { userId }) => {
   const result = await query(
-    `SELECT rq.service_id, ss.display_name AS service_name, rq.position, rq.never_rotate,
-            s.status AS subscription_status, s.estimated_lapse_at
+    `SELECT rq.service_id, ss.display_name AS service_name, rq.position,
+            s.status AS subscription_status, s.subscription_end_date
      FROM rotation_queue rq
      JOIN streaming_services ss ON ss.id = rq.service_id
      LEFT JOIN subscriptions s ON s.user_id = rq.user_id AND s.service_id = rq.service_id
-       AND s.status IN ('active', 'signup_scheduled', 'lapsing')
+       AND s.status IN ('active', 'signup_scheduled', 'cancel_scheduled')
      WHERE rq.user_id = $1
      ORDER BY rq.position`,
     [userId]
@@ -49,14 +49,23 @@ export const PUT = withAuth(async (req: NextRequest, { userId }) => {
   );
   const existingIds = new Set(existing.rows.map((r) => r.service_id));
 
-  // Reorder if the submitted set matches existing exactly
-  const isReorder =
-    existingIds.size > 0 &&
-    order.length === existingIds.size &&
-    order.every((id) => existingIds.has(id));
-
-  if (!isReorder) {
-    // Creation or replacement: validate credentials exist for each service
+  if (existingIds.size > 0) {
+    // Existing queue — must be an exact reorder (same services, different positions)
+    const unknowns = order.filter((id) => !existingIds.has(id));
+    if (unknowns.length > 0) {
+      return NextResponse.json(
+        { error: `Services not in your queue: ${unknowns.join(", ")}` },
+        { status: 400 }
+      );
+    }
+    if (order.length !== existingIds.size) {
+      return NextResponse.json(
+        { error: "Reorder must include all services in your queue" },
+        { status: 400 }
+      );
+    }
+  } else {
+    // No existing queue — creating one, validate credentials exist
     const creds = await query(
       "SELECT service_id FROM streaming_credentials WHERE user_id = $1",
       [userId]

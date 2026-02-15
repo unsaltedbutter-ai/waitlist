@@ -54,7 +54,6 @@ export interface WaitlistEntry {
   id: string;
   email: string | null;
   nostr_npub: string | null;
-  current_services: string[] | null;
   invited: boolean;
   invited_at: string | null;
   created_at: string;

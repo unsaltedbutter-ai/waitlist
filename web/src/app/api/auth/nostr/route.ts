@@ -2,13 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { verifyEvent, type Event } from "nostr-tools";
 import { query } from "@/lib/db";
 import { createToken } from "@/lib/auth";
-import {
-  validateInviteCode,
-  consumeInviteCode,
-  isAtCapacity,
-  getActiveUserCount,
-  generateReferralCodes,
-} from "@/lib/capacity";
+import { isAtCapacity } from "@/lib/capacity";
 
 export async function POST(req: NextRequest) {
   let body: { event: Event; inviteCode?: string };
@@ -70,9 +64,12 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  // Validate invite code
-  const codeResult = await validateInviteCode(inviteCode);
-  if (!codeResult.valid || !codeResult.codeRow) {
+  // Validate invite code against waitlist
+  const codeCheck = await query<{ id: string }>(
+    "SELECT id FROM waitlist WHERE invite_code = $1 AND invited = TRUE",
+    [inviteCode]
+  );
+  if (codeCheck.rows.length === 0) {
     return NextResponse.json(
       { error: "Invalid or expired invite code" },
       { status: 403 }
@@ -89,21 +86,13 @@ export async function POST(req: NextRequest) {
 
   // Create new user
   const result = await query(
-    `INSERT INTO users (nostr_npub, status, membership_type, referred_by_code_id)
-     VALUES ($1, 'active', 'monthly', $2)
+    `INSERT INTO users (nostr_npub, status, membership_plan, billing_period)
+     VALUES ($1, 'active', 'solo', 'monthly')
      RETURNING id`,
-    [npub, codeResult.codeRow.id]
+    [npub]
   );
 
   const userId = result.rows[0].id;
-
-  // Mark code as used
-  await consumeInviteCode(codeResult.codeRow.id, userId);
-
-  // Generate referral codes for the new user
-  const activeCount = await getActiveUserCount();
-  await generateReferralCodes(userId, activeCount);
-
   const token = await createToken(userId);
 
   return NextResponse.json({ token, userId }, { status: 201 });

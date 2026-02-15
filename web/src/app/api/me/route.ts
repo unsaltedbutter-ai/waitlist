@@ -4,8 +4,8 @@ import { query } from "@/lib/db";
 
 export const GET = withAuth(async (_req: NextRequest, { userId }) => {
   const result = await query(
-    `SELECT id, email, nostr_npub, status, membership_type, membership_expires_at,
-            max_concurrent, created_at
+    `SELECT id, email, nostr_npub, status, membership_plan, billing_period,
+            membership_expires_at, created_at
      FROM users WHERE id = $1`,
     [userId]
   );

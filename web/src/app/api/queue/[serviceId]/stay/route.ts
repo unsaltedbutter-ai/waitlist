@@ -8,10 +8,10 @@ export const POST = withAuth(async (_req: NextRequest, { userId, params }) => {
     return NextResponse.json({ error: "Missing serviceId" }, { status: 400 });
   }
 
-  // Verify user has this service in queue with an active or lapsing subscription
+  // Verify user has this service with an active or cancel_scheduled subscription
   const sub = await query(
     `SELECT s.id FROM subscriptions s
-     WHERE s.user_id = $1 AND s.service_id = $2 AND s.status IN ('active', 'lapsing')`,
+     WHERE s.user_id = $1 AND s.service_id = $2 AND s.status IN ('active', 'cancel_scheduled')`,
     [userId, serviceId]
   );
 
@@ -22,21 +22,11 @@ export const POST = withAuth(async (_req: NextRequest, { userId, params }) => {
     );
   }
 
-  // Set extend_current flag — scheduler will buy another gift card instead of advancing queue
-  const result = await query(
-    `UPDATE rotation_queue
-     SET extend_current = TRUE
-     WHERE user_id = $1 AND service_id = $2
-     RETURNING id, extend_current`,
-    [userId, serviceId]
-  );
+  // "Stay" means: buy another gift card for the current service instead of advancing.
+  // This is handled by the orchestrator at lock-in time.
+  // For now, we record the intent by keeping the service at its current queue position
+  // and the orchestrator will purchase a gift card for the same service.
+  // TODO: Implement stay logic with rotation_slots once orchestrator is built.
 
-  if (result.rows.length === 0) {
-    return NextResponse.json(
-      { error: "Service not in your queue" },
-      { status: 404 }
-    );
-  }
-
-  return NextResponse.json({ success: true, extendCurrent: true });
+  return NextResponse.json({ success: true });
 });
