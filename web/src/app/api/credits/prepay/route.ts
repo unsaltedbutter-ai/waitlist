@@ -12,6 +12,7 @@ export const POST = withAuth(async (req: NextRequest, { userId }) => {
     amount_sats?: number;
     membership_plan?: MembershipPlan;
     billing_period?: BillingPeriod;
+    service_credit_usd_cents?: number;
   } = {};
   try {
     body = await req.json();
@@ -45,6 +46,13 @@ export const POST = withAuth(async (req: NextRequest, { userId }) => {
     amountSats = await usdCentsToSats(body.amount_usd_cents);
   }
 
+  // Add service credit (gift card cost) for membership invoices
+  let serviceCreditSats = 0;
+  if (isMembership && body.service_credit_usd_cents && body.service_credit_usd_cents > 0) {
+    serviceCreditSats = await usdCentsToSats(body.service_credit_usd_cents);
+    amountSats = (amountSats ?? 0) + serviceCreditSats;
+  }
+
   // Create BTCPay invoice
   const btcpayUrl = process.env.BTCPAY_URL;
   const btcpayApiKey = process.env.BTCPAY_API_KEY;
@@ -63,6 +71,8 @@ export const POST = withAuth(async (req: NextRequest, { userId }) => {
         type: "membership",
         membership_plan: body.membership_plan,
         billing_period: body.billing_period,
+        service_credit_usd_cents: body.service_credit_usd_cents ?? 0,
+        service_credit_sats: serviceCreditSats,
       }
     : { userId, type: "prepayment" };
 

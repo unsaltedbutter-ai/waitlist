@@ -167,6 +167,10 @@ export default function OnboardingPage() {
   const [signupAnswers, setSignupAnswers] = useState<Record<string, string>>(
     {}
   );
+  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
+  const [useSameCreds, setUseSameCreds] = useState(false);
+  const [sharedCreds, setSharedCreds] = useState({ email: "", password: "" });
+  const [showPasswords, setShowPasswords] = useState(false);
 
   // Step 4 state (rotation queue)
   const [queue, setQueue] = useState<QueueItem[]>([]);
@@ -195,7 +199,15 @@ export default function OnboardingPage() {
       .catch(() => {});
     fetch("/api/signup-questions")
       .then((r) => r.json())
-      .then((data) => setSignupQuestions(data.questions))
+      .then((data) => {
+        setSignupQuestions(data.questions);
+        // Prepopulate defaults for select fields
+        const defaults: Record<string, string> = {};
+        for (const q of data.questions) {
+          if (q.id === "gender") defaults[q.id] = "Prefer Not To Say";
+        }
+        setSignupAnswers((prev) => ({ ...defaults, ...prev }));
+      })
       .catch(() => {});
   }, []);
 
@@ -287,6 +299,18 @@ export default function OnboardingPage() {
   // First service price in sats (approximate — gift cards are USD-denominated)
   const firstServicePriceCents = firstQueueItem?.priceCents ?? 0;
 
+  // Approximate sats-per-USD-cent rate derived from pricing data
+  function approxUsdCentsToSats(cents: number): number {
+    if (pricing.length === 0 || cents === 0) return 0;
+    const p = pricing[0];
+    if (!p.approx_usd_cents || p.approx_usd_cents === 0) return 0;
+    return Math.round(cents * (p.price_sats / p.approx_usd_cents));
+  }
+
+  // First service in sats (approximate — gift cards are USD-denominated)
+  const firstServiceApproxSats = approxUsdCentsToSats(firstServicePriceCents);
+  const totalApproxSats = membershipTotalSats + firstServiceApproxSats;
+
   // Annual savings in sats
   const monthlyPrice = getPrice(membershipPlan, "monthly");
   const annualPrice = getPrice(membershipPlan, "annual");
@@ -374,6 +398,13 @@ export default function OnboardingPage() {
   function renderStep2() {
     return (
       <div className="space-y-8">
+        <button
+          type="button"
+          onClick={() => setStep(1)}
+          className="text-sm text-muted hover:text-foreground transition-colors"
+        >
+          &larr; Back
+        </button>
         <div>
           <h1 className="text-4xl font-bold tracking-tight text-foreground mb-6">
             How it works
@@ -476,24 +507,40 @@ export default function OnboardingPage() {
   }
 
   // --- Step 3: Select Plans & Add Credentials ---
+  function getCredsForGroup(gid: string): { email: string; password: string } {
+    if (useSameCreds) return sharedCreds;
+    return creds[gid] ?? { email: "", password: "" };
+  }
+
   async function saveCredentials() {
     setError("");
 
-    const complete = selectedGroupIds.filter((gid) => {
-      const c = creds[gid];
-      return c?.email && c?.password;
-    });
-    if (complete.length < 2) {
-      setError("Select and provide credentials for at least two services.");
-      return;
-    }
-
-    for (const gid of selectedGroupIds) {
-      const c = creds[gid];
-      if (!c?.email || !c?.password) {
-        const group = groups.find((g) => g.id === gid);
-        setError(`Enter credentials for ${group?.label ?? gid}.`);
+    if (useSameCreds) {
+      if (!sharedCreds.email || !sharedCreds.password) {
+        setError("Enter the shared email and password.");
         return;
+      }
+      if (selectedGroupIds.length < 2) {
+        setError("Select at least two services.");
+        return;
+      }
+    } else {
+      const complete = selectedGroupIds.filter((gid) => {
+        const c = creds[gid];
+        return c?.email && c?.password;
+      });
+      if (complete.length < 2) {
+        setError("Select and provide credentials for at least two services.");
+        return;
+      }
+
+      for (const gid of selectedGroupIds) {
+        const c = creds[gid];
+        if (!c?.email || !c?.password) {
+          const group = groups.find((g) => g.id === gid);
+          setError(`Enter credentials for ${group?.label ?? gid}.`);
+          return;
+        }
       }
     }
 
@@ -502,7 +549,7 @@ export default function OnboardingPage() {
       for (const gid of selectedGroupIds) {
         const group = groups.find((g) => g.id === gid);
         if (!group) continue;
-        const c = creds[gid];
+        const c = getCredsForGroup(gid);
 
         const res = await authFetch("/api/credentials", {
           method: "POST",
@@ -558,11 +605,40 @@ export default function OnboardingPage() {
     }
   }
 
+  function toggleAccordion(groupId: string) {
+    setExpandedGroups((prev) => {
+      const next = new Set(prev);
+      if (next.has(groupId)) {
+        next.delete(groupId);
+      } else {
+        next.add(groupId);
+      }
+      return next;
+    });
+  }
+
+  function getCheapestPrice(group: ServiceGroup): number {
+    return Math.min(...group.plans.map((p) => p.monthly_price_cents));
+  }
+
   function renderStep3() {
-    const canSave = selectedGroupIds.length >= 2;
+    const hasEnoughServices = selectedGroupIds.length >= 2;
+    const canSave = useSameCreds
+      ? hasEnoughServices && !!sharedCreds.email && !!sharedCreds.password
+      : selectedGroupIds.filter((gid) => {
+          const c = creds[gid];
+          return c?.email && c?.password;
+        }).length >= 2;
 
     return (
       <div className="space-y-6">
+        <button
+          type="button"
+          onClick={() => setStep(2)}
+          className="text-sm text-muted hover:text-foreground transition-colors"
+        >
+          &larr; Back
+        </button>
         <div>
           <h1 className="text-4xl font-bold tracking-tight text-foreground mb-3">
             Your streaming plans
@@ -574,63 +650,174 @@ export default function OnboardingPage() {
           </p>
         </div>
 
-        <div className="space-y-4">
+        {/* Credentials callout — amber left border, top of page */}
+        <div className="border-l-4 border-amber-500 bg-amber-500/[0.08] rounded-r-lg px-5 py-4">
+          <p className="text-amber-200 text-sm font-medium leading-relaxed">
+            Fresh credentials are cleanest. Give us an email and password you
+            haven&apos;t used with the service before &mdash; we&apos;ll create
+            a new account for you.
+          </p>
+          <p className="text-muted text-sm mt-3 leading-relaxed">
+            Using existing accounts? Cancel all of them first. Remove your
+            credit card where you can. When your first queued service expires,
+            we&apos;ll add another month. After that the rotation begins.
+          </p>
+        </div>
+
+        {/* Same credentials toggle */}
+        <div className="space-y-3">
+          <label className="flex items-center gap-3 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={useSameCreds}
+              onChange={(e) => setUseSameCreds(e.target.checked)}
+              className="w-4 h-4 rounded border-border bg-surface text-accent accent-amber-500"
+            />
+            <span className="text-sm text-foreground font-medium">
+              Use the same credentials for every service
+            </span>
+          </label>
+
+          {useSameCreds && (
+            <div className="grid grid-cols-2 gap-3">
+              <input
+                type="email"
+                value={sharedCreds.email}
+                onChange={(e) =>
+                  setSharedCreds((prev) => ({ ...prev, email: e.target.value }))
+                }
+                placeholder="Login email"
+                className="py-2.5 px-3 bg-surface border border-border rounded-lg text-foreground placeholder:text-muted/50 text-sm focus:outline-none focus:border-amber-500/60 focus:ring-1 focus:ring-amber-500/20 transition-colors"
+              />
+              <div className="relative">
+                <input
+                  type={showPasswords ? "text" : "password"}
+                  value={sharedCreds.password}
+                  onChange={(e) =>
+                    setSharedCreds((prev) => ({
+                      ...prev,
+                      password: e.target.value,
+                    }))
+                  }
+                  placeholder="Password"
+                  className="w-full py-2.5 px-3 pr-10 bg-surface border border-border rounded-lg text-foreground placeholder:text-muted/50 text-sm focus:outline-none focus:border-amber-500/60 focus:ring-1 focus:ring-amber-500/20 transition-colors"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPasswords((p) => !p)}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-muted/50 hover:text-muted transition-colors"
+                  tabIndex={-1}
+                >
+                  {showPasswords ? (
+                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"/><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
+                  ) : (
+                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+                  )}
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Service accordion */}
+        <div className="space-y-2">
           {groups.map((group) => {
             const selectedPlanId = selectedPlans[group.id];
             const isSelected = !!selectedPlanId;
+            const isExpanded = expandedGroups.has(group.id);
+            const selectedPlan = getSelectedPlan(group.id);
 
             return (
               <div key={group.id}>
-                <p className="text-xs font-semibold text-muted/70 uppercase tracking-wider mb-1.5">
-                  {group.label}
-                </p>
-                <div className="space-y-1">
-                  {group.plans.map((plan) => {
-                    const selected = selectedPlanId === plan.id;
-                    return (
-                      <button
-                        key={plan.id}
-                        type="button"
-                        onClick={() => togglePlan(group.id, plan.id)}
-                        className={`w-full flex items-center justify-between py-2 px-3 rounded text-sm border transition-colors ${
-                          selected
-                            ? "bg-accent/10 text-accent border-accent/40"
-                            : "bg-surface text-muted border-border hover:border-muted"
-                        }`}
-                      >
-                        <span>{plan.display_name}</span>
-                        <span
-                          className={
-                            selected ? "text-accent" : "text-muted/60"
-                          }
-                        >
-                          ${(plan.monthly_price_cents / 100).toFixed(2)}/mo
-                        </span>
-                      </button>
-                    );
-                  })}
-                </div>
+                {/* Collapsed header */}
+                <button
+                  type="button"
+                  onClick={() => toggleAccordion(group.id)}
+                  className={`flex items-center justify-between w-full px-4 py-3 rounded-lg border text-sm transition-colors ${
+                    isSelected
+                      ? "bg-surface border-accent/60"
+                      : "bg-surface border-border hover:border-amber-500/40"
+                  }`}
+                >
+                  <span className="font-medium text-foreground">
+                    {group.label}
+                  </span>
+                  {isSelected && selectedPlan ? (
+                    <span className="text-accent text-xs">
+                      {selectedPlan.display_name} &mdash; $
+                      {(selectedPlan.monthly_price_cents / 100).toFixed(2)}/mo
+                    </span>
+                  ) : (
+                    <span className="text-muted/60 text-xs">
+                      from ${(getCheapestPrice(group) / 100).toFixed(2)}/mo
+                    </span>
+                  )}
+                </button>
 
-                {isSelected && (
-                  <div className="grid grid-cols-2 gap-3 mt-2">
-                    <input
-                      type="email"
-                      value={creds[group.id]?.email ?? ""}
-                      onChange={(e) =>
-                        updateCred(group.id, "email", e.target.value)
-                      }
-                      placeholder="Login email"
-                      className="py-2 px-3 bg-surface border border-border rounded text-foreground placeholder:text-muted/50 text-sm focus:outline-none focus:border-accent"
-                    />
-                    <input
-                      type="password"
-                      value={creds[group.id]?.password ?? ""}
-                      onChange={(e) =>
-                        updateCred(group.id, "password", e.target.value)
-                      }
-                      placeholder="Password"
-                      className="py-2 px-3 bg-surface border border-border rounded text-foreground placeholder:text-muted/50 text-sm focus:outline-none focus:border-accent"
-                    />
+                {/* Expanded: plan options + credentials */}
+                {isExpanded && (
+                  <div className="mt-1 ml-8 space-y-1">
+                    {group.plans.map((plan) => {
+                      const selected = selectedPlanId === plan.id;
+                      return (
+                        <button
+                          key={plan.id}
+                          type="button"
+                          onClick={() => togglePlan(group.id, plan.id)}
+                          className={`w-full flex items-center justify-between py-2 px-3 rounded text-sm border transition-colors ${
+                            selected
+                              ? "bg-accent/10 text-accent border-accent/40"
+                              : "bg-surface text-muted border-border hover:border-muted"
+                          }`}
+                        >
+                          <span>{plan.display_name}</span>
+                          <span
+                            className={
+                              selected ? "text-accent" : "text-muted/60"
+                            }
+                          >
+                            ${(plan.monthly_price_cents / 100).toFixed(2)}/mo
+                          </span>
+                        </button>
+                      );
+                    })}
+
+                    {isSelected && !useSameCreds && (
+                      <div className="grid grid-cols-2 gap-3 pt-1 pb-2">
+                        <input
+                          type="email"
+                          value={creds[group.id]?.email ?? ""}
+                          onChange={(e) =>
+                            updateCred(group.id, "email", e.target.value)
+                          }
+                          placeholder="Login email"
+                          className="py-2.5 px-3 bg-surface border border-border rounded-lg text-foreground placeholder:text-muted/50 text-sm focus:outline-none focus:border-amber-500/60 focus:ring-1 focus:ring-amber-500/20 transition-colors"
+                        />
+                        <div className="relative">
+                          <input
+                            type={showPasswords ? "text" : "password"}
+                            value={creds[group.id]?.password ?? ""}
+                            onChange={(e) =>
+                              updateCred(group.id, "password", e.target.value)
+                            }
+                            placeholder="Password"
+                            className="w-full py-2.5 px-3 pr-10 bg-surface border border-border rounded-lg text-foreground placeholder:text-muted/50 text-sm focus:outline-none focus:border-amber-500/60 focus:ring-1 focus:ring-amber-500/20 transition-colors"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => setShowPasswords((p) => !p)}
+                            className="absolute right-3 top-1/2 -translate-y-1/2 text-muted/50 hover:text-muted transition-colors"
+                            tabIndex={-1}
+                          >
+                            {showPasswords ? (
+                              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"/><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
+                            ) : (
+                              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+                            )}
+                          </button>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
@@ -638,6 +825,7 @@ export default function OnboardingPage() {
           })}
         </div>
 
+        {/* Cost summary */}
         {monthlyTotal > 0 && (
           <div className="space-y-1">
             <p className="text-sm text-muted">
@@ -657,51 +845,81 @@ export default function OnboardingPage() {
                 <span className="text-foreground font-medium">
                   ${(maxPrice / 100).toFixed(2)}
                 </span>{" "}
-                worth of service credits every month. You can pay up front, or
-                just in time if you&apos;ve given us a real Nostr or email
-                contact.
+                worth of service credits every month.
               </p>
             )}
           </div>
         )}
 
-        <div className="bg-surface border border-border rounded p-4 space-y-2 text-sm text-muted leading-relaxed">
-          <p>
-            <span className="text-foreground font-medium">
-              Fresh accounts are cleanest.
-            </span>{" "}
-            Create new accounts for each service and we handle everything from
-            scratch.
-          </p>
-          <p>
-            If you&apos;re using existing accounts, cancel all of them. Remove
-            your credit card where you can. We&apos;ll wait for your first
-            queued service to expire on its own, then activate the next one in
-            your queue from there.
-          </p>
-        </div>
+        {/* Divider between sections */}
+        <hr className="border-border my-4" />
 
-        <p className="text-sm text-muted">
-          You&apos;ll be able to change the rotation order on the next step.
-        </p>
-
+        {/* Section 2: Account details */}
         {signupQuestions.length > 0 && (
-          <div className="space-y-3">
+          <div className="space-y-4">
             <div>
-              <p className="text-xs font-semibold text-muted/70 uppercase tracking-wider">
+              <h3 className="text-lg font-semibold text-foreground mb-1">
                 Account details
-              </p>
-              <p className="text-sm text-muted mt-1">
-                Streaming services ask for these during signup. Same answers for
+              </h3>
+              <p className="text-sm text-muted">
+                Used to create accounts on your behalf. One set of details for
                 all services.
               </p>
             </div>
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               {signupQuestions.map((q) => {
+                const isFullWidth = q.id === "full_name";
                 if (q.field_type === "select" && q.options) {
                   return (
-                    <select
+                    <div
                       key={q.id}
+                      className={isFullWidth ? "sm:col-span-2" : ""}
+                    >
+                      <label className="text-xs text-muted/70 mb-1.5 block">
+                        {q.label}
+                      </label>
+                      <select
+                        value={signupAnswers[q.id] ?? ""}
+                        onChange={(e) =>
+                          setSignupAnswers((prev) => ({
+                            ...prev,
+                            [q.id]: e.target.value,
+                          }))
+                        }
+                        className="w-full py-2.5 px-3 bg-surface border border-border rounded-lg text-foreground text-sm focus:outline-none focus:border-amber-500/60 focus:ring-1 focus:ring-amber-500/20 appearance-none transition-colors"
+                      >
+                        <option value="" disabled>
+                          Select
+                        </option>
+                        {q.options.map((opt) => (
+                          <option key={opt} value={opt}>
+                            {opt}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  );
+                }
+                const isDate = q.id === "birthdate";
+                const maxDate = isDate
+                  ? (() => {
+                      const d = new Date();
+                      d.setFullYear(d.getFullYear() - 18);
+                      return d.toISOString().split("T")[0];
+                    })()
+                  : undefined;
+
+                return (
+                  <div
+                    key={q.id}
+                    className={isFullWidth ? "sm:col-span-2" : ""}
+                  >
+                    <label className="text-xs text-muted/70 mb-1.5 block">
+                      {q.label}
+                    </label>
+                    <input
+                      type={isDate ? "date" : "text"}
+                      max={maxDate}
                       value={signupAnswers[q.id] ?? ""}
                       onChange={(e) =>
                         setSignupAnswers((prev) => ({
@@ -709,33 +927,10 @@ export default function OnboardingPage() {
                           [q.id]: e.target.value,
                         }))
                       }
-                      className="py-2 px-3 bg-surface border border-border rounded text-foreground text-sm focus:outline-none focus:border-accent appearance-none"
-                    >
-                      <option value="" disabled>
-                        {q.label}
-                      </option>
-                      {q.options.map((opt) => (
-                        <option key={opt} value={opt}>
-                          {opt}
-                        </option>
-                      ))}
-                    </select>
-                  );
-                }
-                return (
-                  <input
-                    key={q.id}
-                    type="text"
-                    value={signupAnswers[q.id] ?? ""}
-                    onChange={(e) =>
-                      setSignupAnswers((prev) => ({
-                        ...prev,
-                        [q.id]: e.target.value,
-                      }))
-                    }
-                    placeholder={q.placeholder ?? q.label}
-                    className="py-2 px-3 bg-surface border border-border rounded text-foreground placeholder:text-muted/50 text-sm focus:outline-none focus:border-accent"
-                  />
+                      placeholder={q.placeholder ?? q.label}
+                      className="w-full py-2.5 px-3 bg-surface border border-border rounded-lg text-foreground placeholder:text-muted/50 text-sm focus:outline-none focus:border-amber-500/60 focus:ring-1 focus:ring-amber-500/20 transition-colors"
+                    />
+                  </div>
                 );
               })}
             </div>
@@ -748,10 +943,16 @@ export default function OnboardingPage() {
           type="button"
           onClick={saveCredentials}
           disabled={submitting || !canSave}
-          className="w-full py-3 px-4 bg-accent text-background font-semibold rounded hover:bg-accent/90 transition-colors disabled:opacity-50"
+          className="w-full py-3 px-4 rounded-lg font-medium text-sm transition-colors bg-accent text-background hover:bg-accent/90 disabled:bg-accent/20 disabled:text-accent/40 disabled:cursor-not-allowed"
         >
           {submitting ? "Saving..." : "Save credentials"}
         </button>
+
+        {!canSave && (
+          <p className="text-xs text-muted/60 text-center -mt-3">
+            Select at least two services and provide credentials for each.
+          </p>
+        )}
       </div>
     );
   }
@@ -796,24 +997,30 @@ export default function OnboardingPage() {
   function renderStep4() {
     return (
       <div className="space-y-8">
+        <button
+          type="button"
+          onClick={() => setStep(3)}
+          className="text-sm text-muted hover:text-foreground transition-colors"
+        >
+          &larr; Back
+        </button>
         <div>
           <h1 className="text-4xl font-bold tracking-tight text-foreground mb-4">
             Your rotation queue
           </h1>
           <p className="text-muted leading-relaxed">
-            Drag to reorder. The service at the top starts first. Each service
-            stays active until the gift card runs out (roughly 30-40 days), then
-            the next one in line activates. The queue loops.
+            Drag to reorder. Top of the list goes first. Each service runs one
+            month, then the next one kicks in. The queue loops.
           </p>
         </div>
 
-        <div className="bg-red-500/10 border border-red-500/30 rounded p-4">
-          <p className="text-red-400 font-semibold text-sm">
-            Cancel all your existing streaming subscriptions before we start.
+        <div className="border-l-4 border-amber-500 bg-amber-500/[0.08] rounded-r-lg px-5 py-4">
+          <p className="text-amber-200 text-sm font-medium leading-relaxed">
+            Cancel your existing streaming subscriptions before we start.
           </p>
-          <p className="text-muted text-sm mt-1">
-            We&apos;ll handle everything from here. If you leave active
-            subscriptions running, you&apos;ll be double-paying.
+          <p className="text-muted text-sm mt-2 leading-relaxed">
+            We handle everything from here. Anything you leave running means
+            you&apos;re paying twice.
           </p>
         </div>
 
@@ -838,10 +1045,23 @@ export default function OnboardingPage() {
           </SortableContext>
         </DndContext>
 
-        <p className="text-sm text-muted">
-          We&apos;ll keep you up to date as services rotate, or you can ping us
-          on Nostr for details.
+        <p className="text-xs text-muted/60">
+          About two weeks into each cycle, the next service locks in. Reorder
+          anytime before that.
         </p>
+
+        <p className="text-sm text-muted">
+          You&apos;ll get notified as services rotate. DM{" "}
+          <span className="text-foreground font-medium">
+            {process.env.NEXT_PUBLIC_NOSTR_BOT_NAME ?? "our Nostr bot"}
+          </span>{" "}
+          anytime for status.
+        </p>
+        {process.env.NEXT_PUBLIC_NOSTR_BOT_NPUB && (
+          <p className="text-xs text-muted/50 font-mono break-all">
+            {process.env.NEXT_PUBLIC_NOSTR_BOT_NPUB}
+          </p>
+        )}
 
         {error && <p className="text-red-400 text-sm">{error}</p>}
 
@@ -862,17 +1082,14 @@ export default function OnboardingPage() {
     setError("");
     setSubmitting(true);
 
-    // Total sats: membership + first service credit (converted from USD cents)
-    // The prepay endpoint accepts amount_sats directly
-    const totalSats = membershipTotalSats;
-
     try {
       const res = await authFetch("/api/credits/prepay", {
         method: "POST",
         body: JSON.stringify({
-          amount_sats: totalSats,
+          amount_sats: membershipTotalSats,
           membership_plan: membershipPlan,
           billing_period: membership,
+          service_credit_usd_cents: firstServicePriceCents,
         }),
       });
 
@@ -909,7 +1126,7 @@ export default function OnboardingPage() {
         <div className="space-y-8">
           <div>
             <h1 className="text-4xl font-bold tracking-tight text-foreground mb-4">
-              Credits added.
+              You&apos;re in.
             </h1>
             <p className="text-muted leading-relaxed">
               Your first rotation starts within 24 hours &mdash; we&apos;ll
@@ -934,25 +1151,25 @@ export default function OnboardingPage() {
         <div className="space-y-8">
           <div>
             <h1 className="text-4xl font-bold tracking-tight text-foreground mb-4">
-              Fund your account
+              Scan to pay
             </h1>
             <p className="text-muted leading-relaxed">
-              Scan the Lightning invoice QR code or copy the invoice to pay from
-              any Lightning wallet. Your credits update instantly.
+              Pay from any Lightning wallet. We&apos;ll have{" "}
+              {firstServiceLabel} up within 24 hours.
             </p>
           </div>
+
+          {invoice.amount_sats && (
+            <p className="text-center text-2xl font-bold text-foreground">
+              {invoice.amount_sats.toLocaleString()} sats
+            </p>
+          )}
 
           <div className="flex justify-center">
             <div className="bg-white p-4 rounded">
               <QRCode value={invoice.checkoutLink} size={200} />
             </div>
           </div>
-
-          {invoice.amount_sats && (
-            <p className="text-center text-sm text-muted">
-              {invoice.amount_sats.toLocaleString()} sats
-            </p>
-          )}
 
           <button
             type="button"
@@ -983,13 +1200,21 @@ export default function OnboardingPage() {
 
     return (
       <div className="space-y-8">
+        <button
+          type="button"
+          onClick={() => setStep(4)}
+          className="text-sm text-muted hover:text-foreground transition-colors"
+        >
+          &larr; Back
+        </button>
         <div>
           <h1 className="text-4xl font-bold tracking-tight text-foreground mb-4">
-            Fund your account
+            Activate your membership
           </h1>
           <p className="text-muted leading-relaxed">
-            Your first payment covers your membership and the service credit for{" "}
-            {firstServiceLabel}. We&apos;ll activate it within 24 hours.
+            One Lightning invoice covers your UnsaltedButter membership and the{" "}
+            {firstServiceLabel} gift card. We&apos;ll have {firstServiceLabel} up
+            within 24 hours.
           </p>
         </div>
 
@@ -1011,13 +1236,10 @@ export default function OnboardingPage() {
               <p className={`font-semibold ${membershipPlan === "solo" ? "text-accent" : "text-foreground"}`}>
                 Solo
               </p>
-              <p className="text-sm text-muted mt-1">1 service at a time</p>
+              <p className="text-sm text-muted mt-1">1 streaming service at a time</p>
               {soloDisplay && (
                 <p className={`text-sm mt-2 ${membershipPlan === "solo" ? "text-accent" : "text-muted/60"}`}>
                   {formatSats(soloDisplay.price_sats)} sats/mo
-                  <span className="text-muted/40 ml-1">
-                    (~{formatUsdFromCents(soloDisplay.approx_usd_cents)})
-                  </span>
                 </p>
               )}
             </button>
@@ -1033,13 +1255,10 @@ export default function OnboardingPage() {
               <p className={`font-semibold ${membershipPlan === "duo" ? "text-accent" : "text-foreground"}`}>
                 Duo
               </p>
-              <p className="text-sm text-muted mt-1">2 services at once</p>
+              <p className="text-sm text-muted mt-1">2 streaming services at once</p>
               {duoDisplay && (
                 <p className={`text-sm mt-2 ${membershipPlan === "duo" ? "text-accent" : "text-muted/60"}`}>
                   {formatSats(duoDisplay.price_sats)} sats/mo
-                  <span className="text-muted/40 ml-1">
-                    (~{formatUsdFromCents(duoDisplay.approx_usd_cents)})
-                  </span>
                 </p>
               )}
             </button>
@@ -1054,17 +1273,6 @@ export default function OnboardingPage() {
           <div className="flex gap-2">
             <button
               type="button"
-              onClick={() => setMembership("annual")}
-              className={`flex-1 py-2 px-4 rounded text-sm font-medium border transition-colors ${
-                membership === "annual"
-                  ? "bg-accent text-background border-accent"
-                  : "bg-surface text-muted border-border hover:border-muted"
-              }`}
-            >
-              Annual
-            </button>
-            <button
-              type="button"
               onClick={() => setMembership("monthly")}
               className={`flex-1 py-2 px-4 rounded text-sm font-medium border transition-colors ${
                 membership === "monthly"
@@ -1074,10 +1282,22 @@ export default function OnboardingPage() {
             >
               Monthly
             </button>
+            <button
+              type="button"
+              onClick={() => setMembership("annual")}
+              className={`flex-1 py-2 px-4 rounded text-sm font-medium border transition-colors ${
+                membership === "annual"
+                  ? "bg-accent text-background border-accent"
+                  : "bg-surface text-muted border-border hover:border-muted"
+              }`}
+            >
+              Annual
+            </button>
           </div>
-          {membership === "annual" && savingsSats > 0 && (
+          {membership === "annual" && savingsSats > 0 && monthlyPrice && (
             <p className="text-sm text-accent mt-2">
-              Save {formatSats(savingsSats)} sats/yr with annual billing
+              Save {Math.round((savingsSats / (monthlyPrice.price_sats * 12)) * 100)}% &mdash;{" "}
+              {formatSats(Math.round(savingsSats / 12))} sats/mo with annual billing
             </p>
           )}
         </div>
@@ -1091,33 +1311,33 @@ export default function OnboardingPage() {
                 {membership === "monthly" ? "1 month" : "12 months"})
               </span>
               <span className="text-foreground">
+                {membership === "annual" && (
+                  <span className="text-muted/60 mr-1">
+                    ({formatSats(membershipSats)}/mo)
+                  </span>
+                )}
                 {formatSats(membershipTotalSats)} sats
-                <span className="text-muted/40 ml-1">
-                  (~{formatUsdFromCents(membershipTotalUsdCents)})
-                </span>
               </span>
             </div>
             <div className="flex justify-between">
               <span className="text-muted">
-                {firstServiceLabel} (first month)
+                Service credit ({firstServiceLabel})
               </span>
               <span className="text-foreground">
-                ~${(firstServicePriceCents / 100).toFixed(2)}
+                <span className="text-muted/60 mr-1">
+                  (${(firstServicePriceCents / 100).toFixed(2)})
+                </span>
+                ~{formatSats(firstServiceApproxSats)} sats
               </span>
             </div>
             <div className="border-t border-border pt-2 mt-2 flex justify-between font-medium">
               <span className="text-foreground">Total due today</span>
               <span className="text-foreground">
-                ~{formatSats(membershipTotalSats)} sats + ${(firstServicePriceCents / 100).toFixed(2)}
+                ~{formatSats(totalApproxSats)} sats
               </span>
             </div>
           </div>
         </div>
-
-        <p className="text-xs text-muted/60">
-          Service credits for {firstServiceLabel} are a separate Lightning
-          invoice based on the gift card amount needed.
-        </p>
 
         {error && <p className="text-red-400 text-sm">{error}</p>}
 
@@ -1127,7 +1347,7 @@ export default function OnboardingPage() {
           disabled={submitting || membershipSats === 0}
           className="w-full py-3 px-4 bg-accent text-background font-semibold rounded hover:bg-accent/90 transition-colors disabled:opacity-50"
         >
-          {submitting ? "Creating invoice..." : "Create membership invoice"}
+          {submitting ? "Creating invoice..." : "Pay with Lightning"}
         </button>
       </div>
     );

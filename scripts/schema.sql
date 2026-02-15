@@ -66,7 +66,7 @@ CREATE TABLE signup_questions (
     label        TEXT NOT NULL,                 -- display label: 'Zip Code', 'Birthdate (MM/DD/YYYY)', etc.
     field_type   TEXT NOT NULL DEFAULT 'text'   -- 'text', 'date', 'select'
                  CHECK (field_type IN ('text', 'date', 'select')),
-    options      TEXT[],                        -- for 'select' type: e.g. {'Male','Female','Non-binary','Prefer Not To Say'}
+    options      TEXT[],                        -- for 'select' type: e.g. {'Male','Female','Prefer Not To Say'}
     placeholder  TEXT,                          -- input placeholder text
     display_order INT NOT NULL DEFAULT 0
 );
@@ -75,7 +75,7 @@ INSERT INTO signup_questions (id, label, field_type, options, placeholder, displ
     ('full_name',  'Full Name',              'text',   NULL, 'Your full name', 10),
     ('zip_code',   'Zip Code',               'text',   NULL, '00000', 20),
     ('birthdate',  'Birthdate (MM/DD/YYYY)', 'text',   NULL, 'MM/DD/YYYY', 30),
-    ('gender',     'Gender',                 'select', '{"Male","Female","Non-binary","Prefer Not To Say"}', NULL, 40);
+    ('gender',     'Gender',                 'select', '{"Male","Female","Prefer Not To Say"}', NULL, 40);
 
 -- ============================================================
 -- STREAMING SERVICES (catalog)

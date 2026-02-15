@@ -42,43 +42,32 @@ export const PUT = withAuth(async (req: NextRequest, { userId }) => {
     );
   }
 
-  // Check existing queue
-  const existing = await query(
-    "SELECT service_id FROM rotation_queue WHERE user_id = $1",
+  // Validate all service IDs exist in streaming_services
+  const services = await query<{ id: string }>(
+    "SELECT id FROM streaming_services WHERE id = ANY($1)",
+    [order]
+  );
+  const validIds = new Set(services.rows.map((r) => r.id));
+  const unknowns = order.filter((id) => !validIds.has(id));
+  if (unknowns.length > 0) {
+    return NextResponse.json(
+      { error: `Unknown services: ${unknowns.join(", ")}` },
+      { status: 400 }
+    );
+  }
+
+  // Validate credentials exist for every service in the order
+  const creds = await query<{ service_id: string }>(
+    "SELECT service_id FROM streaming_credentials WHERE user_id = $1",
     [userId]
   );
-  const existingIds = new Set(existing.rows.map((r) => r.service_id));
-
-  if (existingIds.size > 0) {
-    // Existing queue — must be an exact reorder (same services, different positions)
-    const unknowns = order.filter((id) => !existingIds.has(id));
-    if (unknowns.length > 0) {
-      return NextResponse.json(
-        { error: `Services not in your queue: ${unknowns.join(", ")}` },
-        { status: 400 }
-      );
-    }
-    if (order.length !== existingIds.size) {
-      return NextResponse.json(
-        { error: "Reorder must include all services in your queue" },
-        { status: 400 }
-      );
-    }
-  } else {
-    // No existing queue — creating one, validate credentials exist
-    const creds = await query(
-      "SELECT service_id FROM streaming_credentials WHERE user_id = $1",
-      [userId]
+  const credIds = new Set(creds.rows.map((r) => r.service_id));
+  const noCreds = order.filter((id) => !credIds.has(id));
+  if (noCreds.length > 0) {
+    return NextResponse.json(
+      { error: `No credentials for: ${noCreds.join(", ")}` },
+      { status: 400 }
     );
-    const credIds = new Set(creds.rows.map((r) => r.service_id));
-    for (const id of order) {
-      if (!credIds.has(id)) {
-        return NextResponse.json(
-          { error: `No credentials for service ${id}` },
-          { status: 400 }
-        );
-      }
-    }
   }
 
   await transaction(async (txQuery) => {

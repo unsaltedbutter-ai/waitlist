@@ -903,6 +903,23 @@ export default function DashboardPage() {
                 </div>
               </div>
 
+              {/* Nostr bot */}
+              {process.env.NEXT_PUBLIC_NOSTR_BOT_NAME && (
+                <div className="border border-border rounded p-4 space-y-2">
+                  <h3 className="text-sm font-medium text-foreground">
+                    {process.env.NEXT_PUBLIC_NOSTR_BOT_NAME}
+                  </h3>
+                  <p className="text-sm text-muted">
+                    DM for status, queue, skip, or stay commands.
+                  </p>
+                  {process.env.NEXT_PUBLIC_NOSTR_BOT_NPUB && (
+                    <p className="text-xs text-muted/50 font-mono break-all">
+                      {process.env.NEXT_PUBLIC_NOSTR_BOT_NPUB}
+                    </p>
+                  )}
+                </div>
+              )}
+
               {/* Danger zone */}
               <div className="border border-red-800 rounded p-4 space-y-3">
                 <h3 className="text-sm font-medium text-red-400">

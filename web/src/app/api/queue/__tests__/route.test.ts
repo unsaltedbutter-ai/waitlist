@@ -7,7 +7,6 @@ vi.mock("@/lib/db", () => ({
 }));
 vi.mock("@/lib/auth", () => ({
   withAuth: vi.fn((handler: Function) => {
-    // Simulate authenticated route: pass userId, resolve params promise
     return async (req: Request, segmentData: any) => {
       const params = segmentData?.params
         ? await segmentData.params
@@ -28,75 +27,32 @@ function makeRequest(body: object): Request {
   });
 }
 
+function mockServices(ids: string[]) {
+  vi.mocked(query).mockResolvedValueOnce(
+    mockQueryResult(ids.map((id) => ({ id })))
+  );
+}
+
+function mockCreds(serviceIds: string[]) {
+  vi.mocked(query).mockResolvedValueOnce(
+    mockQueryResult(serviceIds.map((id) => ({ service_id: id })))
+  );
+}
+
+function mockTransaction() {
+  vi.mocked(transaction).mockImplementationOnce(async (cb) => {
+    const txQuery = vi.fn().mockResolvedValue(mockQueryResult([]));
+    return cb(txQuery as any);
+  });
+}
+
 beforeEach(() => {
   vi.mocked(query).mockReset();
   vi.mocked(transaction).mockReset();
 });
 
-describe("PUT /api/queue (reorder)", () => {
-  it("valid reorder → success", async () => {
-    // Existing queue
-    vi.mocked(query).mockResolvedValueOnce(
-      mockQueryResult([
-        { service_id: "netflix" },
-        { service_id: "hulu" },
-        { service_id: "disney" },
-      ])
-    );
-
-    vi.mocked(transaction).mockImplementationOnce(async (cb) => {
-      const txQuery = vi.fn().mockResolvedValue(mockQueryResult([]));
-      return cb(txQuery as any);
-    });
-
-    const req = makeRequest({ order: ["disney", "netflix", "hulu"] });
-    const res = await PUT(req as any, { params: Promise.resolve({}) });
-    expect(res.status).toBe(200);
-    const data = await res.json();
-    expect(data.success).toBe(true);
-  });
-
-  it("duplicate IDs → 400", async () => {
-    const req = makeRequest({ order: ["netflix", "netflix", "hulu"] });
-    const res = await PUT(req as any, { params: Promise.resolve({}) });
-    expect(res.status).toBe(400);
-    const data = await res.json();
-    expect(data.error).toMatch(/[Dd]uplicate/);
-  });
-
-  it("unknown service → 400", async () => {
-    vi.mocked(query).mockResolvedValueOnce(
-      mockQueryResult([{ service_id: "netflix" }, { service_id: "hulu" }])
-    );
-
-    const req = makeRequest({ order: ["netflix", "fake_service"] });
-    const res = await PUT(req as any, { params: Promise.resolve({}) });
-    expect(res.status).toBe(400);
-    const data = await res.json();
-    expect(data.error).toMatch(/not in your queue/);
-  });
-
-  it("missing services (partial order) → 400", async () => {
-    vi.mocked(query).mockResolvedValueOnce(
-      mockQueryResult([
-        { service_id: "netflix" },
-        { service_id: "hulu" },
-        { service_id: "disney" },
-      ])
-    );
-
-    const req = makeRequest({ order: ["netflix", "hulu"] }); // missing disney
-    const res = await PUT(req as any, { params: Promise.resolve({}) });
-    expect(res.status).toBe(400);
-    const data = await res.json();
-    expect(data.error).toMatch(/all services/i);
-  });
-
-  it("empty order → 400", async () => {
-    const req = makeRequest({ order: [] });
-    const res = await PUT(req as any, { params: Promise.resolve({}) });
-    expect(res.status).toBe(400);
-  });
+describe("PUT /api/queue", () => {
+  // --- Input validation ---
 
   it("invalid JSON → 400", async () => {
     const req = new Request("http://localhost/api/queue", {
@@ -106,5 +62,193 @@ describe("PUT /api/queue (reorder)", () => {
     });
     const res = await PUT(req as any, { params: Promise.resolve({}) });
     expect(res.status).toBe(400);
+  });
+
+  it("empty order → 400", async () => {
+    const req = makeRequest({ order: [] });
+    const res = await PUT(req as any, { params: Promise.resolve({}) });
+    expect(res.status).toBe(400);
+  });
+
+  it("non-array order → 400", async () => {
+    const req = makeRequest({ order: "netflix" });
+    const res = await PUT(req as any, { params: Promise.resolve({}) });
+    expect(res.status).toBe(400);
+  });
+
+  it("duplicate service IDs → 400", async () => {
+    const req = makeRequest({ order: ["netflix", "netflix", "hulu"] });
+    const res = await PUT(req as any, { params: Promise.resolve({}) });
+    expect(res.status).toBe(400);
+    const data = await res.json();
+    expect(data.error).toMatch(/[Dd]uplicate/);
+  });
+
+  // --- Service validation ---
+
+  it("unknown service ID → 400", async () => {
+    mockServices(["netflix"]); // only netflix exists
+    const req = makeRequest({ order: ["netflix", "nonexistent_service"] });
+    const res = await PUT(req as any, { params: Promise.resolve({}) });
+    expect(res.status).toBe(400);
+    const data = await res.json();
+    expect(data.error).toMatch(/Unknown services.*nonexistent_service/);
+  });
+
+  it("multiple unknown service IDs listed in error", async () => {
+    mockServices([]); // nothing valid
+    const req = makeRequest({ order: ["fake_a", "fake_b"] });
+    const res = await PUT(req as any, { params: Promise.resolve({}) });
+    expect(res.status).toBe(400);
+    const data = await res.json();
+    expect(data.error).toContain("fake_a");
+    expect(data.error).toContain("fake_b");
+  });
+
+  // --- Credential validation ---
+
+  it("service with no credentials → 400", async () => {
+    mockServices(["netflix", "hulu"]);
+    mockCreds(["netflix"]); // no creds for hulu
+    const req = makeRequest({ order: ["netflix", "hulu"] });
+    const res = await PUT(req as any, { params: Promise.resolve({}) });
+    expect(res.status).toBe(400);
+    const data = await res.json();
+    expect(data.error).toMatch(/No credentials.*hulu/);
+  });
+
+  it("multiple services missing credentials listed in error", async () => {
+    mockServices(["netflix", "hulu", "disney_plus"]);
+    mockCreds(["netflix"]); // no creds for hulu or disney_plus
+    const req = makeRequest({ order: ["netflix", "hulu", "disney_plus"] });
+    const res = await PUT(req as any, { params: Promise.resolve({}) });
+    expect(res.status).toBe(400);
+    const data = await res.json();
+    expect(data.error).toContain("hulu");
+    expect(data.error).toContain("disney_plus");
+  });
+
+  // --- Successful queue operations ---
+
+  it("create initial queue → success", async () => {
+    mockServices(["netflix", "hulu"]);
+    mockCreds(["netflix", "hulu"]);
+    mockTransaction();
+
+    const req = makeRequest({ order: ["netflix", "hulu"] });
+    const res = await PUT(req as any, { params: Promise.resolve({}) });
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data.success).toBe(true);
+  });
+
+  it("reorder existing services → success", async () => {
+    mockServices(["netflix", "hulu", "disney_plus"]);
+    mockCreds(["netflix", "hulu", "disney_plus"]);
+    mockTransaction();
+
+    const req = makeRequest({ order: ["disney_plus", "netflix", "hulu"] });
+    const res = await PUT(req as any, { params: Promise.resolve({}) });
+    expect(res.status).toBe(200);
+  });
+
+  it("add a new service to queue → success", async () => {
+    // User had netflix + hulu, now adding prime_video
+    mockServices(["netflix", "hulu", "prime_video"]);
+    mockCreds(["netflix", "hulu", "prime_video"]);
+    mockTransaction();
+
+    const req = makeRequest({ order: ["netflix", "prime_video", "hulu"] });
+    const res = await PUT(req as any, { params: Promise.resolve({}) });
+    expect(res.status).toBe(200);
+  });
+
+  it("remove a service from queue → success", async () => {
+    // User had 3, now submitting 2
+    mockServices(["netflix", "hulu"]);
+    mockCreds(["netflix", "hulu"]);
+    mockTransaction();
+
+    const req = makeRequest({ order: ["netflix", "hulu"] });
+    const res = await PUT(req as any, { params: Promise.resolve({}) });
+    expect(res.status).toBe(200);
+  });
+
+  it("single service queue → success", async () => {
+    mockServices(["netflix"]);
+    mockCreds(["netflix"]);
+    mockTransaction();
+
+    const req = makeRequest({ order: ["netflix"] });
+    const res = await PUT(req as any, { params: Promise.resolve({}) });
+    expect(res.status).toBe(200);
+  });
+
+  it("all supported services in queue → success", async () => {
+    const all = [
+      "netflix", "hulu", "disney_plus", "prime_video",
+      "apple_tv", "paramount", "peacock",
+    ];
+    mockServices(all);
+    mockCreds(all);
+    mockTransaction();
+
+    const req = makeRequest({ order: all });
+    const res = await PUT(req as any, { params: Promise.resolve({}) });
+    expect(res.status).toBe(200);
+  });
+
+  // --- Transaction behavior ---
+
+  it("deletes old queue and inserts new positions in transaction", async () => {
+    mockServices(["netflix", "hulu"]);
+    mockCreds(["netflix", "hulu"]);
+
+    const txQuery = vi.fn().mockResolvedValue(mockQueryResult([]));
+    vi.mocked(transaction).mockImplementationOnce(async (cb) => cb(txQuery as any));
+
+    const req = makeRequest({ order: ["hulu", "netflix"] });
+    await PUT(req as any, { params: Promise.resolve({}) });
+
+    // First call: DELETE old queue
+    expect(txQuery).toHaveBeenCalledWith(
+      "DELETE FROM rotation_queue WHERE user_id = $1",
+      ["test-user"]
+    );
+    // Second call: INSERT position 1 = hulu
+    expect(txQuery).toHaveBeenCalledWith(
+      "INSERT INTO rotation_queue (user_id, service_id, position) VALUES ($1, $2, $3)",
+      ["test-user", "hulu", 1]
+    );
+    // Third call: INSERT position 2 = netflix
+    expect(txQuery).toHaveBeenCalledWith(
+      "INSERT INTO rotation_queue (user_id, service_id, position) VALUES ($1, $2, $3)",
+      ["test-user", "netflix", 2]
+    );
+  });
+
+  // --- Dynamic services / prices scenario ---
+
+  it("newly added service accepted if creds exist", async () => {
+    // Simulates operator adding a new service to streaming_services
+    // and user selecting it during onboarding
+    mockServices(["netflix", "new_streaming_service"]);
+    mockCreds(["netflix", "new_streaming_service"]);
+    mockTransaction();
+
+    const req = makeRequest({ order: ["netflix", "new_streaming_service"] });
+    const res = await PUT(req as any, { params: Promise.resolve({}) });
+    expect(res.status).toBe(200);
+  });
+
+  it("extra creds beyond queue are fine (superset)", async () => {
+    // User has creds for 5 services but only queues 2
+    mockServices(["netflix", "hulu"]);
+    mockCreds(["netflix", "hulu", "disney_plus", "prime_video", "peacock"]);
+    mockTransaction();
+
+    const req = makeRequest({ order: ["netflix", "hulu"] });
+    const res = await PUT(req as any, { params: Promise.resolve({}) });
+    expect(res.status).toBe(200);
   });
 });

@@ -42,6 +42,11 @@ export const POST = withAuth(async (req: NextRequest, { userId }) => {
     );
   }
 
+  // Truncate zip_code to 5 digits (autofill may include plus-four)
+  if (typeof answers.zip_code === "string") {
+    answers.zip_code = answers.zip_code.replace(/[^0-9]/g, "").slice(0, 5);
+  }
+
   const encrypted = encrypt(JSON.stringify(answers));
 
   await query(

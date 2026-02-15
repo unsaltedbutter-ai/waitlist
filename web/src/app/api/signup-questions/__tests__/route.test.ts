@@ -19,7 +19,7 @@ describe("GET /api/signup-questions", () => {
         { id: "full_name", label: "Full Name", field_type: "text", options: null, placeholder: "Your full name" },
         { id: "zip_code", label: "Zip Code", field_type: "text", options: null, placeholder: "00000" },
         { id: "birthdate", label: "Birthdate (MM/DD/YYYY)", field_type: "text", options: null, placeholder: "MM/DD/YYYY" },
-        { id: "gender", label: "Gender", field_type: "select", options: ["Male", "Female", "Non-binary", "Prefer Not To Say"], placeholder: null },
+        { id: "gender", label: "Gender", field_type: "select", options: ["Male", "Female", "Prefer Not To Say"], placeholder: null },
       ])
     );
 
@@ -39,7 +39,7 @@ describe("GET /api/signup-questions", () => {
       id: "gender",
       label: "Gender",
       field_type: "select",
-      options: ["Male", "Female", "Non-binary", "Prefer Not To Say"],
+      options: ["Male", "Female", "Prefer Not To Say"],
       placeholder: null,
     });
   });
