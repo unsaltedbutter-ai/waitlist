@@ -314,9 +314,11 @@ export default function OnboardingPage() {
             Authorization
           </h1>
           <p className="text-muted leading-relaxed text-lg">
-            Do you authorize UnsaltedButter and its agents to act on your behalf
-            with third parties to initiate and terminate streaming service
-            accounts?
+            Do you authorize UnsaltedButter and its agents to access your
+            streaming service accounts using the credentials you provide, and
+            to act on your behalf &mdash; including signing up, cancelling,
+            and managing subscriptions &mdash; by communicating electronically
+            with third-party services?
           </p>
         </div>
 
@@ -361,18 +363,24 @@ export default function OnboardingPage() {
             How it works
           </h1>
           <p className="text-muted leading-relaxed">
-            We use gift cards &mdash; not credit cards &mdash; to activate
-            services. One subscription runs at a time. When the gift card is
-            depleted, the subscription ends and the next one in your queue
-            starts.
+            We use gift cards &mdash; not credit cards &mdash; to manage your
+            streaming services. We subscribe, cancel after a short period, and
+            rotate to the next service in your queue. The queue loops forever.
           </p>
         </div>
 
-        <div className="bg-surface border border-border rounded p-6">
+        <div className="bg-surface border border-border rounded p-6 space-y-3">
           <p className="text-foreground font-bold leading-relaxed">
-            We purchase gift cards to activate your streaming services. Gift
-            cards mean no recurring charges, no stored credit cards, and no
-            surprise bills.
+            Gift cards mean no recurring charges, no stored credit cards, and
+            no surprise bills.
+          </p>
+          <p className="text-muted text-sm leading-relaxed">
+            We purchase gift cards and apply them to your accounts. After
+            subscribing, we cancel within a few weeks so you only pay for one
+            month at a time. Gift card denominations don&apos;t always match
+            monthly prices exactly, so you may carry a small balance with a
+            service. When your balance is enough to cover another month, we
+            just reactivate &mdash; no new gift card needed.
           </p>
         </div>
 
@@ -380,37 +388,60 @@ export default function OnboardingPage() {
           <li className="flex gap-2">
             <span className="text-muted/60 shrink-0">&bull;</span>
             <span>
-              Your streaming credentials are encrypted at rest and destroyed
-              immediately if your membership ends.
+              <span className="text-foreground font-medium">Solo</span> runs
+              one service at a time.{" "}
+              <span className="text-foreground font-medium">Duo</span> runs
+              two simultaneously. You choose at checkout.
             </span>
           </li>
           <li className="flex gap-2">
             <span className="text-muted/60 shrink-0">&bull;</span>
             <span>
-              We do not share your data with anyone. There is no one to share it
-              with.
+              About two weeks into each cycle, your next service locks in
+              &mdash; we purchase the gift card and commit to the rotation.
+              Before that, you can reorder your queue freely.
             </span>
           </li>
           <li className="flex gap-2">
             <span className="text-muted/60 shrink-0">&bull;</span>
             <span>
-              Membership is payable in Bitcoin (Lightning). Current pricing is
-              shown at checkout.
+              Your credentials are encrypted at rest and destroyed immediately
+              if your membership ends.
             </span>
           </li>
           <li className="flex gap-2">
             <span className="text-muted/60 shrink-0">&bull;</span>
             <span>
-              Membership &amp; service credits payable in Bitcoin only.
+              We do not share your data with anyone. There is no one to share
+              it with.
             </span>
           </li>
           <li className="flex gap-2">
             <span className="text-muted/60 shrink-0">&bull;</span>
             <span>
-              Unspent service credits can be returned, minus network fees.
+              Everything is payable in Bitcoin (Lightning) only. Pricing shown
+              at checkout.
             </span>
           </li>
         </ul>
+
+        <div className="bg-amber-950/40 border border-amber-700/50 rounded p-5 space-y-3">
+          <p className="text-amber-400 font-semibold text-sm">
+            Understand the risks
+          </p>
+          <p className="text-amber-200/70 text-sm leading-relaxed">
+            Using UnsaltedButter to manage your streaming accounts may violate
+            those services&apos; Terms of Service. Streaming providers could
+            suspend or terminate your account at their discretion.
+          </p>
+          <p className="text-amber-200/70 text-sm leading-relaxed">
+            By authorizing us, you acknowledge this risk and agree that
+            UnsaltedButter is not liable for any action a streaming service
+            takes against your account &mdash; including suspension,
+            termination, or loss of content &mdash; as a result of using this
+            service.
+          </p>
+        </div>
 
         <div>
           <p className="text-muted leading-relaxed mb-4">

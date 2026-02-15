@@ -10,6 +10,7 @@
 -- DROP EVERYTHING (reverse dependency order)
 -- ============================================================
 
+DROP TABLE IF EXISTS notification_log CASCADE;
 DROP TABLE IF EXISTS gift_card_purchases CASCADE;
 DROP TABLE IF EXISTS btc_prepayments CASCADE;
 DROP TABLE IF EXISTS credit_transactions CASCADE;
@@ -504,6 +505,20 @@ CREATE TABLE user_consents (
     user_agent   TEXT NOT NULL,
     created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+-- ============================================================
+-- NOTIFICATION LOG (dedup outbound DM notifications from Nostr bot)
+-- ============================================================
+
+CREATE TABLE notification_log (
+    id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id           UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    notification_type TEXT NOT NULL CHECK (notification_type IN ('lock_in_approaching', 'membership_due', 'credit_topup')),
+    reference_id      TEXT,           -- e.g. service_id or period identifier, for dedup
+    sent_at           TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX idx_notification_log_dedup ON notification_log(user_id, notification_type, reference_id);
 
 -- ============================================================
 -- INDEXES

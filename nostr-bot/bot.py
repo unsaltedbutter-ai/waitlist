@@ -29,6 +29,7 @@ from nostr_sdk import (
 
 import commands
 import db
+import notifications
 import zap_handler
 
 load_dotenv()
@@ -136,6 +137,28 @@ class BotNotificationHandler(HandleNotification):
         return await commands.handle_dm(user["id"], user["status"], message)
 
 
+async def _notification_loop(client, signer, shutdown_event):
+    """Check for users needing notifications every 6 hours."""
+    # Wait 60 seconds after startup before first check
+    try:
+        await asyncio.wait_for(shutdown_event.wait(), timeout=60)
+        return  # Shutdown requested during initial wait
+    except asyncio.TimeoutError:
+        pass  # Expected — continue to first check
+
+    while not shutdown_event.is_set():
+        try:
+            await notifications.check_and_send_notifications(client, signer)
+        except Exception as e:
+            log.error("[notifications] Error: %s", e)
+
+        try:
+            await asyncio.wait_for(shutdown_event.wait(), timeout=6 * 3600)
+            return  # Shutdown requested
+        except asyncio.TimeoutError:
+            pass  # Expected — time for next check
+
+
 async def main():
     # Logging
     level = os.getenv("LOG_LEVEL", "INFO").upper()
@@ -213,6 +236,9 @@ async def main():
     handler = BotNotificationHandler(keys, signer, client, start_time, zap_provider_pubkey_hex)
     notify_task = asyncio.create_task(client.handle_notifications(handler))
 
+    # Run proactive notification scheduler
+    notif_loop_task = asyncio.create_task(_notification_loop(client, signer, shutdown_event))
+
     log.info("Bot running. Waiting for events...")
 
     # Wait for shutdown signal
@@ -221,10 +247,12 @@ async def main():
     # Clean shutdown
     log.info("Shutting down...")
     notify_task.cancel()
-    try:
-        await notify_task
-    except asyncio.CancelledError:
-        pass
+    notif_loop_task.cancel()
+    for task in (notify_task, notif_loop_task):
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
 
     await client.disconnect()
     await db.close_pool()
