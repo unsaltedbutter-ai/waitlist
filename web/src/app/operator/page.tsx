@@ -67,6 +67,13 @@ interface CapacityInfo {
   availableSlots: number;
 }
 
+interface PendingRefund {
+  id: string;
+  contact: string;
+  amount_sats: number;
+  created_at: string;
+}
+
 interface Metrics {
   jobs_today: {
     by_status: Record<string, number>;
@@ -171,6 +178,8 @@ export default function OperatorPage() {
     new Set()
   );
   const [inviteLinks, setInviteLinks] = useState<Record<string, string>>({});
+  const [refunds, setRefunds] = useState<PendingRefund[]>([]);
+  const [ackingRefunds, setAckingRefunds] = useState<Set<string>>(new Set());
 
   // ---------- Fetch ----------
 
@@ -178,10 +187,11 @@ export default function OperatorPage() {
     setLoading(true);
     setError("");
     try {
-      const [mRes, aRes, wRes] = await Promise.all([
+      const [mRes, aRes, wRes, rRes] = await Promise.all([
         authFetch("/api/operator/metrics"),
         authFetch("/api/operator/alerts"),
         authFetch("/api/operator/waitlist"),
+        authFetch("/api/operator/refunds"),
       ]);
 
       if (mRes.status === 403 || aRes.status === 403) {
@@ -205,6 +215,11 @@ export default function OperatorPage() {
         const wData = await wRes.json();
         setWaitlist(wData.entries);
         setCapacity(wData.capacity);
+      }
+
+      if (rRes.ok) {
+        const rData = await rRes.json();
+        setRefunds(rData.refunds);
       }
     } catch {
       setError("Failed to load operator data.");
@@ -280,6 +295,27 @@ export default function OperatorPage() {
     },
     [capacity]
   );
+
+  // ---------- Acknowledge Refund ----------
+
+  const acknowledgeRefund = useCallback(async (refundId: string) => {
+    setAckingRefunds((prev) => new Set(prev).add(refundId));
+    try {
+      const res = await authFetch("/api/operator/refunds", {
+        method: "DELETE",
+        body: JSON.stringify({ refundId }),
+      });
+      if (res.ok) {
+        setRefunds((prev) => prev.filter((r) => r.id !== refundId));
+      }
+    } finally {
+      setAckingRefunds((prev) => {
+        const next = new Set(prev);
+        next.delete(refundId);
+        return next;
+      });
+    }
+  }, []);
 
   // ---------- Loading / Auth ----------
 
@@ -583,7 +619,64 @@ export default function OperatorPage() {
               </section>
 
               {/* --------------------------------------------------------- */}
-              {/* 6. Waitlist Management                                    */}
+              {/* 6. Pending Refunds                                        */}
+              {/* --------------------------------------------------------- */}
+              {refunds.length > 0 && (
+                <section>
+                  <SectionHeader>
+                    Pending Refunds ({refunds.length})
+                  </SectionHeader>
+                  <div className="overflow-x-auto">
+                    <table className="w-full">
+                      <thead>
+                        <tr className="border-b border-border">
+                          <th className={thClass}>Contact</th>
+                          <th className={thClass}>Balance</th>
+                          <th className={thClass}>Deleted</th>
+                          <th className={thClass}>Action</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {refunds.map((r) => (
+                          <tr
+                            key={r.id}
+                            className="border-b border-border/50"
+                          >
+                            <td className={tdClass}>{r.contact}</td>
+                            <td
+                              className={`px-3 py-2 text-sm font-medium ${
+                                r.amount_sats > 0
+                                  ? "text-amber-400"
+                                  : "text-muted"
+                              }`}
+                            >
+                              {formatSats(r.amount_sats)} sats
+                            </td>
+                            <td className={tdMuted}>
+                              {formatDate(r.created_at)}
+                            </td>
+                            <td className="px-3 py-2">
+                              <button
+                                type="button"
+                                onClick={() => acknowledgeRefund(r.id)}
+                                disabled={ackingRefunds.has(r.id)}
+                                className="text-xs px-2 py-1 rounded border border-current text-muted opacity-70 hover:opacity-100 transition-opacity disabled:opacity-30"
+                              >
+                                {ackingRefunds.has(r.id)
+                                  ? "Removing..."
+                                  : "Acknowledge"}
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </section>
+              )}
+
+              {/* --------------------------------------------------------- */}
+              {/* 7. Waitlist Management                                    */}
               {/* --------------------------------------------------------- */}
               <section>
                 <SectionHeader>Waitlist Management</SectionHeader>
