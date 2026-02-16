@@ -7,13 +7,14 @@ vi.mock("@/lib/db", () => ({
 }));
 vi.mock("@/lib/auth", () => ({
   createToken: vi.fn(),
+  needsOnboarding: vi.fn().mockResolvedValue(false),
 }));
 vi.mock("@/lib/capacity", () => ({
   isAtCapacity: vi.fn(),
 }));
 
 import { query } from "@/lib/db";
-import { createToken } from "@/lib/auth";
+import { createToken, needsOnboarding } from "@/lib/auth";
 import { isAtCapacity } from "@/lib/capacity";
 import { POST } from "../route";
 
@@ -55,6 +56,8 @@ beforeEach(() => {
   vi.mocked(query).mockReset();
   vi.mocked(createToken).mockReset();
   vi.mocked(createToken).mockResolvedValue("mock-jwt-token");
+  vi.mocked(needsOnboarding).mockReset();
+  vi.mocked(needsOnboarding).mockResolvedValue(false);
   vi.mocked(isAtCapacity).mockReset();
   vi.mocked(isAtCapacity).mockResolvedValue(false);
 });
@@ -103,6 +106,21 @@ describe("Nostr auth (NIP-42)", () => {
     const data = await res.json();
     expect(data.token).toBe("mock-jwt-token");
     expect(data.userId).toBe("user-existing");
+  });
+
+  it("existing user, onboarding incomplete → needsOnboarding in response", async () => {
+    vi.mocked(needsOnboarding).mockResolvedValue(true);
+    const { event } = makeNip42Event();
+
+    vi.mocked(query).mockResolvedValueOnce(
+      mockQueryResult([{ id: "user-abc" }])
+    );
+    vi.mocked(query).mockResolvedValueOnce(mockQueryResult([]));
+
+    const res = await POST(makeRequest({ event }) as any);
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data.needsOnboarding).toBe(true);
   });
 
   // --- New user path ---

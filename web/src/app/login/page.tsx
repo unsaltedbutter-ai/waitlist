@@ -106,7 +106,7 @@ function LoginContent() {
       }
 
       localStorage.setItem(TOKEN_KEY, data.token);
-      router.replace(data.isNew ? "/onboarding" : "/dashboard");
+      router.replace(data.isNew || data.needsOnboarding ? "/onboarding" : "/dashboard");
     } catch {
       setError("Connection failed. Try again.");
       setLoading(false);
@@ -149,7 +149,7 @@ function LoginContent() {
       }
 
       localStorage.setItem(TOKEN_KEY, data.token);
-      router.replace("/dashboard");
+      router.replace(data.needsOnboarding ? "/onboarding" : "/dashboard");
     } catch {
       setError("Nostr signing failed or was cancelled.");
       setLoading(false);
@@ -182,7 +182,7 @@ function LoginContent() {
       }
 
       localStorage.setItem(TOKEN_KEY, data.token);
-      router.replace(emailMode === "signup" ? "/onboarding" : "/dashboard");
+      router.replace(emailMode === "signup" || data.needsOnboarding ? "/onboarding" : "/dashboard");
     } catch {
       setError("Connection failed. Try again.");
       setLoading(false);

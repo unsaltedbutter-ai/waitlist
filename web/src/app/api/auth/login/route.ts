@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { query } from "@/lib/db";
-import { createToken, verifyPassword } from "@/lib/auth";
+import { createToken, needsOnboarding, verifyPassword } from "@/lib/auth";
 
 export async function POST(req: NextRequest) {
   let body: { email: string; password: string };
@@ -49,6 +49,7 @@ export async function POST(req: NextRequest) {
   }
 
   const token = await createToken(user.id);
+  const onboarding = await needsOnboarding(user.id);
 
-  return NextResponse.json({ token, userId: user.id });
+  return NextResponse.json({ token, userId: user.id, ...(onboarding && { needsOnboarding: true }) });
 }

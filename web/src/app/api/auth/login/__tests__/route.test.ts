@@ -6,11 +6,12 @@ vi.mock("@/lib/db", () => ({
 }));
 vi.mock("@/lib/auth", () => ({
   createToken: vi.fn().mockResolvedValue("mock-jwt"),
+  needsOnboarding: vi.fn().mockResolvedValue(false),
   verifyPassword: vi.fn(),
 }));
 
 import { query } from "@/lib/db";
-import { verifyPassword } from "@/lib/auth";
+import { needsOnboarding, verifyPassword } from "@/lib/auth";
 import { POST } from "../route";
 
 function makeRequest(body: object): Request {
@@ -24,6 +25,7 @@ function makeRequest(body: object): Request {
 beforeEach(() => {
   vi.mocked(query).mockReset();
   vi.mocked(verifyPassword).mockReset();
+  vi.mocked(needsOnboarding).mockResolvedValue(false);
 });
 
 describe("POST /api/auth/login", () => {
@@ -74,6 +76,22 @@ describe("POST /api/auth/login", () => {
     expect(res.status).toBe(400);
     const data = await res.json();
     expect(data.error).toMatch(/[Nn]ostr/);
+  });
+
+  it("valid login, onboarding incomplete → needsOnboarding in response", async () => {
+    vi.mocked(needsOnboarding).mockResolvedValue(true);
+    vi.mocked(query).mockResolvedValueOnce(
+      mockQueryResult([{ id: "user-1", password_hash: "hashed" }])
+    );
+    vi.mocked(verifyPassword).mockResolvedValueOnce(true);
+
+    const res = await POST(
+      makeRequest({ email: "user@example.com", password: "correctpassword" }) as any
+    );
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data.token).toBe("mock-jwt");
+    expect(data.needsOnboarding).toBe(true);
   });
 
   it("missing fields → 400", async () => {

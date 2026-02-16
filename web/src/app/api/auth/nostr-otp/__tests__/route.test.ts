@@ -6,12 +6,14 @@ vi.mock("@/lib/db", () => ({
 }));
 vi.mock("@/lib/auth", () => ({
   createToken: vi.fn().mockResolvedValue("mock-jwt-token"),
+  needsOnboarding: vi.fn().mockResolvedValue(false),
 }));
 vi.mock("@/lib/capacity", () => ({
   isAtCapacity: vi.fn().mockResolvedValue(false),
 }));
 
 import { query } from "@/lib/db";
+import { needsOnboarding } from "@/lib/auth";
 import { isAtCapacity } from "@/lib/capacity";
 import { POST } from "../route";
 
@@ -38,6 +40,7 @@ function makeRequest(body: object, ip?: string): Request {
 beforeEach(() => {
   vi.mocked(query).mockReset();
   vi.mocked(isAtCapacity).mockResolvedValue(false);
+  vi.mocked(needsOnboarding).mockResolvedValue(false);
 });
 
 describe("POST /api/auth/nostr-otp", () => {
@@ -252,6 +255,77 @@ describe("POST /api/auth/nostr-otp", () => {
     // Verify the raw code (no hyphen) was passed to the DB
     const deleteCall = vi.mocked(query).mock.calls[1];
     expect(deleteCall[1]).toEqual(["123456789012"]);
+  });
+
+  it("existing user, onboarding incomplete: returns needsOnboarding", async () => {
+    vi.mocked(needsOnboarding).mockResolvedValue(true);
+
+    // Cleanup expired
+    vi.mocked(query).mockResolvedValueOnce(mockQueryResult([]));
+    // Atomic delete returning npub_hex
+    vi.mocked(query).mockResolvedValueOnce(
+      mockQueryResult([{ npub_hex: "aabb" }])
+    );
+    // User exists
+    vi.mocked(query).mockResolvedValueOnce(
+      mockQueryResult([{ id: "user-123" }])
+    );
+    // Update updated_at
+    vi.mocked(query).mockResolvedValueOnce(mockQueryResult([]));
+
+    const res = await POST(makeRequest({ code: "123456-789012" }) as any);
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data.token).toBe("mock-jwt-token");
+    expect(data.needsOnboarding).toBe(true);
+  });
+
+  it("existing user, onboarding complete: no needsOnboarding flag", async () => {
+    vi.mocked(needsOnboarding).mockResolvedValue(false);
+
+    // Cleanup expired
+    vi.mocked(query).mockResolvedValueOnce(mockQueryResult([]));
+    // Atomic delete returning npub_hex
+    vi.mocked(query).mockResolvedValueOnce(
+      mockQueryResult([{ npub_hex: "aabb" }])
+    );
+    // User exists
+    vi.mocked(query).mockResolvedValueOnce(
+      mockQueryResult([{ id: "user-123" }])
+    );
+    // Update updated_at
+    vi.mocked(query).mockResolvedValueOnce(mockQueryResult([]));
+
+    const res = await POST(makeRequest({ code: "123456-789012" }) as any);
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data.token).toBe("mock-jwt-token");
+    expect(data.needsOnboarding).toBeUndefined();
+  });
+
+  it("new user signup: no needsOnboarding flag (isNew is sufficient)", async () => {
+    // Cleanup expired
+    vi.mocked(query).mockResolvedValueOnce(mockQueryResult([]));
+    // Atomic delete returning npub_hex
+    vi.mocked(query).mockResolvedValueOnce(
+      mockQueryResult([{ npub_hex: "ccdd" }])
+    );
+    // No existing user
+    vi.mocked(query).mockResolvedValueOnce(mockQueryResult([]));
+    // Auto-lookup: waitlist entry found by npub
+    vi.mocked(query).mockResolvedValueOnce(
+      mockQueryResult([{ id: "waitlist-1" }])
+    );
+    // Insert new user
+    vi.mocked(query).mockResolvedValueOnce(
+      mockQueryResult([{ id: "new-user-456" }])
+    );
+
+    const res = await POST(makeRequest({ code: "111111222222" }) as any);
+    expect(res.status).toBe(201);
+    const data = await res.json();
+    expect(data.isNew).toBe(true);
+    expect(data.needsOnboarding).toBeUndefined();
   });
 
   it("invalid JSON: 400", async () => {

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { verifyEvent, type Event } from "nostr-tools";
 import { query } from "@/lib/db";
-import { createToken } from "@/lib/auth";
+import { createToken, needsOnboarding } from "@/lib/auth";
 import { isAtCapacity } from "@/lib/capacity";
 
 export async function POST(req: NextRequest) {
@@ -49,11 +49,12 @@ export async function POST(req: NextRequest) {
   );
 
   if (existing.rows.length > 0) {
-    // Existing user — login, no invite code needed
+    // Existing user: login, no invite code needed
     const userId = existing.rows[0].id;
     await query("UPDATE users SET updated_at = NOW() WHERE id = $1", [userId]);
     const token = await createToken(userId);
-    return NextResponse.json({ token, userId });
+    const onboarding = await needsOnboarding(userId);
+    return NextResponse.json({ token, userId, ...(onboarding && { needsOnboarding: true }) });
   }
 
   // New user — require invite code

@@ -1,6 +1,7 @@
 import { SignJWT, jwtVerify } from "jose";
 import { hash, compare } from "bcryptjs";
 import { NextRequest, NextResponse } from "next/server";
+import { query } from "@/lib/db";
 
 const BCRYPT_COST = 12;
 
@@ -39,6 +40,15 @@ export async function verifyPassword(
   hashed: string
 ): Promise<boolean> {
   return compare(password, hashed);
+}
+
+/** True if user has never completed a membership payment (hasn't finished onboarding). */
+export async function needsOnboarding(userId: string): Promise<boolean> {
+  const result = await query<{ count: string }>(
+    "SELECT COUNT(*)::text AS count FROM membership_payments WHERE user_id = $1 AND status = 'paid'",
+    [userId]
+  );
+  return result.rows[0].count === "0";
 }
 
 /** Extract userId from Authorization header. Returns null if invalid. */

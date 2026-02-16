@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { query } from "@/lib/db";
-import { createToken } from "@/lib/auth";
+import { createToken, needsOnboarding } from "@/lib/auth";
 import { isAtCapacity } from "@/lib/capacity";
 
 // In-memory rate limiter: IP -> { count, resetAt }
@@ -98,7 +98,8 @@ export async function POST(req: NextRequest) {
     const userId = existing.rows[0].id;
     await query("UPDATE users SET updated_at = NOW() WHERE id = $1", [userId]);
     const token = await createToken(userId);
-    return NextResponse.json({ token, userId });
+    const onboarding = await needsOnboarding(userId);
+    return NextResponse.json({ token, userId, ...(onboarding && { needsOnboarding: true }) });
   }
 
   // New user: check for invite (auto-lookup by npub, fallback to explicit code)
