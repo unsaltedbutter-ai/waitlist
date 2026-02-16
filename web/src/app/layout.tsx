@@ -34,6 +34,9 @@ export default function RootLayout({
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
       >
         {children}
+        <footer className="text-center text-muted/30 text-xs py-4 font-mono">
+          {process.env.NEXT_PUBLIC_GIT_HASH}
+        </footer>
       </body>
     </html>
   );
