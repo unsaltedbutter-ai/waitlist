@@ -8,7 +8,7 @@ import sys
 from pathlib import Path
 
 from dotenv import load_dotenv
-from nostr_sdk import Client, Keys, NostrSigner, PublicKey, RelayUrl
+from nostr_sdk import Client, EventBuilder, Keys, Kind, NostrSigner, PublicKey, RelayUrl, Tag
 
 DEFAULT_RELAYS = "wss://relay.damus.io,wss://nos.lol,wss://relay.snort.social"
 
@@ -47,7 +47,11 @@ async def send_dm(message: str) -> None:
     await client.connect()
 
     recipient = PublicKey.parse(npub)
-    await client.send_private_msg(recipient, message, [])
+    ciphertext = await signer.nip04_encrypt(recipient, message)
+    builder = EventBuilder(Kind(4), ciphertext).tags([
+        Tag.parse(["p", recipient.to_hex()])
+    ])
+    await client.send_event_builder(builder)
     await client.disconnect()
     print(f"DM sent to {npub}")
 
@@ -56,5 +60,5 @@ if __name__ == "__main__":
     msg = " ".join(sys.argv[1:]) if len(sys.argv) > 1 else None
     if msg is None:
         git_hash = get_git_hash()
-        msg = f"Deploy complete — {git_hash}"
+        msg = f"Deploy complete: {git_hash}"
     asyncio.run(send_dm(msg))

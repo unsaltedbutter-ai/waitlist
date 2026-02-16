@@ -12,6 +12,7 @@ from dotenv import load_dotenv
 from nostr_sdk import (
     Client,
     Event,
+    EventBuilder,
     Filter,
     HandleNotification,
     Keys,
@@ -22,6 +23,7 @@ from nostr_sdk import (
     PublicKey,
     RelayMessage,
     RelayUrl,
+    Tag,
     Timestamp,
     UnsignedEvent,
     UnwrappedGift,
@@ -85,12 +87,19 @@ class BotNotificationHandler(HandleNotification):
         log.info("NIP-04 DM from %s: %s", sender_hex[:16], plaintext[:80])
 
         reply = await self._dispatch_command(sender_hex, plaintext)
-        log.info("Replying to %s: %s", sender_hex[:16], reply[:80])
+        log.info("Replying (NIP-04) to %s: %s", sender_hex[:16], reply[:80])
         try:
-            await self._client.send_private_msg(sender_pk, reply, [])
-            log.info("Reply sent to %s", sender_hex[:16])
+            await self._send_nip04_reply(sender_pk, reply)
+            log.info("NIP-04 reply sent to %s", sender_hex[:16])
         except Exception as e:
-            log.error("Failed to send reply to %s: %s", sender_hex[:16], e)
+            log.error("Failed to send NIP-04 reply to %s: %s", sender_hex[:16], e)
+
+    async def _send_nip04_reply(self, recipient: PublicKey, text: str):
+        ciphertext = await self._signer.nip04_encrypt(recipient, text)
+        builder = EventBuilder(Kind(4), ciphertext).tags([
+            Tag.parse(["p", recipient.to_hex()])
+        ])
+        await self._client.send_event_builder(builder)
 
     # ── NIP-17 DM (kind 1059 gift wrap) ──────────────────────
 
