@@ -1,6 +1,7 @@
 """UnsaltedButter Nostr Bot — DM commands + zap topups."""
 
 import asyncio
+import json
 import logging
 import os
 import signal
@@ -11,7 +12,6 @@ from dotenv import load_dotenv
 from nostr_sdk import (
     Client,
     Event,
-    EventBuilder,
     Filter,
     HandleNotification,
     Keys,
@@ -22,7 +22,6 @@ from nostr_sdk import (
     PublicKey,
     RelayMessage,
     RelayUrl,
-    Tag,
     Timestamp,
     UnsignedEvent,
     UnwrappedGift,
@@ -86,14 +85,9 @@ class BotNotificationHandler(HandleNotification):
         log.info("NIP-04 DM from %s: %s", sender_hex[:16], plaintext[:80])
 
         reply = await self._dispatch_command(sender_hex, plaintext)
-        await self._send_nip04_reply(sender_pk, reply)
-
-    async def _send_nip04_reply(self, recipient: PublicKey, text: str):
-        ciphertext = await self._signer.nip04_encrypt(recipient, text)
-        builder = EventBuilder(Kind(4), ciphertext).tags([
-            Tag.parse(["p", recipient.to_hex()])
-        ])
-        await self._client.send_event_builder(builder)
+        # Reply via NIP-17 even to NIP-04 senders — NIP-04 is deprecated
+        # and EventBuilder no longer supports generic kind construction.
+        await self._client.send_private_msg(sender_pk, reply, None)
 
     # ── NIP-17 DM (kind 1059 gift wrap) ──────────────────────
 
@@ -192,18 +186,19 @@ async def main():
     for relay in relays.split(","):
         relay = relay.strip()
         if relay:
-            await client.add_relay(relay)
+            await client.add_relay(RelayUrl.parse(relay))
     await client.connect()
     log.info("Connected to relays")
 
     # Publish kind 0 profile metadata
-    metadata = Metadata()
-    bot_name = os.getenv("BOT_NAME", "UnsaltedButter Bot")
-    bot_about = os.getenv("BOT_ABOUT", "DM me to manage your streaming rotation. Zap me to add credits.")
+    meta_dict = {
+        "name": os.getenv("BOT_NAME", "UnsaltedButter Bot"),
+        "about": os.getenv("BOT_ABOUT", "DM me to manage your streaming rotation. Zap me to add credits."),
+    }
     bot_lud16 = os.getenv("BOT_LUD16", "")
-    metadata = metadata.set_name(bot_name).set_about(bot_about)
     if bot_lud16:
-        metadata = metadata.set_lud16(bot_lud16)
+        meta_dict["lud16"] = bot_lud16
+    metadata = Metadata.from_json(json.dumps(meta_dict))
     await client.set_metadata(metadata)
     log.info("Published kind 0 profile")
 
@@ -221,7 +216,7 @@ async def main():
         ])
         .since(start_time)
     )
-    await client.subscribe([f])
+    await client.subscribe(f)
     log.info("Subscribed to kind 4, 1059, 9735")
 
     # Signal handling for clean shutdown

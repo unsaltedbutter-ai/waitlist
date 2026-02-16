@@ -18,7 +18,7 @@ from pathlib import Path
 
 import httpx
 from dotenv import load_dotenv
-from nostr_sdk import Client, Keys, NostrSigner, PublicKey
+from nostr_sdk import Client, Keys, NostrSigner, PublicKey, RelayUrl
 
 # ---------------------------------------------------------------------------
 # Config
@@ -328,7 +328,7 @@ async def send_nostr_dm(message: str) -> None:
     client = Client(signer)
 
     for relay in RELAYS:
-        await client.add_relay(relay)
+        await client.add_relay(RelayUrl.parse(relay))
     await client.connect()
 
     recipient = PublicKey.parse(npub)
