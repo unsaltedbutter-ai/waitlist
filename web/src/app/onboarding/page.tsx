@@ -229,6 +229,7 @@ export default function OnboardingPage() {
   const [invoice, setInvoice] = useState<{
     invoiceId: string;
     checkoutLink: string;
+    bolt11: string | null;
     amount_sats: number | null;
   } | null>(null);
   const [copied, setCopied] = useState(false);
@@ -257,6 +258,34 @@ export default function OnboardingPage() {
       })
       .catch(() => {});
   }, []);
+
+  // Poll payment status when invoice exists
+  useEffect(() => {
+    if (!invoice || paid) return;
+    let cancelled = false;
+    const poll = async () => {
+      while (!cancelled) {
+        await new Promise((r) => setTimeout(r, 5000));
+        if (cancelled) break;
+        try {
+          const res = await authFetch(
+            `/api/credits/prepay/status?invoiceId=${invoice.invoiceId}`
+          );
+          if (res.ok) {
+            const data = await res.json();
+            if (data.status === "paid") {
+              setPaid(true);
+              break;
+            }
+          }
+        } catch {
+          // Network error, keep polling
+        }
+      }
+    };
+    poll();
+    return () => { cancelled = true; };
+  }, [invoice, paid]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // DnD sensors
   const sensors = useSensors(
@@ -1136,7 +1165,7 @@ export default function OnboardingPage() {
   async function copyInvoice() {
     if (!invoice) return;
     try {
-      await navigator.clipboard.writeText(invoice.checkoutLink);
+      await navigator.clipboard.writeText(invoice.bolt11 ?? invoice.checkoutLink);
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     } catch {
@@ -1191,7 +1220,7 @@ export default function OnboardingPage() {
 
           <div className="flex justify-center">
             <div className="bg-white p-4 rounded">
-              <QRCode value={invoice.checkoutLink} size={200} />
+              <QRCode value={invoice.bolt11 ?? invoice.checkoutLink} size={200} />
             </div>
           </div>
 
@@ -1203,13 +1232,22 @@ export default function OnboardingPage() {
             {copied ? "Copied" : "Copy invoice"}
           </button>
 
-          <button
-            type="button"
-            onClick={() => setPaid(true)}
-            className="w-full py-3 px-4 bg-accent text-background font-semibold rounded hover:bg-accent/90 transition-colors"
+          <div className="flex items-center justify-center gap-2 text-muted text-sm py-3">
+            <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24" fill="none">
+              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+            </svg>
+            Waiting for payment...
+          </div>
+
+          <a
+            href={invoice.checkoutLink}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="block text-center text-xs text-muted/50 hover:text-muted transition-colors"
           >
-            Continue to dashboard
-          </button>
+            Open checkout page instead
+          </a>
         </div>
       );
     }
