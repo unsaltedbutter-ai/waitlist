@@ -10,11 +10,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 from nostr_sdk import Client, Keys, NostrSigner, PublicKey, RelayUrl
 
-RELAYS = [
-    "wss://relay.damus.io",
-    "wss://nos.lol",
-    "wss://relay.snort.social",
-]
+DEFAULT_RELAYS = "wss://relay.damus.io,wss://nos.lol,wss://relay.snort.social"
 
 
 def get_git_hash() -> str:
@@ -43,8 +39,11 @@ async def send_dm(message: str) -> None:
     signer = NostrSigner.keys(keys)
     client = Client(signer)
 
-    for relay in RELAYS:
-        await client.add_relay(RelayUrl.parse(relay))
+    relays = os.getenv("NOSTR_RELAYS", DEFAULT_RELAYS)
+    for relay in relays.split(","):
+        relay = relay.strip()
+        if relay:
+            await client.add_relay(RelayUrl.parse(relay))
     await client.connect()
 
     recipient = PublicKey.parse(npub)

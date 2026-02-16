@@ -85,9 +85,12 @@ class BotNotificationHandler(HandleNotification):
         log.info("NIP-04 DM from %s: %s", sender_hex[:16], plaintext[:80])
 
         reply = await self._dispatch_command(sender_hex, plaintext)
-        # Reply via NIP-17 even to NIP-04 senders — NIP-04 is deprecated
-        # and EventBuilder no longer supports generic kind construction.
-        await self._client.send_private_msg(sender_pk, reply, [])
+        log.info("Replying to %s: %s", sender_hex[:16], reply[:80])
+        try:
+            await self._client.send_private_msg(sender_pk, reply, [])
+            log.info("Reply sent to %s", sender_hex[:16])
+        except Exception as e:
+            log.error("Failed to send reply to %s: %s", sender_hex[:16], e)
 
     # ── NIP-17 DM (kind 1059 gift wrap) ──────────────────────
 

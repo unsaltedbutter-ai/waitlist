@@ -29,11 +29,7 @@ PACKAGE_JSON = Path.home() / "unsaltedbutter" / "web" / "package.json"
 SECURITY_KEYWORDS = re.compile(
     r"security|CVE-\d{4}|vulnerability|critical|patch", re.IGNORECASE
 )
-RELAYS = [
-    "wss://relay.damus.io",
-    "wss://nos.lol",
-    "wss://relay.snort.social",
-]
+DEFAULT_RELAYS = "wss://relay.damus.io,wss://nos.lol,wss://relay.snort.social"
 GITHUB_API = "https://api.github.com/repos"
 NPM_REGISTRY = "https://registry.npmjs.org"
 
@@ -327,8 +323,11 @@ async def send_nostr_dm(message: str) -> None:
     signer = NostrSigner.keys(keys)
     client = Client(signer)
 
-    for relay in RELAYS:
-        await client.add_relay(RelayUrl.parse(relay))
+    relays = os.getenv("NOSTR_RELAYS", DEFAULT_RELAYS)
+    for relay in relays.split(","):
+        relay = relay.strip()
+        if relay:
+            await client.add_relay(RelayUrl.parse(relay))
     await client.connect()
 
     recipient = PublicKey.parse(npub)
