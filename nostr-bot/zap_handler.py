@@ -146,7 +146,7 @@ async def handle_zap_receipt(
     if user is None:
         log.info("Zap from unregistered npub %s (%d sats) — ignoring", sender_hex[:16], amount_sats)
         try:
-            await send_dm(sender_hex, "Not signed up. Join the waitlist at unsaltedbutter.ai")
+            await send_dm(sender_hex, "Join the waitlist")
         except Exception:
             log.debug("Could not DM unregistered zapper %s", sender_hex[:16])
         return

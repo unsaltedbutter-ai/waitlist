@@ -54,7 +54,7 @@ export const POST = withOperator(async (req: NextRequest) => {
 
   await query(
     `UPDATE waitlist
-     SET invited = TRUE, invited_at = NOW(), invite_code = $1
+     SET invited = TRUE, invited_at = NOW(), invite_code = $1, invite_dm_pending = TRUE
      WHERE id = $2`,
     [code, waitlistId]
   );

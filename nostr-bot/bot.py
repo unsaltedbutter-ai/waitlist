@@ -41,6 +41,14 @@ load_dotenv(_env_file if _env_file.exists() else None)
 log = logging.getLogger(__name__)
 
 
+def _npub_to_hex(npub_bech32: str) -> str:
+    """Convert npub1... bech32 to hex. Returns empty string on error."""
+    try:
+        return PublicKey.parse(npub_bech32).to_hex()
+    except Exception:
+        return ""
+
+
 class BotNotificationHandler(HandleNotification):
     def __init__(
         self,
@@ -140,20 +148,79 @@ class BotNotificationHandler(HandleNotification):
     # ── Command dispatch ─────────────────────────────────────
 
     async def _dispatch_command(self, sender_hex: str, message: str) -> str:
+        cmd = message.strip().lower()
         user = await db.get_user_by_npub(sender_hex)
+
+        # "login" works for anyone (proves npub ownership for both login + signup)
+        if cmd == "login":
+            code = await db.create_otp(sender_hex)
+            formatted = f"{code[:6]}-{code[6:]}"
+            return f"Your login code: {formatted}\n\nEnter it on the website within 5 minutes."
+
+        # "waitlist" only for unregistered users
+        if cmd == "waitlist":
+            if user is not None:
+                return "You already have an account."
+            result, invite_code = await db.add_to_waitlist(sender_hex)
+            if result == "added":
+                return "You're on the waitlist. We'll DM you when a spot opens."
+            elif result == "already_invited":
+                base_url = os.getenv("BASE_URL", "https://unsaltedbutter.ai")
+                link = f"{base_url}/login?code={invite_code}"
+                return f"You've already been invited:\n\n{link}"
+            else:
+                return "You're already on the waitlist. We'll DM you when a spot opens."
+
+        # "invites" operator-only: trigger sending pending invite DMs
+        if cmd == "invites":
+            operator_npub = os.getenv("OPERATOR_NPUB", "")
+            if operator_npub and sender_hex == _npub_to_hex(operator_npub):
+                count = await self._send_pending_invite_dms()
+                return f"Sent {count} invite DM(s)." if count > 0 else "No pending invite DMs."
+            # Non-operators fall through to normal handling
+
+        # Everything else requires registration
         if user is None:
-            return "Not signed up. Join the waitlist at unsaltedbutter.ai"
+            return "Join the waitlist"
+
         return await commands.handle_dm(user["id"], user["status"], message)
 
+    # ── Invite DM sending ─────────────────────────────────────
 
-async def _notification_loop(client, signer, shutdown_event):
+    async def _send_pending_invite_dms(self) -> int:
+        """Send invite link DMs to waitlist entries flagged invite_dm_pending."""
+        pending = await db.get_pending_invite_dms()
+        base_url = os.getenv("BASE_URL", "https://unsaltedbutter.ai")
+        count = 0
+
+        for entry in pending:
+            link = f"{base_url}/login?code={entry['invite_code']}"
+            text = f"You're in. Here's your invite link:\n\n{link}"
+            try:
+                pk = PublicKey.parse(entry["nostr_npub"])
+                # Use NIP-04 (kind 4) for broad client compatibility
+                ciphertext = await self._signer.nip04_encrypt(pk, text)
+                builder = EventBuilder(Kind(4), ciphertext).tags([
+                    Tag.parse(["p", pk.to_hex()])
+                ])
+                await self._client.send_event_builder(builder)
+                await db.mark_invite_dm_sent(entry["id"])
+                count += 1
+                log.info("Sent invite DM to %s", entry["nostr_npub"][:16])
+            except Exception as e:
+                log.error("Failed to send invite DM to %s: %s", entry["nostr_npub"][:16], e)
+
+        return count
+
+
+async def _notification_loop(client, signer, shutdown_event, handler):
     """Check for users needing notifications every 6 hours."""
     # Wait 60 seconds after startup before first check
     try:
         await asyncio.wait_for(shutdown_event.wait(), timeout=60)
         return  # Shutdown requested during initial wait
     except asyncio.TimeoutError:
-        pass  # Expected — continue to first check
+        pass  # Expected, continue to first check
 
     while not shutdown_event.is_set():
         try:
@@ -161,11 +228,19 @@ async def _notification_loop(client, signer, shutdown_event):
         except Exception as e:
             log.error("[notifications] Error: %s", e)
 
+        # Backup: send any pending invite DMs (in case operator forgot to DM "invites")
+        try:
+            count = await handler._send_pending_invite_dms()
+            if count > 0:
+                log.info("[notifications] Backup invite DM check sent %d DM(s)", count)
+        except Exception as e:
+            log.error("[notifications] Invite DM backup check error: %s", e)
+
         try:
             await asyncio.wait_for(shutdown_event.wait(), timeout=6 * 3600)
             return  # Shutdown requested
         except asyncio.TimeoutError:
-            pass  # Expected — time for next check
+            pass  # Expected, time for next check
 
 
 async def main():
@@ -246,8 +321,8 @@ async def main():
     handler = BotNotificationHandler(keys, signer, client, start_time, zap_provider_pubkey_hex)
     notify_task = asyncio.create_task(client.handle_notifications(handler))
 
-    # Run proactive notification scheduler
-    notif_loop_task = asyncio.create_task(_notification_loop(client, signer, shutdown_event))
+    # Run proactive notification scheduler (includes backup invite DM check)
+    notif_loop_task = asyncio.create_task(_notification_loop(client, signer, shutdown_event, handler))
 
     log.info("Bot running. Waiting for events...")
 

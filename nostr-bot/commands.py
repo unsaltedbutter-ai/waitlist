@@ -9,11 +9,12 @@ log = logging.getLogger(__name__)
 
 HELP_TEXT = (
     "Commands:\n"
-    "  status — current sub, balance, next service\n"
-    "  queue  — full rotation order\n"
-    "  skip   — move current service to end of queue\n"
-    "  stay   — extend current subscription instead of rotating\n"
-    "  help   — this message\n"
+    "  login  : get a one-time code to sign in on the website\n"
+    "  status : current sub, balance, next service\n"
+    "  queue  : full rotation order\n"
+    "  skip   : move current service to end of queue\n"
+    "  stay   : extend current subscription instead of rotating\n"
+    "  help   : this message\n"
     "\n"
     "Zap this bot to add sats to your credit balance."
 )

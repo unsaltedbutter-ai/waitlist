@@ -277,4 +277,4 @@ async def test_unregistered_sender_not_credited(mock_db, send_dm):
     mock_db.credit_zap.assert_not_called()
     # Should DM them to join
     send_dm.assert_called_once()
-    assert "unsaltedbutter.ai" in send_dm.call_args[0][1]
+    assert "Join the waitlist" in send_dm.call_args[0][1]

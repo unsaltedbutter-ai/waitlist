@@ -7,6 +7,8 @@ type Tab = "nostr" | "email";
 type EmailMode = "login" | "signup";
 
 const TOKEN_KEY = "ub_token";
+const BOT_NPUB = process.env.NEXT_PUBLIC_NOSTR_BOT_NPUB ?? "";
+const BOT_NAME = process.env.NEXT_PUBLIC_NOSTR_BOT_NAME ?? "UnsaltedButter Bot";
 
 export default function LoginPage() {
   return (
@@ -30,6 +32,10 @@ function LoginContent() {
   const [inviteCode, setInviteCode] = useState<string | null>(null);
   const [codeValid, setCodeValid] = useState<boolean | null>(null);
   const [codeChecking, setCodeChecking] = useState(false);
+
+  // OTP state
+  const [otpCode, setOtpCode] = useState("");
+  const [otpSent, setOtpSent] = useState(false);
 
   // Validate invite code from URL on mount
   useEffect(() => {
@@ -63,6 +69,51 @@ function LoginContent() {
   }, [searchParams]);
 
   const canSignup = codeValid === true;
+
+  // Format OTP input as XXXXXX-XXXXXX
+  function handleOtpChange(value: string) {
+    // Strip non-digits
+    const digits = value.replace(/\D/g, "").slice(0, 12);
+    if (digits.length > 6) {
+      setOtpCode(`${digits.slice(0, 6)}-${digits.slice(6)}`);
+    } else {
+      setOtpCode(digits);
+    }
+  }
+
+  async function handleOtpSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    setError("");
+    setLoading(true);
+
+    try {
+      const res = await fetch("/api/auth/nostr-otp", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          code: otpCode,
+          ...(canSignup && inviteCode ? { inviteCode } : {}),
+        }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        if (res.status === 429) {
+          setError("Too many attempts. Wait a few minutes.");
+        } else {
+          setError(data.error || "Authentication failed.");
+        }
+        setLoading(false);
+        return;
+      }
+
+      localStorage.setItem(TOKEN_KEY, data.token);
+      router.replace(data.isNew ? "/onboarding" : "/dashboard");
+    } catch {
+      setError("Connection failed. Try again.");
+      setLoading(false);
+    }
+  }
 
   async function handleNostrLogin() {
     setError("");
@@ -183,34 +234,97 @@ function LoginContent() {
         {/* Nostr tab */}
         {tab === "nostr" && (
           <div className="space-y-6">
-            <p className="text-sm text-muted">
-              Use a Nostr browser extension (nos2x, Alby, etc.).
-              Your npub is your identity — no email required.
-            </p>
-            {canSignup && (
-              <p className="text-xs text-green-400">
-                New here? An account will be created with your invite code.
-              </p>
-            )}
-            <button
-              type="button"
-              onClick={handleNostrLogin}
-              disabled={loading || codeChecking}
-              className="w-full py-3 px-4 bg-accent text-background font-semibold rounded hover:bg-accent/90 transition-colors disabled:opacity-50"
-            >
-              {loading
-                ? "Signing..."
-                : canSignup
-                  ? "Create account with Nostr"
-                  : "Sign in with Nostr"}
-            </button>
-            {!canSignup && (
-              <p className="text-center text-sm text-muted">
-                Need an account?{" "}
-                <a href="/" className="text-accent hover:underline">
-                  Join the waitlist
-                </a>
-              </p>
+            {!otpSent ? (
+              <>
+                <div className="space-y-3">
+                  <p className="text-sm text-muted">
+                    DM <span className="text-foreground font-medium">login</span> to{" "}
+                    <span className="text-foreground font-medium">{BOT_NAME}</span>
+                  </p>
+                  {BOT_NPUB && (
+                    <p className="text-xs text-muted font-mono break-all">
+                      {BOT_NPUB}
+                    </p>
+                  )}
+                  <p className="text-sm text-muted">
+                    You&apos;ll get a 12-digit code back. Enter it below.
+                  </p>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => setOtpSent(true)}
+                  disabled={codeChecking}
+                  className="w-full py-3 px-4 bg-accent text-background font-semibold rounded hover:bg-accent/90 transition-colors disabled:opacity-50"
+                >
+                  I have my code
+                </button>
+
+                {!canSignup && (
+                  <p className="text-sm text-muted">
+                    No invite? DM{" "}
+                    <span className="text-foreground font-medium">waitlist</span> to{" "}
+                    <span className="text-foreground font-medium">{BOT_NAME}</span>{" "}
+                    to join the line.
+                  </p>
+                )}
+
+                <p className="text-center text-xs text-muted">
+                  Have a Nostr extension?{" "}
+                  <button
+                    type="button"
+                    onClick={handleNostrLogin}
+                    disabled={loading || codeChecking}
+                    className="text-accent hover:underline"
+                  >
+                    Sign in with NIP-07
+                  </button>
+                </p>
+              </>
+            ) : (
+              <form onSubmit={handleOtpSubmit} className="space-y-6">
+                <div>
+                  <label className="block text-sm font-medium text-muted mb-2">
+                    Login code
+                  </label>
+                  <input
+                    type="text"
+                    inputMode="numeric"
+                    required
+                    value={otpCode}
+                    onChange={(e) => handleOtpChange(e.target.value)}
+                    placeholder="XXXXXX-XXXXXX"
+                    maxLength={13}
+                    className="w-full py-3 px-4 bg-surface border border-border rounded text-foreground text-center text-lg font-mono tracking-widest placeholder:text-muted/50 focus:outline-none focus:border-accent"
+                  />
+                </div>
+
+                <button
+                  type="submit"
+                  disabled={loading || otpCode.replace("-", "").length !== 12}
+                  className="w-full py-3 px-4 bg-accent text-background font-semibold rounded hover:bg-accent/90 transition-colors disabled:opacity-50"
+                >
+                  {loading
+                    ? "Verifying..."
+                    : canSignup
+                      ? "Create account"
+                      : "Sign in"}
+                </button>
+
+                <p className="text-center text-sm text-muted">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setOtpSent(false);
+                      setOtpCode("");
+                      setError("");
+                    }}
+                    className="text-accent hover:underline"
+                  >
+                    Back
+                  </button>
+                </p>
+              </form>
             )}
           </div>
         )}
