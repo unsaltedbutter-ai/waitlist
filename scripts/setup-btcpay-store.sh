@@ -96,11 +96,22 @@ echo "  API key: ${API_KEY:0:12}..."
 echo "[4/5] Creating webhook..."
 WEBHOOK_SECRET=$(openssl rand -hex 32)
 
+# BTCPay runs in Docker, so 127.0.0.1 inside the container is the container
+# itself. Use the Docker network gateway so BTCPay can reach the host's Next.js.
+BTCPAY_CONTAINER=$(docker ps --filter "name=btcpayserver" --filter "status=running" --format '{{.Names}}' | grep -v lnd | head -1)
+if [[ -n "$BTCPAY_CONTAINER" ]]; then
+    DOCKER_GATEWAY=$(docker inspect "$BTCPAY_CONTAINER" --format '{{range .NetworkSettings.Networks}}{{.Gateway}}{{end}}')
+else
+    DOCKER_GATEWAY="172.18.0.1"
+    echo "  WARNING: Could not detect BTCPay container. Defaulting to ${DOCKER_GATEWAY}"
+fi
+WEBHOOK_URL="http://${DOCKER_GATEWAY}:3000/api/credits/webhook"
+
 WH_RAW=$(curl -sf -u "${BTCPAY_EMAIL}:${PASSWORD}" \
     -X POST \
     -H "Content-Type: application/json" \
     -d "{
-        \"url\": \"https://unsaltedbutter.ai/api/credits/webhook\",
+        \"url\": \"${WEBHOOK_URL}\",
         \"secret\": \"${WEBHOOK_SECRET}\",
         \"enabled\": true,
         \"automaticRedelivery\": true,
@@ -112,11 +123,11 @@ WH_RAW=$(curl -sf -u "${BTCPAY_EMAIL}:${PASSWORD}" \
     "${BTCPAY_URL}/api/v1/stores/${STORE_ID}/webhooks" 2>&1) && {
     WH_ID=$(echo "$WH_RAW" | python3 -c "import sys,json; print(json.load(sys.stdin)['id'])" 2>/dev/null)
     echo "  Webhook created (ID: ${WH_ID})"
-    echo "  URL: https://unsaltedbutter.ai/api/credits/webhook"
+    echo "  URL: ${WEBHOOK_URL}"
     echo "  Event: InvoiceSettled"
 } || {
     echo "  WARNING: Webhook creation failed. Create manually in BTCPay UI:"
-    echo "    URL:    https://unsaltedbutter.ai/api/credits/webhook"
+    echo "    URL:    ${WEBHOOK_URL}"
     echo "    Secret: ${WEBHOOK_SECRET}"
     echo "    Event:  InvoiceSettled"
 }
