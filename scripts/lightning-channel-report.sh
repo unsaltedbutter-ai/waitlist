@@ -12,6 +12,33 @@ source "$SCRIPT_DIR/lightning-common.sh"
 
 CHANNELS=$($LNCLI listchannels)
 
+# Build a map of pubkey -> alias for all channel peers
+PEER_ALIASES=$(echo "$CHANNELS" | python3 -c "
+import sys, json, subprocess, shlex
+data = json.load(sys.stdin)
+channels = data.get('channels', [])
+seen = set()
+aliases = {}
+lncli = '$LNCLI'
+for ch in channels:
+    pk = ch.get('remote_pubkey', '')
+    if not pk or pk in seen:
+        continue
+    seen.add(pk)
+    try:
+        cmd = shlex.split(lncli) + ['getnodeinfo', '--pub_key', pk]
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+        if result.returncode == 0:
+            info = json.loads(result.stdout)
+            alias = info.get('node', {}).get('alias', '')
+            if alias:
+                aliases[pk] = alias
+    except Exception:
+        pass
+import json as j
+print(j.dumps(aliases))
+" 2>/dev/null || echo "{}")
+
 CHANNEL_COUNT=$(echo "$CHANNELS" | python3 -c "import sys,json; print(len(json.load(sys.stdin).get('channels',[])))" 2>/dev/null || echo "0")
 
 if [ "$CHANNEL_COUNT" = "0" ]; then
@@ -21,9 +48,10 @@ if [ "$CHANNEL_COUNT" = "0" ]; then
     exit 0
 fi
 
-echo "$CHANNELS" | python3 -c "
-import sys, json
+echo "$CHANNELS" | PEER_ALIASES="$PEER_ALIASES" python3 -c "
+import sys, json, os
 
+aliases = json.loads(os.environ.get('PEER_ALIASES', '{}'))
 data = json.load(sys.stdin)
 channels = data.get('channels', [])
 
@@ -92,7 +120,9 @@ for r in rows:
 
     htlc_str = f'  HTLCs: {r[\"htlcs\"]}' if r['htlcs'] > 0 else ''
 
-    print(f'  {peer_short}  [{status:8s}]')
+    alias = aliases.get(r['peer'], '')
+    alias_str = f'  ({alias})' if alias else ''
+    print(f'  {peer_short}{alias_str}  [{status:8s}]')
     print(f'    Capacity: {r[\"capacity\"]:>10,}    Local: {r[\"local\"]:>10,}    Remote: {r[\"remote\"]:>10,}    Inbound: {inbound:>5.1f}% [{health}]{htlc_str}')
     print(f'    [{bar}]')
     print(f'    Chan: {r[\"chan_id\"]}  Point: {r[\"chan_point\"]}')
