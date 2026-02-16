@@ -291,6 +291,8 @@ CREATE TABLE subscriptions (
     cancel_confirmed_at   TIMESTAMPTZ,                         -- when agent confirmed the cancel
     subscription_end_date TIMESTAMPTZ,                         -- billing cycle end (from cancel confirmation)
     gift_card_amount_cents INT,                                -- gift card used for this subscription
+    estimated_lapse_at    TIMESTAMPTZ,                         -- when subscription is expected to lapse
+    actual_lapsed_at      TIMESTAMPTZ,                         -- when subscription actually lapsed
     created_at            TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at            TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
