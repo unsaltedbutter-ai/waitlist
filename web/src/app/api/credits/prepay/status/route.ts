@@ -11,22 +11,38 @@ export const GET = withAuth(async (req: NextRequest, { userId }) => {
     );
   }
 
-  const result = await query<{ status: string }>(
+  // Check membership_payments first
+  const mpResult = await query<{ status: string }>(
     `SELECT status FROM membership_payments
      WHERE user_id = $1 AND btcpay_invoice_id = $2
      LIMIT 1`,
     [userId, invoiceId]
   );
 
-  if (result.rows.length === 0) {
-    return NextResponse.json(
-      { error: "Invoice not found" },
-      { status: 404 }
-    );
+  if (mpResult.rows.length > 0) {
+    const dbStatus = mpResult.rows[0].status;
+    return NextResponse.json({
+      status: dbStatus === "paid" ? "paid" : "pending",
+    });
   }
 
-  const dbStatus = result.rows[0].status;
-  return NextResponse.json({
-    status: dbStatus === "paid" ? "paid" : "pending",
-  });
+  // Fall back to btc_prepayments
+  const bpResult = await query<{ status: string }>(
+    `SELECT status FROM btc_prepayments
+     WHERE user_id = $1 AND btcpay_invoice_id = $2
+     LIMIT 1`,
+    [userId, invoiceId]
+  );
+
+  if (bpResult.rows.length > 0) {
+    const dbStatus = bpResult.rows[0].status;
+    return NextResponse.json({
+      status: dbStatus === "paid" ? "paid" : "pending",
+    });
+  }
+
+  return NextResponse.json(
+    { error: "Invoice not found" },
+    { status: 404 }
+  );
 });

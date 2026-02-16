@@ -31,6 +31,8 @@ interface QueueItem {
   position: number;
   subscription_status: "active" | "cancel_scheduled" | "signup_scheduled" | null;
   subscription_end_date: string | null;
+  plan_name: string | null;
+  plan_price_cents: number | null;
 }
 
 interface SlotData {
@@ -213,12 +215,19 @@ function SortableItem({ item }: SortableItemProps) {
       >
         &#8801;
       </button>
-      <span className="flex-1 text-foreground font-medium">
+      <span className="flex-1 text-foreground font-medium min-w-0 truncate">
         {item.service_name}
       </span>
+      {item.plan_name && (
+        <span className="text-muted/60 text-sm shrink-0">
+          {item.plan_name}
+          {item.plan_price_cents != null &&
+            `  $${(item.plan_price_cents / 100).toFixed(2)}/mo`}
+        </span>
+      )}
       {item.subscription_status && (
         <span
-          className={`text-xs font-medium px-2 py-0.5 rounded ${statusColor(item.subscription_status)}`}
+          className={`text-xs font-medium px-2 py-0.5 rounded shrink-0 ${statusColor(item.subscription_status)}`}
         >
           {statusLabel(item.subscription_status)}
         </span>
@@ -250,12 +259,19 @@ function PinnedItem({ item }: PinnedItemProps) {
       <span className="text-muted/40 text-lg leading-none select-none">
         &#8801;
       </span>
-      <span className="flex-1 text-foreground font-medium">
+      <span className="flex-1 text-foreground font-medium min-w-0 truncate">
         {item.service_name}
       </span>
+      {item.plan_name && (
+        <span className="text-muted/60 text-sm shrink-0">
+          {item.plan_name}
+          {item.plan_price_cents != null &&
+            `  $${(item.plan_price_cents / 100).toFixed(2)}/mo`}
+        </span>
+      )}
       {item.subscription_status && (
         <span
-          className={`text-xs font-medium px-2 py-0.5 rounded ${statusColor(item.subscription_status)}`}
+          className={`text-xs font-medium px-2 py-0.5 rounded shrink-0 ${statusColor(item.subscription_status)}`}
         >
           {statusLabel(item.subscription_status)}
         </span>
@@ -311,6 +327,8 @@ function SlotCard({ slot, slotLabel, onStay, onSkip, onSendBackToQueue }: SlotCa
               position: 0,
               subscription_status: slot.subscription_status,
               subscription_end_date: slot.subscription_end_date,
+              plan_name: null,
+              plan_price_cents: null,
             })}
           </p>
 
@@ -397,6 +415,9 @@ export default function DashboardPage() {
     serviceName: string;
   } | null>(null);
   const [actionLoading, setActionLoading] = useState(false);
+
+  // Nostr npub copy
+  const [npubCopied, setNpubCopied] = useState(false);
 
   // Delete account
   const [deleteInput, setDeleteInput] = useState("");
@@ -765,12 +786,19 @@ export default function DashboardPage() {
                     <span className="text-muted text-lg leading-none select-none">
                       &#8801;
                     </span>
-                    <span className="flex-1 text-foreground font-medium">
+                    <span className="flex-1 text-foreground font-medium min-w-0 truncate">
                       {queue[0].service_name}
                     </span>
+                    {queue[0].plan_name && (
+                      <span className="text-muted/60 text-sm shrink-0">
+                        {queue[0].plan_name}
+                        {queue[0].plan_price_cents != null &&
+                          `  $${(queue[0].plan_price_cents / 100).toFixed(2)}/mo`}
+                      </span>
+                    )}
                     {queue[0].subscription_status && (
                       <span
-                        className={`text-xs font-medium px-2 py-0.5 rounded ${statusColor(queue[0].subscription_status)}`}
+                        className={`text-xs font-medium px-2 py-0.5 rounded shrink-0 ${statusColor(queue[0].subscription_status)}`}
                       >
                         {statusLabel(queue[0].subscription_status)}
                       </span>
@@ -913,9 +941,21 @@ export default function DashboardPage() {
                     DM for status, queue, skip, or stay commands.
                   </p>
                   {process.env.NEXT_PUBLIC_NOSTR_BOT_NPUB && (
-                    <p className="text-xs text-muted/50 font-mono break-all">
-                      {process.env.NEXT_PUBLIC_NOSTR_BOT_NPUB}
-                    </p>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        navigator.clipboard.writeText(
+                          process.env.NEXT_PUBLIC_NOSTR_BOT_NPUB!
+                        );
+                        setNpubCopied(true);
+                        setTimeout(() => setNpubCopied(false), 2000);
+                      }}
+                      className="text-xs font-mono text-muted hover:text-foreground transition-colors break-all text-left"
+                    >
+                      {npubCopied
+                        ? "Copied!"
+                        : process.env.NEXT_PUBLIC_NOSTR_BOT_NPUB}
+                    </button>
                   )}
                 </div>
               )}

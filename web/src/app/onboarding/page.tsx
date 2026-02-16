@@ -1007,9 +1007,21 @@ export default function OnboardingPage() {
     setSubmitting(true);
 
     try {
+      // Build serviceId -> planId map from group selections
+      const plansByServiceId: Record<string, string> = {};
+      for (const [groupId, planId] of Object.entries(selectedPlans)) {
+        const group = groups.find((g) => g.id === groupId);
+        if (group) {
+          plansByServiceId[group.serviceId] = planId;
+        }
+      }
+
       const res = await authFetch("/api/queue", {
         method: "PUT",
-        body: JSON.stringify({ order: queue.map((q) => q.serviceId) }),
+        body: JSON.stringify({
+          order: queue.map((q) => q.serviceId),
+          plans: plansByServiceId,
+        }),
       });
 
       if (!res.ok) {

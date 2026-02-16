@@ -5,11 +5,13 @@ import { query, transaction } from "@/lib/db";
 export const GET = withAuth(async (_req: NextRequest, { userId }) => {
   const result = await query(
     `SELECT rq.service_id, ss.display_name AS service_name, rq.position,
-            s.status AS subscription_status, s.subscription_end_date
+            s.status AS subscription_status, s.subscription_end_date,
+            sp.display_name AS plan_name, sp.monthly_price_cents AS plan_price_cents
      FROM rotation_queue rq
      JOIN streaming_services ss ON ss.id = rq.service_id
      LEFT JOIN subscriptions s ON s.user_id = rq.user_id AND s.service_id = rq.service_id
        AND s.status IN ('active', 'signup_scheduled', 'cancel_scheduled')
+     LEFT JOIN service_plans sp ON sp.id = rq.plan_id
      WHERE rq.user_id = $1
      ORDER BY rq.position`,
     [userId]
@@ -19,14 +21,14 @@ export const GET = withAuth(async (_req: NextRequest, { userId }) => {
 });
 
 export const PUT = withAuth(async (req: NextRequest, { userId }) => {
-  let body: { order: string[] };
+  let body: { order: string[]; plans?: Record<string, string> };
   try {
     body = await req.json();
   } catch {
     return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
   }
 
-  const { order } = body;
+  const { order, plans } = body;
   if (!Array.isArray(order) || order.length === 0) {
     return NextResponse.json(
       { error: "order must be a non-empty array of serviceIds" },
@@ -70,12 +72,29 @@ export const PUT = withAuth(async (req: NextRequest, { userId }) => {
     );
   }
 
+  // If no plans provided (dashboard reorder), preserve existing plan_ids
+  let planMap: Record<string, string | null> = {};
+  if (plans) {
+    planMap = plans;
+  } else {
+    const existing = await query<{ service_id: string; plan_id: string | null }>(
+      "SELECT service_id, plan_id FROM rotation_queue WHERE user_id = $1",
+      [userId]
+    );
+    for (const row of existing.rows) {
+      if (row.plan_id) {
+        planMap[row.service_id] = row.plan_id;
+      }
+    }
+  }
+
   await transaction(async (txQuery) => {
     await txQuery("DELETE FROM rotation_queue WHERE user_id = $1", [userId]);
     for (let i = 0; i < order.length; i++) {
+      const planId = planMap[order[i]] ?? null;
       await txQuery(
-        "INSERT INTO rotation_queue (user_id, service_id, position) VALUES ($1, $2, $3)",
-        [userId, order[i], i + 1]
+        "INSERT INTO rotation_queue (user_id, service_id, position, plan_id) VALUES ($1, $2, $3, $4)",
+        [userId, order[i], i + 1, planId]
       );
     }
   });

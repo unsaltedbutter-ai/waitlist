@@ -39,6 +39,11 @@ function mockCreds(serviceIds: string[]) {
   );
 }
 
+/** Mock the query that reads existing plan_ids (when no plans provided in body) */
+function mockExistingPlanIds(rows: { service_id: string; plan_id: string | null }[] = []) {
+  vi.mocked(query).mockResolvedValueOnce(mockQueryResult(rows));
+}
+
 function mockTransaction() {
   vi.mocked(transaction).mockImplementationOnce(async (cb) => {
     const txQuery = vi.fn().mockResolvedValue(mockQueryResult([]));
@@ -133,6 +138,7 @@ describe("PUT /api/queue", () => {
   it("create initial queue → success", async () => {
     mockServices(["netflix", "hulu"]);
     mockCreds(["netflix", "hulu"]);
+    mockExistingPlanIds();
     mockTransaction();
 
     const req = makeRequest({ order: ["netflix", "hulu"] });
@@ -145,6 +151,7 @@ describe("PUT /api/queue", () => {
   it("reorder existing services → success", async () => {
     mockServices(["netflix", "hulu", "disney_plus"]);
     mockCreds(["netflix", "hulu", "disney_plus"]);
+    mockExistingPlanIds();
     mockTransaction();
 
     const req = makeRequest({ order: ["disney_plus", "netflix", "hulu"] });
@@ -156,6 +163,7 @@ describe("PUT /api/queue", () => {
     // User had netflix + hulu, now adding prime_video
     mockServices(["netflix", "hulu", "prime_video"]);
     mockCreds(["netflix", "hulu", "prime_video"]);
+    mockExistingPlanIds();
     mockTransaction();
 
     const req = makeRequest({ order: ["netflix", "prime_video", "hulu"] });
@@ -167,6 +175,7 @@ describe("PUT /api/queue", () => {
     // User had 3, now submitting 2
     mockServices(["netflix", "hulu"]);
     mockCreds(["netflix", "hulu"]);
+    mockExistingPlanIds();
     mockTransaction();
 
     const req = makeRequest({ order: ["netflix", "hulu"] });
@@ -177,6 +186,7 @@ describe("PUT /api/queue", () => {
   it("single service queue → success", async () => {
     mockServices(["netflix"]);
     mockCreds(["netflix"]);
+    mockExistingPlanIds();
     mockTransaction();
 
     const req = makeRequest({ order: ["netflix"] });
@@ -191,6 +201,7 @@ describe("PUT /api/queue", () => {
     ];
     mockServices(all);
     mockCreds(all);
+    mockExistingPlanIds();
     mockTransaction();
 
     const req = makeRequest({ order: all });
@@ -203,6 +214,10 @@ describe("PUT /api/queue", () => {
   it("deletes old queue and inserts new positions in transaction", async () => {
     mockServices(["netflix", "hulu"]);
     mockCreds(["netflix", "hulu"]);
+    mockExistingPlanIds([
+      { service_id: "netflix", plan_id: "netflix_standard" },
+      { service_id: "hulu", plan_id: null },
+    ]);
 
     const txQuery = vi.fn().mockResolvedValue(mockQueryResult([]));
     vi.mocked(transaction).mockImplementationOnce(async (cb) => cb(txQuery as any));
@@ -215,15 +230,15 @@ describe("PUT /api/queue", () => {
       "DELETE FROM rotation_queue WHERE user_id = $1",
       ["test-user"]
     );
-    // Second call: INSERT position 1 = hulu
+    // Second call: INSERT position 1 = hulu (no plan_id)
     expect(txQuery).toHaveBeenCalledWith(
-      "INSERT INTO rotation_queue (user_id, service_id, position) VALUES ($1, $2, $3)",
-      ["test-user", "hulu", 1]
+      "INSERT INTO rotation_queue (user_id, service_id, position, plan_id) VALUES ($1, $2, $3, $4)",
+      ["test-user", "hulu", 1, null]
     );
-    // Third call: INSERT position 2 = netflix
+    // Third call: INSERT position 2 = netflix (preserved plan_id)
     expect(txQuery).toHaveBeenCalledWith(
-      "INSERT INTO rotation_queue (user_id, service_id, position) VALUES ($1, $2, $3)",
-      ["test-user", "netflix", 2]
+      "INSERT INTO rotation_queue (user_id, service_id, position, plan_id) VALUES ($1, $2, $3, $4)",
+      ["test-user", "netflix", 2, "netflix_standard"]
     );
   });
 
@@ -234,6 +249,7 @@ describe("PUT /api/queue", () => {
     // and user selecting it during onboarding
     mockServices(["netflix", "new_streaming_service"]);
     mockCreds(["netflix", "new_streaming_service"]);
+    mockExistingPlanIds();
     mockTransaction();
 
     const req = makeRequest({ order: ["netflix", "new_streaming_service"] });
@@ -245,10 +261,36 @@ describe("PUT /api/queue", () => {
     // User has creds for 5 services but only queues 2
     mockServices(["netflix", "hulu"]);
     mockCreds(["netflix", "hulu", "disney_plus", "prime_video", "peacock"]);
+    mockExistingPlanIds();
     mockTransaction();
 
     const req = makeRequest({ order: ["netflix", "hulu"] });
     const res = await PUT(req as any, { params: Promise.resolve({}) });
     expect(res.status).toBe(200);
+  });
+
+  it("plans provided from onboarding are saved as plan_id", async () => {
+    mockServices(["netflix", "hulu"]);
+    mockCreds(["netflix", "hulu"]);
+    // No mockExistingPlanIds needed: plans are provided in body
+
+    const txQuery = vi.fn().mockResolvedValue(mockQueryResult([]));
+    vi.mocked(transaction).mockImplementationOnce(async (cb) => cb(txQuery as any));
+
+    const req = makeRequest({
+      order: ["netflix", "hulu"],
+      plans: { netflix: "netflix_standard_ads", hulu: "hulu_ads" },
+    });
+    const res = await PUT(req as any, { params: Promise.resolve({}) });
+    expect(res.status).toBe(200);
+
+    expect(txQuery).toHaveBeenCalledWith(
+      "INSERT INTO rotation_queue (user_id, service_id, position, plan_id) VALUES ($1, $2, $3, $4)",
+      ["test-user", "netflix", 1, "netflix_standard_ads"]
+    );
+    expect(txQuery).toHaveBeenCalledWith(
+      "INSERT INTO rotation_queue (user_id, service_id, position, plan_id) VALUES ($1, $2, $3, $4)",
+      ["test-user", "hulu", 2, "hulu_ads"]
+    );
   });
 });

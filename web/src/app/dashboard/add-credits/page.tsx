@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import Link from "next/link";
 import QRCode from "react-qr-code";
 import { useAuth, authFetch } from "@/lib/hooks/use-auth";
@@ -8,6 +8,7 @@ import { useAuth, authFetch } from "@/lib/hooks/use-auth";
 interface InvoiceResponse {
   invoiceId: string;
   checkoutLink: string;
+  bolt11: string | null;
   amount_sats: number | null;
 }
 
@@ -18,6 +19,35 @@ export default function AddCreditsPage() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
   const [copied, setCopied] = useState(false);
+  const [paid, setPaid] = useState(false);
+
+  // Poll payment status when invoice exists
+  useEffect(() => {
+    if (!invoice || paid) return;
+    let cancelled = false;
+    const poll = async () => {
+      while (!cancelled) {
+        await new Promise((r) => setTimeout(r, 5000));
+        if (cancelled) break;
+        try {
+          const res = await authFetch(
+            `/api/credits/prepay/status?invoiceId=${invoice.invoiceId}`
+          );
+          if (res.ok) {
+            const data = await res.json();
+            if (data.status === "paid") {
+              setPaid(true);
+              break;
+            }
+          }
+        } catch {
+          // Network error, keep polling
+        }
+      }
+    };
+    poll();
+    return () => { cancelled = true; };
+  }, [invoice, paid]); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -61,7 +91,7 @@ export default function AddCreditsPage() {
   async function handleCopy() {
     if (!invoice) return;
     try {
-      await navigator.clipboard.writeText(invoice.checkoutLink);
+      await navigator.clipboard.writeText(invoice.bolt11 ?? invoice.checkoutLink);
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     } catch {
@@ -88,7 +118,24 @@ export default function AddCreditsPage() {
           credits in any amount via Lightning Network.
         </p>
 
-        {!invoice ? (
+        {paid ? (
+          <div className="space-y-6">
+            <div className="bg-surface border border-green-700 rounded p-6 text-center space-y-3">
+              <p className="text-green-400 font-semibold text-lg">
+                Payment received
+              </p>
+              <p className="text-muted text-sm">
+                Your credits have been added to your account.
+              </p>
+            </div>
+            <Link
+              href="/dashboard"
+              className="block w-full py-3 px-4 bg-accent text-background font-semibold rounded hover:bg-accent/90 transition-colors text-center"
+            >
+              Back to dashboard
+            </Link>
+          </div>
+        ) : !invoice ? (
           <form onSubmit={handleSubmit} className="space-y-6">
             <div>
               <label className="block text-sm font-medium text-muted mb-2">
@@ -115,7 +162,7 @@ export default function AddCreditsPage() {
           <div className="space-y-6">
             <div className="bg-surface border border-border rounded p-6 flex flex-col items-center gap-4">
               <div className="bg-white p-4 rounded inline-block">
-                <QRCode value={invoice.checkoutLink} size={220} />
+                <QRCode value={invoice.bolt11 ?? invoice.checkoutLink} size={220} />
               </div>
               {invoice.amount_sats !== null && (
                 <p className="text-sm text-muted">
@@ -134,18 +181,37 @@ export default function AddCreditsPage() {
               onClick={handleCopy}
               className="w-full py-3 px-4 bg-accent text-background font-semibold rounded hover:bg-accent/90 transition-colors"
             >
-              {copied ? "Copied" : "Copy invoice link"}
+              {copied ? "Copied" : "Copy invoice"}
             </button>
+
+            <div className="flex items-center justify-center gap-2 text-muted text-sm py-3">
+              <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24" fill="none">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+              </svg>
+              Waiting for payment...
+            </div>
+
+            <a
+              href={invoice.checkoutLink}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="block text-center text-xs text-muted/50 hover:text-muted transition-colors"
+            >
+              Open checkout page instead
+            </a>
           </div>
         )}
 
         {error && <p className="text-red-400 text-sm mt-4">{error}</p>}
 
-        <div className="mt-8">
-          <Link href="/dashboard" className="text-accent hover:underline text-sm">
-            Back to dashboard
-          </Link>
-        </div>
+        {!paid && (
+          <div className="mt-8">
+            <Link href="/dashboard" className="text-accent hover:underline text-sm">
+              Back to dashboard
+            </Link>
+          </div>
+        )}
       </div>
     </main>
   );
