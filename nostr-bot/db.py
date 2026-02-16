@@ -296,6 +296,15 @@ async def credit_zap(
             return new_balance
 
 
+async def has_paid_membership(user_id: UUID) -> bool:
+    """True if the user has at least one paid membership payment."""
+    row = await _get_pool().fetchrow(
+        "SELECT 1 FROM membership_payments WHERE user_id = $1 AND status = 'paid' LIMIT 1",
+        user_id,
+    )
+    return row is not None
+
+
 # ── OTP ─────────────────────────────────────────────────────
 
 

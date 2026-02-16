@@ -243,9 +243,9 @@ function LoginContent() {
                   Enter login code
                 </button>
 
-                <div className="text-sm text-muted leading-relaxed">
-                  <p>DM <span className="text-foreground font-medium">login</span></p>
-                  <p>to <span className="text-foreground font-medium">{BOT_NAME}</span></p>
+                <div className="text-sm text-muted leading-relaxed text-center">
+                  <p>Just DM <span className="text-foreground font-medium">login</span></p>
+                  <p>to your friendly <span className="text-foreground font-medium">{BOT_NAME}</span></p>
                   <p>for your login code.</p>
                 </div>
 

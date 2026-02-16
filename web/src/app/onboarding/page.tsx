@@ -55,6 +55,8 @@ interface MembershipPrice {
 }
 
 const TOTAL_STEPS = 4;
+const BOT_NPUB = process.env.NEXT_PUBLIC_NOSTR_BOT_NPUB ?? "";
+const BOT_NAME = process.env.NEXT_PUBLIC_NOSTR_BOT_NAME ?? "UnsaltedButter Bot";
 
 function formatSats(sats: number): string {
   return sats.toLocaleString();
@@ -148,6 +150,7 @@ export default function OnboardingPage() {
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [authorized, setAuthorized] = useState(false);
+  const [npubCopied, setNpubCopied] = useState(false);
 
   // Step 3 state (plan selection)
   const [groups, setGroups] = useState<ServiceGroup[]>([]);
@@ -1020,19 +1023,6 @@ export default function OnboardingPage() {
           anytime before that.
         </p>
 
-        <p className="text-sm text-muted">
-          You&apos;ll get notified as services rotate. DM{" "}
-          <span className="text-foreground font-medium">
-            {process.env.NEXT_PUBLIC_NOSTR_BOT_NAME ?? "our Nostr bot"}
-          </span>{" "}
-          anytime for status.
-        </p>
-        {process.env.NEXT_PUBLIC_NOSTR_BOT_NPUB && (
-          <p className="text-xs text-muted/50 font-mono break-all">
-            {process.env.NEXT_PUBLIC_NOSTR_BOT_NPUB}
-          </p>
-        )}
-
         {error && <p className="text-red-400 text-sm">{error}</p>}
 
         <button
@@ -1043,6 +1033,29 @@ export default function OnboardingPage() {
         >
           {submitting ? "Saving..." : "Confirm rotation order"}
         </button>
+
+        <div className="text-sm text-muted leading-relaxed text-center">
+          <p>Just DM <span className="text-foreground font-medium">status</span></p>
+          <p>to your friendly <span className="text-foreground font-medium">{BOT_NAME}</span></p>
+          <p>as services rotate.</p>
+        </div>
+
+        {BOT_NPUB && (
+          <p className="text-center text-xs text-muted">
+            {BOT_NAME}:{" "}
+            <button
+              type="button"
+              onClick={() => {
+                navigator.clipboard.writeText(BOT_NPUB);
+                setNpubCopied(true);
+                setTimeout(() => setNpubCopied(false), 2000);
+              }}
+              className="font-mono text-muted hover:text-foreground transition-colors"
+            >
+              {npubCopied ? "Copied!" : BOT_NPUB}
+            </button>
+          </p>
+        )}
       </div>
     );
   }

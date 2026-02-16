@@ -134,10 +134,10 @@ export default function WaitlistPage() {
             {status === "submitting" ? "Submitting..." : "Get on the list"}
           </button>
 
-          <div className="text-sm text-muted leading-relaxed">
-            <p>DM <span className="text-foreground font-medium">waitlist</span></p>
-            <p>to <span className="text-foreground font-medium">{BOT_NAME}</span></p>
-            <p>to join the waitlist.</p>
+          <div className="text-sm text-muted leading-relaxed text-center">
+            <p>Just DM <span className="text-foreground font-medium">waitlist</span></p>
+            <p>to your friendly <span className="text-foreground font-medium">{BOT_NAME}</span></p>
+            <p>to get in the line.</p>
           </div>
         </form>
 

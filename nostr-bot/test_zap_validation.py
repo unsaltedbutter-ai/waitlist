@@ -81,6 +81,7 @@ def mock_db():
         m.get_user_by_npub = AsyncMock(
             return_value={"id": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee", "status": "active"}
         )
+        m.has_paid_membership = AsyncMock(return_value=True)
         m.credit_zap = AsyncMock(return_value=42_000)
         yield m
 
@@ -278,3 +279,32 @@ async def test_unregistered_sender_not_credited(mock_db, send_dm):
     # Should DM them to join
     send_dm.assert_called_once()
     assert "Join the waitlist" in send_dm.call_args[0][1]
+
+
+# ── Unpaid member ─────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_unpaid_member_not_credited(mock_db, send_dm):
+    """Zap from registered user who hasn't paid membership — no credit, told to finish setup."""
+    receipt, invoice = _valid_set()
+    mock_db.has_paid_membership.return_value = False
+
+    with patch("zap_handler.bolt11_lib.decode", return_value=invoice):
+        await zap_handler.handle_zap_receipt(receipt, send_dm, BOT_PK, PROVIDER_PK)
+    mock_db.credit_zap.assert_not_called()
+    send_dm.assert_called_once()
+    assert "finish" in send_dm.call_args[0][1].lower()
+
+
+@pytest.mark.asyncio
+async def test_paid_member_credited(mock_db, send_dm):
+    """Zap from registered user with paid membership — credited normally."""
+    receipt, invoice = _valid_set()
+    mock_db.has_paid_membership.return_value = True
+
+    with patch("zap_handler.bolt11_lib.decode", return_value=invoice):
+        await zap_handler.handle_zap_receipt(receipt, send_dm, BOT_PK, PROVIDER_PK)
+    mock_db.credit_zap.assert_called_once()
+    send_dm.assert_called_once()
+    assert "sats" in send_dm.call_args[0][1].lower()

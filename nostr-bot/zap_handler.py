@@ -151,6 +151,15 @@ async def handle_zap_receipt(
             log.debug("Could not DM unregistered zapper %s", sender_hex[:16])
         return
 
+    # Reject zaps from users who haven't paid membership yet
+    if not await db.has_paid_membership(user["id"]):
+        log.info("Zap from unpaid member %s (%d sats) — rejecting", sender_hex[:16], amount_sats)
+        try:
+            await send_dm(sender_hex, "Finish setting up your account first.")
+        except Exception:
+            log.debug("Could not DM unpaid member %s", sender_hex[:16])
+        return
+
     # Credit the account (idempotent)
     new_balance = await db.credit_zap(event_id, user["id"], sender_hex, amount_sats)
 
