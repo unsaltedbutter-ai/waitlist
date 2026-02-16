@@ -47,6 +47,7 @@ def mock_db():
         m.get_user_by_npub = AsyncMock()
         m.create_otp = AsyncMock()
         m.add_to_waitlist = AsyncMock()
+        m.has_paid_membership = AsyncMock(return_value=True)
         m.get_pending_invite_dms = AsyncMock(return_value=[])
         m.mark_invite_dm_sent = AsyncMock()
         yield m
@@ -207,6 +208,32 @@ async def test_unknown_command_registered(handler, mock_db, mock_commands):
     result = await handler._dispatch_command(REGISTERED_NPUB_HEX, "gibberish")
 
     mock_commands.handle_dm.assert_awaited_once_with(USER_ID, "active", "gibberish")
+
+
+# ── unpaid member ───────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_unpaid_member_gets_finish_setup(handler, mock_db):
+    mock_db.get_user_by_npub.return_value = {"id": USER_ID, "status": "active"}
+    mock_db.has_paid_membership.return_value = False
+
+    result = await handler._dispatch_command(REGISTERED_NPUB_HEX, "status")
+
+    assert "finish" in result.lower()
+    assert "/login" in result
+
+
+@pytest.mark.asyncio
+async def test_unpaid_member_can_still_login(handler, mock_db):
+    mock_db.get_user_by_npub.return_value = {"id": USER_ID, "status": "active"}
+    mock_db.has_paid_membership.return_value = False
+    mock_db.create_otp.return_value = "123456789012"
+
+    result = await handler._dispatch_command(REGISTERED_NPUB_HEX, "login")
+
+    assert isinstance(result, list)
+    assert result[0] == "123456-789012"
 
 
 # ── invite DM sending ───────────────────────────────────────
