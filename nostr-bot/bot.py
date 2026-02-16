@@ -94,13 +94,16 @@ class BotNotificationHandler(HandleNotification):
         plaintext = nip04_decrypt(self._keys.secret_key(), sender_pk, event.content())
         log.info("NIP-04 DM from %s: %s", sender_hex[:16], plaintext[:80])
 
-        reply = await self._dispatch_command(sender_hex, plaintext)
-        log.info("Replying (NIP-04) to %s: %s", sender_hex[:16], reply[:80])
-        try:
-            await self._send_nip04_reply(sender_pk, reply)
-            log.info("NIP-04 reply sent to %s", sender_hex[:16])
-        except Exception as e:
-            log.error("Failed to send NIP-04 reply to %s: %s", sender_hex[:16], e)
+        replies = await self._dispatch_command(sender_hex, plaintext)
+        if isinstance(replies, str):
+            replies = [replies]
+        for reply in replies:
+            log.info("Replying (NIP-04) to %s: %s", sender_hex[:16], reply[:80])
+            try:
+                await self._send_nip04_reply(sender_pk, reply)
+                log.info("NIP-04 reply sent to %s", sender_hex[:16])
+            except Exception as e:
+                log.error("Failed to send NIP-04 reply to %s: %s", sender_hex[:16], e)
 
     async def _send_nip04_reply(self, recipient: PublicKey, text: str):
         ciphertext = await self._signer.nip04_encrypt(recipient, text)
@@ -128,8 +131,11 @@ class BotNotificationHandler(HandleNotification):
         plaintext = rumor.content()
         log.info("NIP-17 DM from %s: %s", sender_hex[:16], plaintext[:80])
 
-        reply = await self._dispatch_command(sender_hex, plaintext)
-        await self._client.send_private_msg(sender, reply, [])
+        replies = await self._dispatch_command(sender_hex, plaintext)
+        if isinstance(replies, str):
+            replies = [replies]
+        for reply in replies:
+            await self._client.send_private_msg(sender, reply, [])
 
     # ── Zap receipt (kind 9735) ──────────────────────────────
 
@@ -155,7 +161,11 @@ class BotNotificationHandler(HandleNotification):
         if cmd == "login":
             code = await db.create_otp(sender_hex)
             formatted = f"{code[:6]}-{code[6:]}"
-            return f"Your login code:\n\n{formatted}\n\nEnter it on the website within 5 minutes."
+            base_url = os.getenv("BASE_URL", "https://unsaltedbutter.ai")
+            return [
+                formatted,
+                f"That's your login code. Enter it within 5 minutes.\n\n{base_url}/login",
+            ]
 
         # "waitlist" only for unregistered users
         if cmd == "waitlist":

@@ -90,10 +90,7 @@ function LoginContent() {
       const res = await fetch("/api/auth/nostr-otp", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          code: otpCode,
-          ...(canSignup && inviteCode ? { inviteCode } : {}),
-        }),
+        body: JSON.stringify({ code: otpCode }),
       });
 
       const data = await res.json();

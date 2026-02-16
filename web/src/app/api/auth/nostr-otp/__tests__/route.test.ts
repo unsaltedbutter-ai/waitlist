@@ -63,7 +63,7 @@ describe("POST /api/auth/nostr-otp", () => {
     expect(data.isNew).toBeUndefined();
   });
 
-  it("valid OTP, new user + valid invite: 201", async () => {
+  it("valid OTP, new user + auto-lookup invite by npub: 201", async () => {
     // Cleanup expired
     vi.mocked(query).mockResolvedValueOnce(mockQueryResult([]));
     // Atomic delete returning npub_hex
@@ -72,7 +72,7 @@ describe("POST /api/auth/nostr-otp", () => {
     );
     // No existing user
     vi.mocked(query).mockResolvedValueOnce(mockQueryResult([]));
-    // Invite code valid
+    // Auto-lookup: waitlist entry found by npub
     vi.mocked(query).mockResolvedValueOnce(
       mockQueryResult([{ id: "waitlist-1" }])
     );
@@ -82,7 +82,7 @@ describe("POST /api/auth/nostr-otp", () => {
     );
 
     const res = await POST(
-      makeRequest({ code: "111111222222", inviteCode: "ABCDEF" }) as any
+      makeRequest({ code: "111111222222" }) as any
     );
     expect(res.status).toBe(201);
     const data = await res.json();
@@ -91,7 +91,36 @@ describe("POST /api/auth/nostr-otp", () => {
     expect(data.isNew).toBe(true);
   });
 
-  it("valid OTP, new user + no invite: 403", async () => {
+  it("valid OTP, new user + explicit invite code fallback: 201", async () => {
+    // Cleanup expired
+    vi.mocked(query).mockResolvedValueOnce(mockQueryResult([]));
+    // Atomic delete returning npub_hex
+    vi.mocked(query).mockResolvedValueOnce(
+      mockQueryResult([{ npub_hex: "ccdd" }])
+    );
+    // No existing user
+    vi.mocked(query).mockResolvedValueOnce(mockQueryResult([]));
+    // Auto-lookup: no waitlist entry by npub
+    vi.mocked(query).mockResolvedValueOnce(mockQueryResult([]));
+    // Explicit invite code valid
+    vi.mocked(query).mockResolvedValueOnce(
+      mockQueryResult([{ id: "waitlist-2" }])
+    );
+    // Insert new user
+    vi.mocked(query).mockResolvedValueOnce(
+      mockQueryResult([{ id: "new-user-789" }])
+    );
+
+    const res = await POST(
+      makeRequest({ code: "111111222222", inviteCode: "ABCDEF" }) as any
+    );
+    expect(res.status).toBe(201);
+    const data = await res.json();
+    expect(data.userId).toBe("new-user-789");
+    expect(data.isNew).toBe(true);
+  });
+
+  it("valid OTP, new user + no invite anywhere: 403", async () => {
     // Cleanup expired
     vi.mocked(query).mockResolvedValueOnce(mockQueryResult([]));
     // Atomic delete returning npub_hex
@@ -99,15 +128,17 @@ describe("POST /api/auth/nostr-otp", () => {
       mockQueryResult([{ npub_hex: "eeff" }])
     );
     // No existing user
+    vi.mocked(query).mockResolvedValueOnce(mockQueryResult([]));
+    // Auto-lookup: no waitlist entry by npub
     vi.mocked(query).mockResolvedValueOnce(mockQueryResult([]));
 
     const res = await POST(makeRequest({ code: "111111-222222" }) as any);
     expect(res.status).toBe(403);
     const data = await res.json();
-    expect(data.error).toMatch(/invite code required/i);
+    expect(data.error).toMatch(/no invite/i);
   });
 
-  it("valid OTP, new user + bad invite: 403", async () => {
+  it("valid OTP, new user + bad explicit invite: 403", async () => {
     // Cleanup expired
     vi.mocked(query).mockResolvedValueOnce(mockQueryResult([]));
     // Atomic delete returning npub_hex
@@ -116,7 +147,9 @@ describe("POST /api/auth/nostr-otp", () => {
     );
     // No existing user
     vi.mocked(query).mockResolvedValueOnce(mockQueryResult([]));
-    // Invite code not found
+    // Auto-lookup: no waitlist entry by npub
+    vi.mocked(query).mockResolvedValueOnce(mockQueryResult([]));
+    // Explicit invite code not found
     vi.mocked(query).mockResolvedValueOnce(mockQueryResult([]));
 
     const res = await POST(
@@ -162,13 +195,13 @@ describe("POST /api/auth/nostr-otp", () => {
     );
     // No existing user
     vi.mocked(query).mockResolvedValueOnce(mockQueryResult([]));
-    // Invite code valid
+    // Auto-lookup: waitlist entry found by npub
     vi.mocked(query).mockResolvedValueOnce(
       mockQueryResult([{ id: "waitlist-1" }])
     );
 
     const res = await POST(
-      makeRequest({ code: "111111-222222", inviteCode: "INVITE1" }) as any
+      makeRequest({ code: "111111-222222" }) as any
     );
     expect(res.status).toBe(403);
     const data = await res.json();

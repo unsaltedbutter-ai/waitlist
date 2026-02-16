@@ -101,24 +101,30 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ token, userId });
   }
 
-  // New user: require invite code
-  if (!inviteCode) {
-    return NextResponse.json(
-      { error: "Invite code required" },
-      { status: 403 }
-    );
-  }
-
-  // Validate invite code
-  const codeCheck = await query<{ id: string }>(
-    "SELECT id FROM waitlist WHERE invite_code = $1 AND invited = TRUE",
-    [inviteCode]
+  // New user: check for invite (auto-lookup by npub, fallback to explicit code)
+  const inviteCheck = await query<{ id: string }>(
+    "SELECT id FROM waitlist WHERE nostr_npub = $1 AND invited = TRUE",
+    [npubHex]
   );
-  if (codeCheck.rows.length === 0) {
-    return NextResponse.json(
-      { error: "Invalid or expired invite code" },
-      { status: 403 }
+
+  if (inviteCheck.rows.length === 0) {
+    // Fallback: check explicit invite code (e.g. email waitlist entry with separate npub)
+    if (!inviteCode) {
+      return NextResponse.json(
+        { error: "No invite found for this npub" },
+        { status: 403 }
+      );
+    }
+    const codeCheck = await query<{ id: string }>(
+      "SELECT id FROM waitlist WHERE invite_code = $1 AND invited = TRUE",
+      [inviteCode]
     );
+    if (codeCheck.rows.length === 0) {
+      return NextResponse.json(
+        { error: "Invalid or expired invite code" },
+        { status: 403 }
+      );
+    }
   }
 
   // Check capacity

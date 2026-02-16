@@ -69,9 +69,11 @@ async def test_login_registered_user(handler, mock_db):
 
     result = await handler._dispatch_command(REGISTERED_NPUB_HEX, "login")
 
-    assert "123456-789012" in result
-    assert result.index("123456-789012") > result.index("\n")  # code on its own line
-    assert "5 minutes" in result
+    assert isinstance(result, list)
+    assert len(result) == 2
+    assert result[0] == "123456-789012"  # first bubble is just the code
+    assert "5 minutes" in result[1]
+    assert "/login" in result[1]
     mock_db.create_otp.assert_awaited_once_with(REGISTERED_NPUB_HEX)
 
 
@@ -82,7 +84,8 @@ async def test_login_unregistered_user(handler, mock_db):
 
     result = await handler._dispatch_command(UNREGISTERED_NPUB_HEX, "login")
 
-    assert "000000-000001" in result
+    assert isinstance(result, list)
+    assert result[0] == "000000-000001"
     mock_db.create_otp.assert_awaited_once_with(UNREGISTERED_NPUB_HEX)
 
 
@@ -93,7 +96,8 @@ async def test_login_case_insensitive(handler, mock_db):
 
     for variant in ["LOGIN", "Login", "  login  "]:
         result = await handler._dispatch_command(UNREGISTERED_NPUB_HEX, variant)
-        assert "111111-222222" in result
+        assert isinstance(result, list)
+        assert result[0] == "111111-222222"
 
 
 # ── waitlist ─────────────────────────────────────────────────
