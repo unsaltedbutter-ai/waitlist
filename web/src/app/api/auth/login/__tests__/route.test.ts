@@ -14,10 +14,20 @@ import { query } from "@/lib/db";
 import { needsOnboarding, verifyPassword } from "@/lib/auth";
 import { POST } from "../route";
 
+// Each test gets a unique IP so the in-memory rate limiter doesn't bleed state
+let testIpCounter = 0;
+function uniqueIp(): string {
+  testIpCounter++;
+  return `10.2.${Math.floor(testIpCounter / 256)}.${testIpCounter % 256}`;
+}
+
 function makeRequest(body: object): Request {
   return new Request("http://localhost/api/auth/login", {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: {
+      "content-type": "application/json",
+      "x-forwarded-for": uniqueIp(),
+    },
     body: JSON.stringify(body),
   });
 }

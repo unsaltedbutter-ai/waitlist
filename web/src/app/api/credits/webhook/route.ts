@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { query, transaction } from "@/lib/db";
 import { satsToUsdCents } from "@/lib/btc-price";
-import crypto from "crypto";
+import crypto, { timingSafeEqual } from "crypto";
 
 /**
  * Fetch the actual sats received for a BTCPay invoice via the payment-methods API.
@@ -53,7 +53,9 @@ export async function POST(req: NextRequest) {
     .update(rawBody)
     .digest("hex");
 
-  if (sigHeader !== expectedSig) {
+  const sigBuf = Buffer.from(sigHeader);
+  const expectedBuf = Buffer.from(expectedSig);
+  if (sigBuf.length !== expectedBuf.length || !timingSafeEqual(sigBuf, expectedBuf)) {
     return NextResponse.json({ error: "Invalid signature" }, { status: 401 });
   }
 

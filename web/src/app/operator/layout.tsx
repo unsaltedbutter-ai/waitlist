@@ -41,7 +41,7 @@ export default function OperatorLayout({
           Operator
         </Link>
 
-        <nav className="flex gap-1 border-b border-border pb-2">
+        <nav className="flex gap-1 border-b border-border pb-2 overflow-x-auto">
           {navLinks.map((link) => {
             const isActive =
               link.href === "/operator"

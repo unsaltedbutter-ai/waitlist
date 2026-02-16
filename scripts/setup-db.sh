@@ -10,6 +10,7 @@ set -euo pipefail
 
 DB_NAME="unsaltedbutter"
 DB_USER="butter"
+DB_PASS=$(openssl rand -base64 24)
 LAN_SUBNET="192.168.0.0/16"  # Adjust to your LAN
 
 echo "=== Installing PostgreSQL 16 ==="
@@ -30,7 +31,7 @@ sudo -u postgres psql <<EOF
 DO \$\$
 BEGIN
     IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = '${DB_USER}') THEN
-        CREATE USER ${DB_USER} WITH PASSWORD 'CHANGE_THIS_PASSWORD';
+        CREATE USER ${DB_USER} WITH PASSWORD '${DB_PASS}';
     END IF;
 END
 \$\$;
@@ -67,6 +68,9 @@ systemctl restart postgresql
 echo "=== Done ==="
 echo ""
 echo "NEXT STEPS:"
-echo "1. Change the password: sudo -u postgres psql -c \"ALTER USER ${DB_USER} PASSWORD 'your-real-password';\""
+echo "1. Save the generated password (shown below). It will not be displayed again."
+echo ""
+echo "   Database password for '${DB_USER}': ${DB_PASS}"
+echo ""
 echo "2. Apply schema from your Mac: psql -h $(hostname -I | awk '{print $1}') -U ${DB_USER} -d ${DB_NAME} -f scripts/schema.sql"
 echo "3. Test connection from Mac: psql -h $(hostname -I | awk '{print $1}') -U ${DB_USER} -d ${DB_NAME}"

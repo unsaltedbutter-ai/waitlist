@@ -1,7 +1,21 @@
 import { NextRequest, NextResponse } from "next/server";
 import { query } from "@/lib/db";
+import { createRateLimiter, getClientIp } from "@/lib/rate-limit";
+
+const limiter = createRateLimiter(5, 15 * 60 * 1000); // 5 attempts per 15 minutes
 
 export async function POST(req: NextRequest) {
+  // Rate limit by IP
+  const ip = getClientIp(req);
+  const { allowed } = limiter.check(ip);
+
+  if (!allowed) {
+    return NextResponse.json(
+      { error: "Too many attempts. Try again later." },
+      { status: 429 }
+    );
+  }
+
   let body: {
     contactType: "email" | "npub";
     contactValue: string;

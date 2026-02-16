@@ -4,6 +4,7 @@ import { generateSecretKey, getPublicKey, finalizeEvent } from "nostr-tools";
 
 vi.mock("@/lib/db", () => ({
   query: vi.fn(),
+  transaction: vi.fn(),
 }));
 vi.mock("@/lib/auth", () => ({
   createToken: vi.fn(),
@@ -13,7 +14,7 @@ vi.mock("@/lib/capacity", () => ({
   isAtCapacity: vi.fn(),
 }));
 
-import { query } from "@/lib/db";
+import { query, transaction } from "@/lib/db";
 import { createToken, needsOnboarding } from "@/lib/auth";
 import { isAtCapacity } from "@/lib/capacity";
 import { POST } from "../route";
@@ -54,6 +55,7 @@ beforeEach(() => {
   vi.unstubAllEnvs();
   vi.stubEnv("JWT_SECRET", TEST_JWT_SECRET);
   vi.mocked(query).mockReset();
+  vi.mocked(transaction).mockReset();
   vi.mocked(createToken).mockReset();
   vi.mocked(createToken).mockResolvedValue("mock-jwt-token");
   vi.mocked(needsOnboarding).mockReset();
@@ -146,10 +148,13 @@ describe("Nostr auth (NIP-42)", () => {
     vi.mocked(query).mockResolvedValueOnce(
       mockQueryResult([{ id: "wl-1" }])
     );
-    // INSERT: new user created
-    vi.mocked(query).mockResolvedValueOnce(
-      mockQueryResult([{ id: "new-user-xyz" }])
-    );
+    // transaction: insert user + redeem invite
+    vi.mocked(transaction).mockImplementationOnce(async (cb: any) => {
+      const txQuery = vi.fn()
+        .mockResolvedValueOnce(mockQueryResult([{ id: "new-user-xyz" }]))
+        .mockResolvedValueOnce(mockQueryResult([]));
+      return cb(txQuery);
+    });
 
     const res = await POST(
       makeRequest({ event, inviteCode: "VALIDCODE123" }) as any

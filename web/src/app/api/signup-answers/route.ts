@@ -3,6 +3,17 @@ import { withAuth } from "@/lib/auth";
 import { query } from "@/lib/db";
 import { encrypt, decrypt } from "@/lib/crypto";
 
+// Strip HTML tags and ensure all values are plain strings
+function sanitizeAnswers(answers: Record<string, unknown>): Record<string, string> {
+  const clean: Record<string, string> = {};
+  for (const [key, val] of Object.entries(answers)) {
+    if (typeof val === "string") {
+      clean[key] = val.replace(/<[^>]*>/g, "");
+    }
+  }
+  return clean;
+}
+
 export const POST = withAuth(async (req: NextRequest, { userId }) => {
   let body: { answers: Record<string, string> };
   try {
@@ -74,7 +85,7 @@ export const GET = withAuth(async (_req: NextRequest, { userId }) => {
   }
 
   const decrypted = decrypt(Buffer.from(signup_answers_enc));
-  const answers = JSON.parse(decrypted);
+  const answers = sanitizeAnswers(JSON.parse(decrypted));
 
   return NextResponse.json({ answers });
 });

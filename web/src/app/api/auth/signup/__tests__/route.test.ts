@@ -3,6 +3,7 @@ import { TEST_JWT_SECRET, mockQueryResult } from "@/__test-utils__/fixtures";
 
 vi.mock("@/lib/db", () => ({
   query: vi.fn(),
+  transaction: vi.fn(),
 }));
 vi.mock("@/lib/auth", () => ({
   createToken: vi.fn().mockResolvedValue("mock-jwt"),
@@ -12,20 +13,31 @@ vi.mock("@/lib/capacity", () => ({
   isAtCapacity: vi.fn(),
 }));
 
-import { query } from "@/lib/db";
+import { query, transaction } from "@/lib/db";
 import { isAtCapacity } from "@/lib/capacity";
 import { POST } from "../route";
+
+// Each test gets a unique IP so the in-memory rate limiter doesn't bleed state
+let testIpCounter = 0;
+function uniqueIp(): string {
+  testIpCounter++;
+  return `10.1.${Math.floor(testIpCounter / 256)}.${testIpCounter % 256}`;
+}
 
 function makeRequest(body: object): Request {
   return new Request("http://localhost/api/auth/signup", {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: {
+      "content-type": "application/json",
+      "x-forwarded-for": uniqueIp(),
+    },
     body: JSON.stringify(body),
   });
 }
 
 beforeEach(() => {
   vi.mocked(query).mockReset();
+  vi.mocked(transaction).mockReset();
   vi.mocked(isAtCapacity).mockReset();
   vi.mocked(isAtCapacity).mockResolvedValue(false);
 });
@@ -38,10 +50,13 @@ describe("POST /api/auth/signup", () => {
     );
     // Check existing user: none
     vi.mocked(query).mockResolvedValueOnce(mockQueryResult([]));
-    // Insert returning id
-    vi.mocked(query).mockResolvedValueOnce(
-      mockQueryResult([{ id: "new-user-123" }])
-    );
+    // transaction: execute callback with a mock txQuery
+    vi.mocked(transaction).mockImplementationOnce(async (cb: any) => {
+      const txQuery = vi.fn()
+        .mockResolvedValueOnce(mockQueryResult([{ id: "new-user-123" }])) // INSERT user
+        .mockResolvedValueOnce(mockQueryResult([])); // UPDATE waitlist redeemed_at
+      return cb(txQuery);
+    });
 
     const res = await POST(
       makeRequest({

@@ -344,8 +344,8 @@ function SlotCard({ slot, slotLabel, onStay, onSkip, onSendBackToQueue }: SlotCa
       {/* Next service info */}
       {hasNextService && (
         <div className="mt-4 pt-4 border-t border-border">
-          <div className="flex items-center justify-between">
-            <div>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="min-w-0">
               <span className="text-xs font-medium text-muted">Next up: </span>
               <span className="text-sm font-medium text-foreground">
                 {slot.next_service_name}
@@ -365,7 +365,7 @@ function SlotCard({ slot, slotLabel, onStay, onSkip, onSendBackToQueue }: SlotCa
               <button
                 type="button"
                 onClick={() => onSendBackToQueue(slot.next_service_id!)}
-                className="py-1.5 px-3 bg-surface border border-border text-muted font-medium rounded hover:border-muted hover:text-foreground transition-colors text-xs"
+                className="shrink-0 py-1.5 px-3 bg-surface border border-border text-muted font-medium rounded hover:border-muted hover:text-foreground transition-colors text-xs"
               >
                 Send back to queue
               </button>
@@ -844,22 +844,22 @@ export default function DashboardPage() {
                       {credits.recent_transactions.map((tx) => (
                         <div
                           key={tx.id}
-                          className="flex items-center justify-between text-sm py-2 border-b border-border last:border-b-0"
+                          className="flex items-center justify-between gap-3 text-sm py-2 border-b border-border last:border-b-0"
                         >
-                          <div>
-                            <span className="text-foreground">
+                          <div className="min-w-0">
+                            <span className="text-foreground truncate block">
                               {tx.description}
                             </span>
-                            <span className="text-muted ml-2">
+                            <span className="text-muted text-xs">
                               {formatDate(tx.created_at)}
                             </span>
                           </div>
                           <span
-                            className={
+                            className={`shrink-0 ${
                               tx.amount_sats >= 0
                                 ? "text-green-400 font-medium"
                                 : "text-red-400 font-medium"
-                            }
+                            }`}
                           >
                             {tx.amount_sats >= 0 ? "+" : ""}
                             {formatSats(tx.amount_sats)} sats

@@ -93,9 +93,17 @@ function StepIndicator({ current }: { current: number }) {
 function SortableItem({
   item,
   position,
+  isFirst,
+  isLast,
+  onMoveUp,
+  onMoveDown,
 }: {
   item: QueueItem;
   position: number;
+  isFirst: boolean;
+  isLast: boolean;
+  onMoveUp: () => void;
+  onMoveDown: () => void;
 }) {
   const {
     attributes,
@@ -121,21 +129,41 @@ function SortableItem({
     <div
       ref={setNodeRef}
       style={style}
-      className={`flex items-center gap-4 bg-surface border border-border rounded px-4 py-3 ${
+      className={`flex items-center gap-3 bg-surface border border-border rounded px-4 py-3 ${
         isDragging ? "opacity-50" : ""
       }`}
     >
       <button
         type="button"
-        className="text-muted cursor-grab active:cursor-grabbing select-none text-lg leading-none"
+        className="hidden sm:block text-muted cursor-grab active:cursor-grabbing select-none text-lg leading-none"
         {...attributes}
         {...listeners}
       >
         &#8801;
       </button>
+      <div className="flex flex-col sm:hidden">
+        <button
+          type="button"
+          onClick={onMoveUp}
+          disabled={isFirst}
+          className="text-muted hover:text-foreground disabled:text-muted/20 transition-colors p-0.5"
+          aria-label="Move up"
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M18 15l-6-6-6 6"/></svg>
+        </button>
+        <button
+          type="button"
+          onClick={onMoveDown}
+          disabled={isLast}
+          className="text-muted hover:text-foreground disabled:text-muted/20 transition-colors p-0.5"
+          aria-label="Move down"
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M6 9l6 6 6-6"/></svg>
+        </button>
+      </div>
       <span className="text-sm font-medium text-muted w-6">{position}</span>
-      <span className="text-foreground font-medium flex-1">{displayLabel}</span>
-      <span className="text-muted/60 text-sm">
+      <span className="text-foreground font-medium flex-1 min-w-0 truncate">{displayLabel}</span>
+      <span className="text-muted/60 text-sm shrink-0">
         ${(item.priceCents / 100).toFixed(2)}/mo
       </span>
     </div>
@@ -982,8 +1010,8 @@ export default function OnboardingPage() {
             Your rotation queue
           </h1>
           <p className="text-muted leading-relaxed">
-            Drag to reorder. Top of the list goes first. Each service runs one
-            month, then the next one kicks in. The queue loops.
+            Reorder your services. Top of the list goes first. Each service runs
+            one month, then the next one kicks in. The queue loops.
           </p>
         </div>
 
@@ -1012,6 +1040,16 @@ export default function OnboardingPage() {
                   key={item.serviceId}
                   item={item}
                   position={index + 1}
+                  isFirst={index === 0}
+                  isLast={index === queue.length - 1}
+                  onMoveUp={() => {
+                    if (index === 0) return;
+                    setQueue((prev) => arrayMove(prev, index, index - 1));
+                  }}
+                  onMoveDown={() => {
+                    if (index === queue.length - 1) return;
+                    setQueue((prev) => arrayMove(prev, index, index + 1));
+                  }}
                 />
               ))}
             </div>
@@ -1288,10 +1326,10 @@ export default function OnboardingPage() {
         {/* Breakdown */}
         <div className="bg-surface border border-border rounded p-4">
           <div className="space-y-2 text-sm">
-            <div className="flex justify-between">
+            <div className="flex flex-wrap justify-between gap-x-4">
               <span className="text-muted">
                 Membership ({membershipPlan === "solo" ? "Solo" : "Duo"},{" "}
-                {membership === "monthly" ? "1 month" : "12 months"})
+                {membership === "monthly" ? "1 mo" : "12 mo"})
               </span>
               <span className="text-foreground">
                 {membership === "annual" && (
@@ -1302,7 +1340,7 @@ export default function OnboardingPage() {
                 {formatSats(membershipTotalSats)} sats
               </span>
             </div>
-            <div className="flex justify-between">
+            <div className="flex flex-wrap justify-between gap-x-4">
               <span className="text-muted">
                 Service credit ({firstServiceLabel})
               </span>
@@ -1313,7 +1351,7 @@ export default function OnboardingPage() {
                 ~{formatSats(firstServiceApproxSats)} sats
               </span>
             </div>
-            <div className="border-t border-border pt-2 mt-2 flex justify-between font-medium">
+            <div className="border-t border-border pt-2 mt-2 flex flex-wrap justify-between gap-x-4 font-medium">
               <span className="text-foreground">Total due today</span>
               <span className="text-foreground">
                 ~{formatSats(totalApproxSats)} sats

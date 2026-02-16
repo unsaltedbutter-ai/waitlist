@@ -1,9 +1,23 @@
 import { NextRequest, NextResponse } from "next/server";
-import { query } from "@/lib/db";
+import { query, transaction } from "@/lib/db";
 import { createToken, hashPassword } from "@/lib/auth";
 import { isAtCapacity } from "@/lib/capacity";
+import { createRateLimiter, getClientIp } from "@/lib/rate-limit";
+
+const limiter = createRateLimiter(5, 15 * 60 * 1000); // 5 attempts per 15 minutes
 
 export async function POST(req: NextRequest) {
+  // Rate limit by IP
+  const ip = getClientIp(req);
+  const { allowed } = limiter.check(ip);
+
+  if (!allowed) {
+    return NextResponse.json(
+      { error: "Too many attempts. Try again later." },
+      { status: 429 }
+    );
+  }
+
   let body: { email: string; password: string; inviteCode: string };
   try {
     body = await req.json();
@@ -35,6 +49,13 @@ export async function POST(req: NextRequest) {
     );
   }
 
+  if (password.length > 128) {
+    return NextResponse.json(
+      { error: "Password must be 128 characters or fewer" },
+      { status: 400 }
+    );
+  }
+
   // Require invite code
   if (!inviteCode) {
     return NextResponse.json(
@@ -43,9 +64,9 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  // Validate invite code against waitlist
+  // Validate invite code against waitlist (must not already be redeemed)
   const codeCheck = await query<{ id: string }>(
-    "SELECT id FROM waitlist WHERE invite_code = $1 AND invited = TRUE",
+    "SELECT id FROM waitlist WHERE invite_code = $1 AND invited = TRUE AND redeemed_at IS NULL",
     [inviteCode]
   );
   if (codeCheck.rows.length === 0) {
@@ -76,14 +97,21 @@ export async function POST(req: NextRequest) {
 
   const passwordHash = await hashPassword(password);
 
-  const result = await query(
-    `INSERT INTO users (email, password_hash, status, membership_plan, billing_period)
-     VALUES ($1, $2, 'active', 'solo', 'monthly')
-     RETURNING id`,
-    [email.toLowerCase(), passwordHash]
-  );
+  // Create user and redeem invite code in a single transaction
+  const userId = await transaction(async (txQuery) => {
+    const result = await txQuery<{ id: string }>(
+      `INSERT INTO users (email, password_hash, status, membership_plan, billing_period)
+       VALUES ($1, $2, 'active', 'solo', 'monthly')
+       RETURNING id`,
+      [email.toLowerCase(), passwordHash]
+    );
+    await txQuery(
+      "UPDATE waitlist SET redeemed_at = NOW() WHERE invite_code = $1",
+      [inviteCode]
+    );
+    return result.rows[0].id;
+  });
 
-  const userId = result.rows[0].id;
   const token = await createToken(userId);
 
   return NextResponse.json({ token, userId }, { status: 201 });

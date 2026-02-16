@@ -154,7 +154,7 @@ export default function WaitlistPage() {
                   setNpubCopied(true);
                   setTimeout(() => setNpubCopied(false), 2000);
                 }}
-                className="font-mono text-muted hover:text-foreground transition-colors"
+                className="font-mono text-muted hover:text-foreground transition-colors break-all"
               >
                 {npubCopied ? "Copied!" : BOT_NPUB}
               </button>

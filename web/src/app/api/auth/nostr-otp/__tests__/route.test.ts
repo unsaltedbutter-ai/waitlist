@@ -3,6 +3,7 @@ import { mockQueryResult } from "@/__test-utils__/fixtures";
 
 vi.mock("@/lib/db", () => ({
   query: vi.fn(),
+  transaction: vi.fn(),
 }));
 vi.mock("@/lib/auth", () => ({
   createToken: vi.fn().mockResolvedValue("mock-jwt-token"),
@@ -12,7 +13,7 @@ vi.mock("@/lib/capacity", () => ({
   isAtCapacity: vi.fn().mockResolvedValue(false),
 }));
 
-import { query } from "@/lib/db";
+import { query, transaction } from "@/lib/db";
 import { needsOnboarding } from "@/lib/auth";
 import { isAtCapacity } from "@/lib/capacity";
 import { POST } from "../route";
@@ -39,6 +40,7 @@ function makeRequest(body: object, ip?: string): Request {
 
 beforeEach(() => {
   vi.mocked(query).mockReset();
+  vi.mocked(transaction).mockReset();
   vi.mocked(isAtCapacity).mockResolvedValue(false);
   vi.mocked(needsOnboarding).mockResolvedValue(false);
 });
@@ -79,10 +81,13 @@ describe("POST /api/auth/nostr-otp", () => {
     vi.mocked(query).mockResolvedValueOnce(
       mockQueryResult([{ id: "waitlist-1" }])
     );
-    // Insert new user
-    vi.mocked(query).mockResolvedValueOnce(
-      mockQueryResult([{ id: "new-user-456" }])
-    );
+    // transaction: insert user + redeem invite
+    vi.mocked(transaction).mockImplementationOnce(async (cb: any) => {
+      const txQuery = vi.fn()
+        .mockResolvedValueOnce(mockQueryResult([{ id: "new-user-456" }]))
+        .mockResolvedValueOnce(mockQueryResult([]));
+      return cb(txQuery);
+    });
 
     const res = await POST(
       makeRequest({ code: "111111222222" }) as any
@@ -109,10 +114,13 @@ describe("POST /api/auth/nostr-otp", () => {
     vi.mocked(query).mockResolvedValueOnce(
       mockQueryResult([{ id: "waitlist-2" }])
     );
-    // Insert new user
-    vi.mocked(query).mockResolvedValueOnce(
-      mockQueryResult([{ id: "new-user-789" }])
-    );
+    // transaction: insert user + redeem invite
+    vi.mocked(transaction).mockImplementationOnce(async (cb: any) => {
+      const txQuery = vi.fn()
+        .mockResolvedValueOnce(mockQueryResult([{ id: "new-user-789" }]))
+        .mockResolvedValueOnce(mockQueryResult([]));
+      return cb(txQuery);
+    });
 
     const res = await POST(
       makeRequest({ code: "111111222222", inviteCode: "ABCDEF" }) as any
@@ -316,10 +324,13 @@ describe("POST /api/auth/nostr-otp", () => {
     vi.mocked(query).mockResolvedValueOnce(
       mockQueryResult([{ id: "waitlist-1" }])
     );
-    // Insert new user
-    vi.mocked(query).mockResolvedValueOnce(
-      mockQueryResult([{ id: "new-user-456" }])
-    );
+    // transaction: insert user + redeem invite
+    vi.mocked(transaction).mockImplementationOnce(async (cb: any) => {
+      const txQuery = vi.fn()
+        .mockResolvedValueOnce(mockQueryResult([{ id: "new-user-456" }]))
+        .mockResolvedValueOnce(mockQueryResult([]));
+      return cb(txQuery);
+    });
 
     const res = await POST(makeRequest({ code: "111111222222" }) as any);
     expect(res.status).toBe(201);

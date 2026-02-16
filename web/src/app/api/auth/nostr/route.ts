@@ -1,10 +1,21 @@
 import { NextRequest, NextResponse } from "next/server";
 import { verifyEvent, type Event } from "nostr-tools";
-import { query } from "@/lib/db";
+import { query, transaction } from "@/lib/db";
 import { createToken, needsOnboarding } from "@/lib/auth";
 import { isAtCapacity } from "@/lib/capacity";
 
+// Replay protection: track consumed event IDs with 5-minute TTL
+const consumedEvents = new Map<string, number>(); // eventId -> expiresAt (ms)
+
+function cleanupConsumedEvents() {
+  const now = Date.now();
+  consumedEvents.forEach((expiresAt, id) => {
+    if (now > expiresAt) consumedEvents.delete(id);
+  });
+}
+
 export async function POST(req: NextRequest) {
+  cleanupConsumedEvents();
   let body: { event: Event; inviteCode?: string };
   try {
     body = await req.json();
@@ -40,6 +51,12 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Event expired" }, { status: 401 });
   }
 
+  // Replay protection: reject already-consumed events
+  if (consumedEvents.has(event.id)) {
+    return NextResponse.json({ error: "Event already used" }, { status: 401 });
+  }
+  consumedEvents.set(event.id, Date.now() + 5 * 60 * 1000);
+
   const npub = event.pubkey;
 
   // Check if user already exists
@@ -65,9 +82,9 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  // Validate invite code against waitlist
+  // Validate invite code against waitlist (must not already be redeemed)
   const codeCheck = await query<{ id: string }>(
-    "SELECT id FROM waitlist WHERE invite_code = $1 AND invited = TRUE",
+    "SELECT id FROM waitlist WHERE invite_code = $1 AND invited = TRUE AND redeemed_at IS NULL",
     [inviteCode]
   );
   if (codeCheck.rows.length === 0) {
@@ -85,15 +102,21 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  // Create new user
-  const result = await query(
-    `INSERT INTO users (nostr_npub, status, membership_plan, billing_period)
-     VALUES ($1, 'active', 'solo', 'monthly')
-     RETURNING id`,
-    [npub]
-  );
+  // Create user and redeem invite code in a single transaction
+  const userId = await transaction(async (txQuery) => {
+    const result = await txQuery<{ id: string }>(
+      `INSERT INTO users (nostr_npub, status, membership_plan, billing_period)
+       VALUES ($1, 'active', 'solo', 'monthly')
+       RETURNING id`,
+      [npub]
+    );
+    await txQuery(
+      "UPDATE waitlist SET redeemed_at = NOW() WHERE invite_code = $1",
+      [inviteCode]
+    );
+    return result.rows[0].id;
+  });
 
-  const userId = result.rows[0].id;
   const token = await createToken(userId);
 
   return NextResponse.json({ token, userId }, { status: 201 });
