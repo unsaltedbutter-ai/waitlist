@@ -25,7 +25,7 @@ async function fetchReceivedSats(
   const methods = await invoiceRes.json();
   const lightning = methods.find(
     (m: { paymentMethodId: string; totalPaid: string }) =>
-      m.paymentMethodId === "BTC-LightningNetwork"
+      m.paymentMethodId === "BTC-LN" || m.paymentMethodId === "BTC-LightningNetwork"
   );
   const sats = lightning
     ? Math.round(parseFloat(lightning.totalPaid) * 100_000_000)

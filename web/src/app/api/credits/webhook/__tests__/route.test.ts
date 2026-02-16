@@ -48,12 +48,13 @@ function settledPayload(invoiceId = "inv_123") {
 /** Mock fetch to return Lightning payment-methods response, then optionally an invoice metadata response. */
 function mockBtcpayFetch(
   totalPaid: string,
-  metadata?: Record<string, unknown>
+  metadata?: Record<string, unknown>,
+  paymentMethodId = "BTC-LN"
 ) {
   const responses: Response[] = [
     new Response(
       JSON.stringify([
-        { paymentMethodId: "BTC-LightningNetwork", totalPaid },
+        { paymentMethodId, totalPaid },
       ]),
       { status: 200 }
     ),
@@ -113,6 +114,31 @@ describe("BTCPay webhook — prepayments", () => {
     expect(res.status).toBe(200);
     expect(data.credited_sats).toBe(21000);
     expect(transaction).toHaveBeenCalled();
+  });
+
+  it("legacy BTC-LightningNetwork paymentMethodId still works", async () => {
+    const payload = settledPayload();
+    const body = JSON.stringify(payload);
+
+    vi.mocked(query).mockResolvedValueOnce(
+      mockQueryResult([{ id: "prep_1", user_id: "user_1", status: "pending" }])
+    );
+
+    mockBtcpayFetch("0.00010", undefined, "BTC-LightningNetwork");
+
+    vi.mocked(transaction).mockImplementationOnce(async (cb) => {
+      const txQuery = vi.fn().mockResolvedValue(
+        mockQueryResult([{ credit_sats: 10000 }])
+      );
+      return cb(txQuery as any);
+    });
+
+    const req = makeRequest(payload, sign(body));
+    const res = await POST(req as any);
+    const data = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(data.credited_sats).toBe(10000);
   });
 
   it("invalid HMAC → 401", async () => {
