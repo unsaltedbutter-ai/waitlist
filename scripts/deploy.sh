@@ -44,22 +44,36 @@ err()  { echo -e "${RED}[✗]${NC} $1"; exit 1; }
 VPS_IP="${1:-}"
 INIT_MODE=false
 SETUP_BOTS=false
+DEPLOY_DIRTY=false
 
 for arg in "${@:2}"; do
     case "$arg" in
-        --init)       INIT_MODE=true ;;
-        --setup-bots) SETUP_BOTS=true ;;
-        *)            err "Unknown flag: $arg" ;;
+        --init)         INIT_MODE=true ;;
+        --setup-bots)   SETUP_BOTS=true ;;
+        --dirty)        DEPLOY_DIRTY=true ;;
+        *)              err "Unknown flag: $arg" ;;
     esac
 done
 
 if [[ -z "${VPS_IP}" ]]; then
-    echo "Usage: ./scripts/deploy.sh <VPS_IP> [--init] [--setup-bots]"
+    echo "Usage: ./scripts/deploy.sh <VPS_IP> [--init] [--setup-bots] [--dirty]"
     echo ""
     echo "  <VPS_IP>      IP address of the Hetzner VPS"
     echo "  --init        First deploy: generate .env.production, apply schema, setup SSL"
     echo "  --setup-bots  One-time: install nostr-bot (systemd) + update-checker (cron)"
+    echo "  --dirty       Allow deploying with uncommitted changes (not recommended)"
     exit 1
+fi
+
+# Refuse to deploy uncommitted changes unless --dirty is passed
+if ! $DEPLOY_DIRTY; then
+    if ! git -C "${PROJECT_ROOT}" diff --quiet 2>/dev/null || \
+       ! git -C "${PROJECT_ROOT}" diff --cached --quiet 2>/dev/null; then
+        err "Uncommitted changes detected. Commit first, or use --dirty to override."
+    fi
+    if [[ -n "$(git -C "${PROJECT_ROOT}" ls-files --others --exclude-standard 2>/dev/null)" ]]; then
+        warn "Untracked files present (not blocking deploy, but consider committing them)"
+    fi
 fi
 
 # SSH multiplexing — reuse one TCP connection for all SSH/rsync calls.
