@@ -89,7 +89,7 @@ if [ "$MODE" = "all" ]; then
     echo "  Fee rate: ${FEE_RATE} ppm"
     echo ""
 
-    $LNCLI updatechanpolicy --base_fee_msat "$BASE_FEE" --fee_rate_ppm "$FEE_RATE"
+    $LNCLI updatechanpolicy --base_fee_msat "$BASE_FEE" --fee_rate_ppm "$FEE_RATE" --time_lock_delta 40
 
     echo ""
     echo "Done. All channels updated."
@@ -104,7 +104,7 @@ elif [ "$MODE" = "chan" ]; then
     echo "  Fee rate: ${FEE_RATE} ppm"
     echo ""
 
-    $LNCLI updatechanpolicy --base_fee_msat "$BASE_FEE" --fee_rate_ppm "$FEE_RATE" --chan_point "$CHAN_POINT"
+    $LNCLI updatechanpolicy --base_fee_msat "$BASE_FEE" --fee_rate_ppm "$FEE_RATE" --time_lock_delta 40 --chan_point "$CHAN_POINT"
 
     echo ""
     echo "Done."
