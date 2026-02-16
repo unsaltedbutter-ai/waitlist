@@ -36,6 +36,7 @@ function LoginContent() {
   // OTP state
   const [otpCode, setOtpCode] = useState("");
   const [otpSent, setOtpSent] = useState(false);
+  const [npubCopied, setNpubCopied] = useState(false);
 
   // Validate invite code from URL on mount
   useEffect(() => {
@@ -233,38 +234,20 @@ function LoginContent() {
           <div className="space-y-6">
             {!otpSent ? (
               <>
-                <div className="space-y-3">
-                  <p className="text-sm text-muted">
-                    DM <span className="text-foreground font-medium">login</span> to{" "}
-                    <span className="text-foreground font-medium">{BOT_NAME}</span>
-                  </p>
-                  {BOT_NPUB && (
-                    <p className="text-xs text-muted font-mono break-all">
-                      {BOT_NPUB}
-                    </p>
-                  )}
-                  <p className="text-sm text-muted">
-                    You&apos;ll get a 12-digit code back. Enter it below.
-                  </p>
-                </div>
-
                 <button
                   type="button"
                   onClick={() => setOtpSent(true)}
                   disabled={codeChecking}
                   className="w-full py-3 px-4 bg-accent text-background font-semibold rounded hover:bg-accent/90 transition-colors disabled:opacity-50"
                 >
-                  I have my code
+                  Enter login code
                 </button>
 
-                {!canSignup && (
-                  <p className="text-sm text-muted">
-                    No invite? DM{" "}
-                    <span className="text-foreground font-medium">waitlist</span> to{" "}
-                    <span className="text-foreground font-medium">{BOT_NAME}</span>{" "}
-                    to join the line.
-                  </p>
-                )}
+                <div className="text-sm text-muted leading-relaxed">
+                  <p>DM <span className="text-foreground font-medium">login</span></p>
+                  <p>to <span className="text-foreground font-medium">{BOT_NAME}</span></p>
+                  <p>for your login code.</p>
+                </div>
 
                 <p className="text-center text-xs text-muted">
                   Have a Nostr extension?{" "}
@@ -277,6 +260,23 @@ function LoginContent() {
                     Sign in with NIP-07
                   </button>
                 </p>
+
+                {BOT_NPUB && (
+                  <p className="text-center text-xs text-muted">
+                    {BOT_NAME}:{" "}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        navigator.clipboard.writeText(BOT_NPUB);
+                        setNpubCopied(true);
+                        setTimeout(() => setNpubCopied(false), 2000);
+                      }}
+                      className="font-mono text-muted hover:text-foreground transition-colors"
+                    >
+                      {npubCopied ? "Copied!" : BOT_NPUB}
+                    </button>
+                  </p>
+                )}
               </>
             ) : (
               <form onSubmit={handleOtpSubmit} className="space-y-6">

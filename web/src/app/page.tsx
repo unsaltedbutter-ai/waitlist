@@ -2,6 +2,9 @@
 
 import { useState } from "react";
 
+const BOT_NPUB = process.env.NEXT_PUBLIC_NOSTR_BOT_NPUB ?? "";
+const BOT_NAME = process.env.NEXT_PUBLIC_NOSTR_BOT_NAME ?? "UnsaltedButter Bot";
+
 export default function WaitlistPage() {
   const [contactType, setContactType] = useState<"email" | "npub">("npub");
   const [contactValue, setContactValue] = useState("");
@@ -9,6 +12,7 @@ export default function WaitlistPage() {
     "idle" | "submitting" | "success" | "error"
   >("idle");
   const [errorMsg, setErrorMsg] = useState("");
+  const [npubCopied, setNpubCopied] = useState(false);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -129,12 +133,34 @@ export default function WaitlistPage() {
           >
             {status === "submitting" ? "Submitting..." : "Get on the list"}
           </button>
+
+          <div className="text-sm text-muted leading-relaxed">
+            <p>DM <span className="text-foreground font-medium">waitlist</span></p>
+            <p>to <span className="text-foreground font-medium">{BOT_NAME}</span></p>
+            <p>to join the waitlist.</p>
+          </div>
         </form>
 
         {/* Footer */}
-        <p className="text-center text-muted/60 text-xs mt-12">
-          Invite only. Bitcoin only.
-        </p>
+        <div className="text-center text-xs mt-12 space-y-2">
+          <p className="text-muted/60">Invite only. Bitcoin only.</p>
+          {BOT_NPUB && (
+            <p className="text-muted">
+              {BOT_NAME}:{" "}
+              <button
+                type="button"
+                onClick={() => {
+                  navigator.clipboard.writeText(BOT_NPUB);
+                  setNpubCopied(true);
+                  setTimeout(() => setNpubCopied(false), 2000);
+                }}
+                className="font-mono text-muted hover:text-foreground transition-colors"
+              >
+                {npubCopied ? "Copied!" : BOT_NPUB}
+              </button>
+            </p>
+          )}
+        </div>
       </div>
     </main>
   );
