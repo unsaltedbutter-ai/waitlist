@@ -358,7 +358,7 @@ function LoginContent() {
             </div>
             {emailMode === "login" && (
               <p className="text-right text-sm -mt-2">
-                <a href="/forgot-password" className="text-accent hover:underline">
+                <a href={`/forgot-password${email ? `?email=${encodeURIComponent(email)}` : ""}`} className="text-accent hover:underline">
                   Forgot password?
                 </a>
               </p>
