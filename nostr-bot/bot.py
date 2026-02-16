@@ -87,7 +87,7 @@ class BotNotificationHandler(HandleNotification):
         reply = await self._dispatch_command(sender_hex, plaintext)
         # Reply via NIP-17 even to NIP-04 senders — NIP-04 is deprecated
         # and EventBuilder no longer supports generic kind construction.
-        await self._client.send_private_msg(sender_pk, reply, None)
+        await self._client.send_private_msg(sender_pk, reply, [])
 
     # ── NIP-17 DM (kind 1059 gift wrap) ──────────────────────
 
@@ -109,7 +109,7 @@ class BotNotificationHandler(HandleNotification):
         log.info("NIP-17 DM from %s: %s", sender_hex[:16], plaintext[:80])
 
         reply = await self._dispatch_command(sender_hex, plaintext)
-        await self._client.send_private_msg(sender, reply, None)
+        await self._client.send_private_msg(sender, reply, [])
 
     # ── Zap receipt (kind 9735) ──────────────────────────────
 
@@ -119,7 +119,7 @@ class BotNotificationHandler(HandleNotification):
 
         async def send_dm(pubkey_hex: str, text: str):
             pk = PublicKey.parse(pubkey_hex)
-            await self._client.send_private_msg(pk, text, None)
+            await self._client.send_private_msg(pk, text, [])
 
         await zap_handler.handle_zap_receipt(
             event, send_dm, self._bot_pubkey_hex, self._zap_provider_pubkey_hex,

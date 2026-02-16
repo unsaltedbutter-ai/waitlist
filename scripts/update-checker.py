@@ -332,7 +332,7 @@ async def send_nostr_dm(message: str) -> None:
     await client.connect()
 
     recipient = PublicKey.parse(npub)
-    await client.send_private_msg(recipient, message, None)
+    await client.send_private_msg(recipient, message, [])
     log.info("DM sent to %s", npub)
 
     await client.disconnect()

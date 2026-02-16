@@ -219,7 +219,7 @@ async def check_and_send_notifications(client, signer) -> None:
         msg = format_lock_in_message(user["next_service_name"], user["estimated_start_date"])
         try:
             pk = PublicKey.parse(user["nostr_npub"])
-            await client.send_private_msg(pk, msg, None)
+            await client.send_private_msg(pk, msg, [])
             await record_notification(user["user_id"], "lock_in_approaching", user["next_service_id"])
             npub_short = user["nostr_npub"][:16]
             print(f"[notifications] Sent lock_in_approaching to {npub_short}")
@@ -239,7 +239,7 @@ async def check_and_send_notifications(client, signer) -> None:
         )
         try:
             pk = PublicKey.parse(user["nostr_npub"])
-            await client.send_private_msg(pk, msg, None)
+            await client.send_private_msg(pk, msg, [])
             reference = datetime.now(timezone.utc).strftime("%Y-%m")
             await record_notification(user["user_id"], "membership_due", reference)
             npub_short = user["nostr_npub"][:16]
@@ -262,7 +262,7 @@ async def check_and_send_notifications(client, signer) -> None:
         )
         try:
             pk = PublicKey.parse(user["nostr_npub"])
-            await client.send_private_msg(pk, msg, None)
+            await client.send_private_msg(pk, msg, [])
             await record_notification(user["user_id"], "credit_topup", None)
             npub_short = user["nostr_npub"][:16]
             print(f"[notifications] Sent credit_topup to {npub_short}")

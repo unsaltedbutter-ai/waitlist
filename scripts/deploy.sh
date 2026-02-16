@@ -469,7 +469,20 @@ fi
 REMOTE_BOT_RESTART
 
 # =============================================================================
-# 12. Verify
+# 12. Notify operator via Nostr DM
+# =============================================================================
+log "Sending deploy notification..."
+${SSH_CMD} bash << 'REMOTE_NOTIFY'
+UC_VENV="$HOME/venvs/update-checker"
+if [[ -d "$UC_VENV" ]] && [[ -f "$HOME/.unsaltedbutter/nostr.env" ]]; then
+    "$UC_VENV/bin/python" "$HOME/unsaltedbutter/scripts/notify-deploy.py" 2>&1 || echo "Deploy DM failed (non-fatal)"
+else
+    echo "Skipping deploy DM (venv or config missing)"
+fi
+REMOTE_NOTIFY
+
+# =============================================================================
+# 13. Verify
 # =============================================================================
 log "Verifying deployment..."
 sleep 8
