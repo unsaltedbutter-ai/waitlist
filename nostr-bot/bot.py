@@ -155,7 +155,7 @@ class BotNotificationHandler(HandleNotification):
         if cmd == "login":
             code = await db.create_otp(sender_hex)
             formatted = f"{code[:6]}-{code[6:]}"
-            return f"Your login code: {formatted}\n\nEnter it on the website within 5 minutes."
+            return f"Your login code:\n\n{formatted}\n\nEnter it on the website within 5 minutes."
 
         # "waitlist" only for unregistered users
         if cmd == "waitlist":

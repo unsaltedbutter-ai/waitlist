@@ -70,6 +70,7 @@ async def test_login_registered_user(handler, mock_db):
     result = await handler._dispatch_command(REGISTERED_NPUB_HEX, "login")
 
     assert "123456-789012" in result
+    assert result.index("123456-789012") > result.index("\n")  # code on its own line
     assert "5 minutes" in result
     mock_db.create_otp.assert_awaited_once_with(REGISTERED_NPUB_HEX)
 

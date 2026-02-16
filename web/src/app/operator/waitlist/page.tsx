@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
+import { nip19 } from "nostr-tools";
 import { authFetch } from "@/lib/hooks/use-auth";
 import {
   WaitlistEntry,
@@ -11,6 +12,35 @@ import {
   tdClass,
   tdMuted,
 } from "../_components";
+
+function hexToNpub(hex: string): string {
+  try {
+    return nip19.npubEncode(hex);
+  } catch {
+    return hex;
+  }
+}
+
+function NpubCell({ hex }: { hex: string }) {
+  const [copied, setCopied] = useState(false);
+  const npub = hexToNpub(hex);
+  const display = `${npub.slice(0, 12)}...${npub.slice(-6)}`;
+
+  return (
+    <button
+      type="button"
+      onClick={() => {
+        navigator.clipboard.writeText(npub);
+        setCopied(true);
+        setTimeout(() => setCopied(false), 1500);
+      }}
+      className="text-left font-mono text-xs hover:text-accent transition-colors cursor-pointer"
+      title={npub}
+    >
+      {copied ? "Copied!" : display}
+    </button>
+  );
+}
 
 export default function WaitlistPage() {
   const [waitlist, setWaitlist] = useState<WaitlistEntry[]>([]);
@@ -145,10 +175,9 @@ export default function WaitlistPage() {
                 {waitlist.map((entry) => (
                   <tr key={entry.id} className="border-b border-border/50">
                     <td className={tdClass}>
-                      {entry.email ??
-                        (entry.nostr_npub
-                          ? `${entry.nostr_npub.slice(0, 12)}...`
-                          : "\u2014")}
+                      {entry.email ?? (entry.nostr_npub ? (
+                        <NpubCell hex={entry.nostr_npub} />
+                      ) : "\u2014")}
                     </td>
                     <td className={tdMuted}>{formatDate(entry.created_at)}</td>
                     <td className={tdClass}>
