@@ -212,6 +212,9 @@ async function handleMembershipPayment(
 
   const amountUsdCents = await satsToUsdCents(receivedSats);
 
+  // Extract service credit portion from invoice metadata
+  const serviceCreditSats: number = meta.service_credit_sats ?? 0;
+
   await transaction(async (txQuery) => {
     // Update user membership info
     await txQuery(
@@ -232,7 +235,39 @@ async function handleMembershipPayment(
        WHERE btcpay_invoice_id = $1`,
       [invoiceId, receivedSats, amountUsdCents]
     );
+
+    // Credit the service portion to service_credits
+    if (serviceCreditSats > 0) {
+      await txQuery(
+        `INSERT INTO service_credits (user_id) VALUES ($1)
+         ON CONFLICT (user_id) DO NOTHING`,
+        [row.user_id]
+      );
+
+      const creditUpdate = await txQuery(
+        `UPDATE service_credits
+         SET credit_sats = credit_sats + $2, updated_at = NOW()
+         WHERE user_id = $1
+         RETURNING credit_sats`,
+        [row.user_id, serviceCreditSats]
+      );
+
+      const newBalance = creditUpdate.rows[0].credit_sats;
+
+      await txQuery(
+        `INSERT INTO credit_transactions
+           (user_id, type, amount_sats, balance_after_sats, reference_id, description)
+         VALUES ($1, 'prepayment', $2, $3, $4, $5)`,
+        [row.user_id, serviceCreditSats, newBalance, row.id,
+         `Service credit from membership signup: ${serviceCreditSats} sats`]
+      );
+    }
   });
 
-  return NextResponse.json({ ok: true, membership: membershipPlan, billing_period: billingPeriod });
+  return NextResponse.json({
+    ok: true,
+    membership: membershipPlan,
+    billing_period: billingPeriod,
+    service_credit_sats: serviceCreditSats,
+  });
 }

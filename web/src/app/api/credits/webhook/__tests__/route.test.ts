@@ -424,6 +424,97 @@ describe("BTCPay webhook — membership payments", () => {
     expect(transaction).not.toHaveBeenCalled();
   });
 
+  it("membership invoice with service_credit_sats → credits service balance", async () => {
+    const payload = settledPayload("inv_mem_svc");
+    const body = JSON.stringify(payload);
+
+    vi.mocked(query).mockResolvedValueOnce(mockQueryResult([]));
+    vi.mocked(query).mockResolvedValueOnce(
+      mockQueryResult([{
+        id: "mp_svc",
+        user_id: "user_1",
+        status: "pending",
+        period_start: "2026-02-16T00:00:00Z",
+        period_end: "2026-03-16T00:00:00Z",
+      }])
+    );
+
+    mockBtcpayFetch("0.00060", {
+      userId: "user_1",
+      type: "membership",
+      membership_plan: "solo",
+      billing_period: "monthly",
+      service_credit_sats: 15000,
+      service_credit_usd_cents: 1099,
+    });
+
+    vi.mocked(satsToUsdCents).mockResolvedValueOnce(500);
+
+    const txQuery = vi.fn().mockResolvedValue(
+      mockQueryResult([{ credit_sats: 15000 }])
+    );
+    vi.mocked(transaction).mockImplementationOnce(async (cb) => cb(txQuery as any));
+
+    const req = makeRequest(payload, sign(body));
+    const res = await POST(req as any);
+    const data = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(data.service_credit_sats).toBe(15000);
+
+    // Should have 5 calls: UPDATE users, UPDATE membership_payments,
+    // INSERT service_credits, UPDATE service_credits, INSERT credit_transactions
+    expect(txQuery).toHaveBeenCalledTimes(5);
+
+    // INSERT service_credits (upsert)
+    expect(txQuery.mock.calls[2][0]).toContain("INSERT INTO service_credits");
+
+    // UPDATE service_credits
+    expect(txQuery.mock.calls[3][0]).toContain("UPDATE service_credits");
+    expect(txQuery.mock.calls[3][1]).toEqual(["user_1", 15000]);
+
+    // INSERT credit_transactions
+    expect(txQuery.mock.calls[4][0]).toContain("INSERT INTO credit_transactions");
+    expect(txQuery.mock.calls[4][1][1]).toBe(15000); // amount_sats
+  });
+
+  it("membership invoice without service_credit_sats → no service credit", async () => {
+    const payload = settledPayload("inv_mem_nosvc");
+    const body = JSON.stringify(payload);
+
+    vi.mocked(query).mockResolvedValueOnce(mockQueryResult([]));
+    vi.mocked(query).mockResolvedValueOnce(
+      mockQueryResult([{
+        id: "mp_nosvc",
+        user_id: "user_1",
+        status: "pending",
+        period_start: "2026-02-16T00:00:00Z",
+        period_end: "2026-03-16T00:00:00Z",
+      }])
+    );
+
+    mockBtcpayFetch("0.00044", {
+      userId: "user_1",
+      type: "membership",
+      membership_plan: "solo",
+      billing_period: "monthly",
+    });
+
+    vi.mocked(satsToUsdCents).mockResolvedValueOnce(299);
+
+    const txQuery = vi.fn().mockResolvedValue(mockQueryResult([]));
+    vi.mocked(transaction).mockImplementationOnce(async (cb) => cb(txQuery as any));
+
+    const req = makeRequest(payload, sign(body));
+    const res = await POST(req as any);
+    const data = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(data.service_credit_sats).toBe(0);
+    // Only 2 calls: UPDATE users, UPDATE membership_payments (no service credit)
+    expect(txQuery).toHaveBeenCalledTimes(2);
+  });
+
   it("membership invoice with missing plan metadata → 400", async () => {
     const payload = settledPayload("inv_mem_noplan");
     const body = JSON.stringify(payload);
