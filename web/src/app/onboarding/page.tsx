@@ -22,6 +22,11 @@ import {
 import { CSS } from "@dnd-kit/utilities";
 import QRCode from "react-qr-code";
 import { getCredsForGroup } from "@/lib/creds-resolver";
+import {
+  getInitialServices,
+  computeServiceCreditCents,
+  formatInitialServicesLabel,
+} from "@/lib/onboarding-pricing";
 
 interface Plan {
   id: string;
@@ -323,9 +328,9 @@ export default function OnboardingPage() {
   const minPrice = selectedPrices.length > 0 ? Math.min(...selectedPrices) : 0;
   const maxPrice = selectedPrices.length > 0 ? Math.max(...selectedPrices) : 0;
 
-  // First service info (used in steps 4-5)
-  const firstQueueItem = queue[0];
-  const firstServiceLabel = firstQueueItem?.groupLabel ?? "your first service";
+  // Initial services based on plan (solo = 1, duo = 2)
+  const initialServices = getInitialServices(queue, membershipPlan);
+  const initialServicesLabel = formatInitialServicesLabel(queue, membershipPlan);
 
   // Membership pricing (sats, from DB)
   function getPrice(plan: "solo" | "duo", period: "monthly" | "annual"): MembershipPrice | undefined {
@@ -338,9 +343,6 @@ export default function OnboardingPage() {
   const membershipTotalSats = membership === "annual" ? membershipSats * 12 : membershipSats;
   const membershipTotalUsdCents = membership === "annual" ? membershipUsdCents * 12 : membershipUsdCents;
 
-  // First service price in sats (approximate — gift cards are USD-denominated)
-  const firstServicePriceCents = firstQueueItem?.priceCents ?? 0;
-
   // Approximate sats-per-USD-cent rate derived from pricing data
   function approxUsdCentsToSats(cents: number): number {
     if (pricing.length === 0 || cents === 0) return 0;
@@ -349,9 +351,10 @@ export default function OnboardingPage() {
     return Math.round(cents * (p.price_sats / p.approx_usd_cents));
   }
 
-  // First service in sats (approximate — gift cards are USD-denominated)
-  const firstServiceApproxSats = approxUsdCentsToSats(firstServicePriceCents);
-  const totalApproxSats = membershipTotalSats + firstServiceApproxSats;
+  // Service credit: sum of initial services (1 for solo, 2 for duo)
+  const serviceCreditCents = computeServiceCreditCents(queue, membershipPlan);
+  const serviceCreditApproxSats = approxUsdCentsToSats(serviceCreditCents);
+  const totalApproxSats = membershipTotalSats + serviceCreditApproxSats;
 
   // Annual savings in sats
   const monthlyPrice = getPrice(membershipPlan, "monthly");
@@ -1110,7 +1113,7 @@ export default function OnboardingPage() {
           amount_sats: membershipTotalSats,
           membership_plan: membershipPlan,
           billing_period: membership,
-          service_credit_usd_cents: firstServicePriceCents,
+          service_credit_usd_cents: serviceCreditCents,
         }),
       });
 
@@ -1150,7 +1153,7 @@ export default function OnboardingPage() {
               You&apos;re in.
             </h1>
             <p className="text-muted leading-relaxed">
-              We&apos;re getting your {firstServiceLabel} account ready now.
+              We&apos;re getting your {initialServicesLabel} {initialServices.length === 1 ? "account" : "accounts"} ready now.
               Expect it to be active within 24 hours. We&apos;ll notify you
               when it&apos;s live.
             </p>
@@ -1176,7 +1179,7 @@ export default function OnboardingPage() {
             </h1>
             <p className="text-muted leading-relaxed">
               Pay from any Lightning wallet. We&apos;ll have{" "}
-              {firstServiceLabel} up within 24 hours.
+              {initialServicesLabel} up within 24 hours.
             </p>
           </div>
 
@@ -1233,8 +1236,10 @@ export default function OnboardingPage() {
             Activate your membership
           </h1>
           <p className="text-muted leading-relaxed">
-            One Lightning invoice covers your UnsaltedButter membership and the{" "}
-            {firstServiceLabel} gift card. We&apos;ll have {firstServiceLabel} up
+            One Lightning invoice covers your UnsaltedButter membership and{" "}
+            {initialServices.length === 1
+              ? `the ${initialServicesLabel} gift card`
+              : `gift cards for ${initialServicesLabel}`}. We&apos;ll have {initialServicesLabel} up
             within 24 hours.
           </p>
         </div>
@@ -1340,17 +1345,22 @@ export default function OnboardingPage() {
                 {formatSats(membershipTotalSats)} sats
               </span>
             </div>
-            <div className="flex flex-wrap justify-between gap-x-4">
-              <span className="text-muted">
-                Service credit ({firstServiceLabel})
-              </span>
-              <span className="text-foreground">
-                <span className="text-muted/60 mr-1">
-                  (${(firstServicePriceCents / 100).toFixed(2)})
-                </span>
-                ~{formatSats(firstServiceApproxSats)} sats
-              </span>
-            </div>
+            {initialServices.map((svc) => {
+              const svcSats = approxUsdCentsToSats(svc.priceCents);
+              return (
+                <div key={svc.serviceId} className="flex flex-wrap justify-between gap-x-4">
+                  <span className="text-muted">
+                    Service credit ({svc.groupLabel})
+                  </span>
+                  <span className="text-foreground">
+                    <span className="text-muted/60 mr-1">
+                      (${(svc.priceCents / 100).toFixed(2)})
+                    </span>
+                    ~{formatSats(svcSats)} sats
+                  </span>
+                </div>
+              );
+            })}
             <div className="border-t border-border pt-2 mt-2 flex flex-wrap justify-between gap-x-4 font-medium">
               <span className="text-foreground">Total due today</span>
               <span className="text-foreground">
