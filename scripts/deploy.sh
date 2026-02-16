@@ -210,10 +210,6 @@ psql -h localhost -U butter -d unsaltedbutter -f "${REMOTE_DIR}/scripts/migrate-
 echo "Applying migrate-nostr-bot.sql..."
 psql -h localhost -U butter -d unsaltedbutter -f "${REMOTE_DIR}/scripts/migrate-nostr-bot.sql" || echo "  (skipped — already in schema.sql)"
 
-# This one uses IF NOT EXISTS, so it always succeeds
-echo "Applying migrate-service-plans.sql..."
-psql -h localhost -U butter -d unsaltedbutter -f "${REMOTE_DIR}/scripts/migrate-service-plans.sql"
-
 echo "Schema applied successfully"
 REMOTE_SCHEMA
 fi

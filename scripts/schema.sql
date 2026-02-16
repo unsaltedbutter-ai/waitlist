@@ -10,6 +10,8 @@
 -- DROP EVERYTHING (reverse dependency order)
 -- ============================================================
 
+DROP TABLE IF EXISTS zap_receipts CASCADE;
+DROP TABLE IF EXISTS pending_refunds CASCADE;
 DROP TABLE IF EXISTS notification_log CASCADE;
 DROP TABLE IF EXISTS gift_card_purchases CASCADE;
 DROP TABLE IF EXISTS btc_prepayments CASCADE;
@@ -558,6 +560,29 @@ CREATE TABLE notification_log (
 CREATE INDEX idx_notification_log_dedup ON notification_log(user_id, notification_type, reference_id);
 
 -- ============================================================
+-- PENDING REFUNDS (operator queue for manual BTC refunds)
+-- ============================================================
+
+CREATE TABLE pending_refunds (
+    id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    contact      TEXT NOT NULL,
+    amount_sats  BIGINT NOT NULL DEFAULT 0,
+    created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- ============================================================
+-- ZAP RECEIPTS (idempotency: prevent double-crediting zaps)
+-- ============================================================
+
+CREATE TABLE zap_receipts (
+    event_id     TEXT PRIMARY KEY,
+    user_id      UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    sender_npub  TEXT NOT NULL,
+    amount_sats  BIGINT NOT NULL,
+    processed_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- ============================================================
 -- INDEXES
 -- ============================================================
 
@@ -574,6 +599,8 @@ CREATE INDEX idx_subscriptions_user ON subscriptions(user_id);
 CREATE INDEX idx_subscriptions_status ON subscriptions(status);
 CREATE INDEX idx_subscriptions_end_date ON subscriptions(subscription_end_date)
     WHERE status IN ('active', 'cancel_scheduled', 'cancelled');
+CREATE INDEX idx_subscriptions_lapse ON subscriptions(estimated_lapse_at)
+    WHERE status = 'lapsing';
 
 -- Agent jobs
 CREATE INDEX idx_agent_jobs_pending ON agent_jobs(scheduled_for, status) WHERE status = 'pending';
@@ -608,6 +635,9 @@ CREATE INDEX idx_operator_alerts_unacked ON operator_alerts(acknowledged, create
 
 -- User consents
 CREATE INDEX idx_user_consents_user ON user_consents(user_id);
+
+-- Zap receipts
+CREATE INDEX idx_zap_receipts_user ON zap_receipts(user_id);
 
 -- Service account balances
 CREATE INDEX idx_service_account_balances_user ON service_account_balances(user_id);
