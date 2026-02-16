@@ -356,6 +356,13 @@ function LoginContent() {
                 className="w-full py-3 px-4 bg-surface border border-border rounded text-foreground placeholder:text-muted/50 focus:outline-none focus:border-accent"
               />
             </div>
+            {emailMode === "login" && (
+              <p className="text-right text-sm -mt-2">
+                <a href="/forgot-password" className="text-accent hover:underline">
+                  Forgot password?
+                </a>
+              </p>
+            )}
             <button
               type="submit"
               disabled={loading || codeChecking}

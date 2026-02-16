@@ -23,6 +23,7 @@ DROP TABLE IF EXISTS action_metrics CASCADE;
 DROP TABLE IF EXISTS action_logs CASCADE;
 DROP TABLE IF EXISTS agent_jobs CASCADE;
 DROP TABLE IF EXISTS playbooks CASCADE;
+DROP TABLE IF EXISTS password_reset_tokens CASCADE;
 DROP TABLE IF EXISTS nostr_otp CASCADE;
 DROP TABLE IF EXISTS waitlist CASCADE;
 DROP TABLE IF EXISTS service_plans CASCADE;
@@ -514,6 +515,21 @@ CREATE TABLE nostr_otp (
     expires_at  TIMESTAMPTZ NOT NULL,
     created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+-- ============================================================
+-- PASSWORD RESET TOKENS
+-- ============================================================
+
+CREATE TABLE password_reset_tokens (
+    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id     UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    token_hash  BYTEA NOT NULL,
+    expires_at  TIMESTAMPTZ NOT NULL,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX idx_prt_token_hash ON password_reset_tokens(token_hash);
+CREATE INDEX idx_prt_user_id ON password_reset_tokens(user_id);
 
 -- ============================================================
 -- OPERATOR ALERTS
