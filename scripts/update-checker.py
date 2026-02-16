@@ -348,7 +348,7 @@ async def main() -> None:
                         help="Print message without sending DM")
     args = parser.parse_args()
 
-    env_file = Path.home() / ".update-checker.env"
+    env_file = Path.home() / ".unsaltedbutter" / "nostr.env"
     if env_file.exists():
         load_dotenv(env_file)
 

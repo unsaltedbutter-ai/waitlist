@@ -6,6 +6,8 @@
 #   ./update-checker.sh --run        # run the checker (sends DM)
 #   ./update-checker.sh --install    # create venv, install deps, set up cron
 #   ./update-checker.sh --uninstall  # remove cron job
+#
+# Config: ~/.unsaltedbutter/nostr.env (shared with nostr-bot)
 
 set -euo pipefail
 
@@ -13,8 +15,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 VENV_DIR="$HOME/venvs/update-checker"
 CHECKER="$SCRIPT_DIR/update-checker.py"
 REQUIREMENTS="$SCRIPT_DIR/update-checker-requirements.txt"
-ENV_EXAMPLE="$SCRIPT_DIR/update-checker.env.example"
-ENV_FILE="$HOME/.update-checker.env"
+ENV_FILE="$HOME/.unsaltedbutter/nostr.env"
 LOG_DIR="$HOME/logs"
 LOG_FILE="$LOG_DIR/update-checker.log"
 CRON_SCHEDULE="0 10 * * *"  # 10 AM UTC (6 AM EST)
@@ -73,13 +74,11 @@ do_install() {
     "$VENV_DIR/bin/pip" install -r "$REQUIREMENTS" --quiet
     echo "Dependencies installed."
 
-    # .env
+    # Check shared .env exists
     if [ ! -f "$ENV_FILE" ]; then
-        cp "$ENV_EXAMPLE" "$ENV_FILE"
-        chmod 600 "$ENV_FILE"
         echo ""
-        echo "Created $ENV_FILE from example (chmod 600)."
-        echo ">>> EDIT $ENV_FILE — set NOSTR_NSEC before first run. <<<"
+        echo "WARNING: Shared env not found at $ENV_FILE"
+        echo "Run deploy.sh --setup-bots to generate it, or create manually."
     else
         echo "Config: $ENV_FILE (exists)"
     fi

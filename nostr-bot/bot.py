@@ -5,6 +5,8 @@ import logging
 import os
 import signal
 
+from pathlib import Path
+
 from dotenv import load_dotenv
 from nostr_sdk import (
     Client,
@@ -32,7 +34,8 @@ import db
 import notifications
 import zap_handler
 
-load_dotenv()
+_env_file = Path.home() / ".unsaltedbutter" / "nostr.env"
+load_dotenv(_env_file if _env_file.exists() else None)
 
 log = logging.getLogger(__name__)
 
