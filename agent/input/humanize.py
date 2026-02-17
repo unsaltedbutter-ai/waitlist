@@ -179,9 +179,9 @@ def velocity_profile(num_points: int, base_delay: float = 0.01) -> list[float]:
 
     delays = []
     for i in range(num_points):
-        # sin curve: 0 at edges, 1 at center
+        # sin curve: minimum speed at edges, full speed at center
         progress = i / (num_points - 1) if num_points > 1 else 0
-        speed_factor = 0.3 + 0.7 * math.sin(math.pi * progress)
+        speed_factor = 0.5 + 0.5 * math.sin(math.pi * progress)
         # Invert: high speed = low delay
         delay = base_delay / max(speed_factor, 0.1)
         delays.append(delay)
@@ -206,14 +206,17 @@ def movement_duration(distance: float) -> float:
 
 
 def num_waypoints(distance: float) -> int:
-    """Choose number of Bezier waypoints based on distance."""
+    """
+    Choose number of Bezier waypoints based on distance.
+    Target ~3-5px between consecutive points for smooth rendering.
+    """
     if distance < 10:
-        return 8
+        return 10
     if distance < 100:
-        return 20
+        return 50
     if distance < 500:
-        return 40
-    return 60
+        return 120
+    return 200
 
 
 def typing_delay(
