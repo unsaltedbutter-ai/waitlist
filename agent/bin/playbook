@@ -307,7 +307,7 @@ def cmd_record(args):
 
     def _handle_dwell(screen_x, screen_y):
         """Process a dwell. Loops for multiple commands until empty Enter or tl."""
-        nonlocal stashed_tl
+        nonlocal stashed_tl, step_num
 
         browser.get_session_window(session)
         img_x, img_y = coords.screen_to_image(screen_x, screen_y, session.bounds)
