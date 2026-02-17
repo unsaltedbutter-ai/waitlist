@@ -40,11 +40,13 @@ def move_to(x: int, y: int, fast: bool = False) -> None:
     n_points = humanize.num_waypoints(distance)
     duration = humanize.movement_duration(distance)
     if fast:
-        duration *= 0.3
+        duration *= 0.15
+        n_points = max(n_points // 2, 10)
 
     # Generate path
     points = humanize.bezier_curve((sx, sy), target, num_points=n_points)
-    points = humanize.apply_jitter(points, magnitude=0.15 + distance * 0.00025)
+    if not fast:
+        points = humanize.apply_jitter(points, magnitude=0.15 + distance * 0.00025)
     if not fast:
         points = humanize.apply_overshoot(points, target, probability=0.12)
 

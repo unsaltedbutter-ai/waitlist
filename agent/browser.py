@@ -8,6 +8,7 @@ no automation flags.
 
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import signal
@@ -15,6 +16,7 @@ import subprocess
 import tempfile
 import time
 from dataclasses import dataclass, field
+from pathlib import Path
 
 from agent.input import keyboard, window
 
@@ -37,6 +39,32 @@ class BrowserSession:
     bounds: dict = field(default_factory=dict)
 
 
+def _write_chrome_prefs(profile_dir: str) -> None:
+    """Write Chrome preferences to disable password prompts, autofill, and translation."""
+    default_dir = Path(profile_dir) / 'Default'
+    default_dir.mkdir(parents=True, exist_ok=True)
+
+    prefs = {
+        'credentials_enable_service': False,
+        'credentials_enable_autosign': False,
+        'profile': {
+            'password_manager_enabled': False,
+            'password_manager_leak_detection': False,
+        },
+        'autofill': {
+            'profile_enabled': False,
+            'credit_card_enabled': False,
+        },
+        'translate': {
+            'enabled': False,
+        },
+        'translate_blocked_languages': ['en'],
+    }
+
+    with open(default_dir / 'Preferences', 'w') as f:
+        json.dump(prefs, f)
+
+
 def create_session(width: int = 1280, height: int = 900) -> BrowserSession:
     """
     Launch Chrome with a fresh temp profile.
@@ -45,6 +73,7 @@ def create_session(width: int = 1280, height: int = 900) -> BrowserSession:
     waits for the window to appear, resizes it, and returns the session.
     """
     profile_dir = tempfile.mkdtemp(prefix='ub-chrome-')
+    _write_chrome_prefs(profile_dir)
 
     cmd = [CHROME_PATH, f'--user-data-dir={profile_dir}'] + CHROME_ARGS + ['about:blank']
     process = subprocess.Popen(

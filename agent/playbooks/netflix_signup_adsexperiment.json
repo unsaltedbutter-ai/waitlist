@@ -30,6 +30,36 @@
     },
     {
       "action": "click",
+      "target_description": "select standard plan $17.99",
+      "ref_region": [
+        972,
+        646,
+        1538,
+        738
+      ],
+      "checkpoint": false,
+      "checkpoint_prompt": "where is the standard button, not the standard with ads?",
+      "disabled": false
+    },
+    {
+      "action": "wait",
+      "wait_after_sec": [
+        1.0,
+        2.0
+      ]
+    },
+    {
+      "action": "hover",
+      "target_description": "move the mouse around for realism",
+      "ref_region": [
+        246,
+        644,
+        1538,
+        738
+      ]
+    },
+    {
+      "action": "click",
       "target_description": "choose ads $7.99",
       "ref_region": [
         246,
@@ -39,6 +69,16 @@
       ],
       "checkpoint": false,
       "checkpoint_prompt": "Where is the Standards with ads plan"
+    },
+    {
+      "action": "hover",
+      "target_description": "move the mouse around for realism",
+      "ref_region": [
+        246,
+        644,
+        1538,
+        738
+      ]
     },
     {
       "action": "click",
@@ -107,6 +147,16 @@
       "disabled": true
     },
     {
+      "action": "hover",
+      "target_description": "move the mouse around for realism",
+      "ref_region": [
+        246,
+        644,
+        350,
+        738
+      ]
+    },
+    {
       "action": "click",
       "target_description": "click next button",
       "ref_region": [
@@ -117,6 +167,14 @@
       ],
       "checkpoint": false,
       "checkpoint_prompt": "how do we finish setting up your account? is there a next button?"
+    },
+    { 
+      "action": "wait",
+      "wait_after_sec": [
+        2.0,
+        4.0
+      ],
+      "disabled": true
     },
     {
       "action": "click",
@@ -138,7 +196,7 @@
       "action": "wait",
       "wait_after_sec": [
         0.5,
-        2.0
+        1.2
       ]
     },
     {
@@ -176,10 +234,20 @@
       "checkpoint_prompt": "how do I finish creating membershi? is there a next button?"
     },
     {
+      "action": "hover",
+      "target_description": "move the mouse around for realism",
+      "ref_region": [
+        146,
+        244,
+        450,
+        538
+      ]
+    },
+    {
       "action": "wait",
       "wait_after_sec": [
-        3.5,
-        5.0
+        1.5,
+        2.0
       ]
     },
     {
@@ -199,6 +267,26 @@
       "wait_after_sec": [
         5.0,
         12.0
+      ]
+    },
+    {
+      "action": "hover",
+      "target_description": "do donuts",
+      "ref_region": [
+        146,
+        244,
+        450,
+        538
+      ]
+    },
+    {
+      "action": "hover",
+      "target_description": "do donuts",
+      "ref_region": [
+        146,
+        244,
+        1496,
+        1290
       ]
     },
     {
@@ -252,7 +340,108 @@
         1.0,
         2.0
       ]
-    },    
+    },
+    {
+      "action": "hover",
+      "target_description": "do donuts",
+      "ref_region": [
+        146,
+        244,
+        1496,
+        1290
+      ]
+    },
+    {
+      "action": "hover",
+      "target_description": "do donuts",
+      "ref_region": [
+        146,
+        244,
+        1496,
+        1290
+      ]
+    },
+    {
+      "action": "hover",
+      "target_description": "do donuts",
+      "ref_region": [
+        146,
+        244,
+        1496,
+        1290
+      ]
+    },
+    {
+      "action": "hover",
+      "target_description": "do donuts",
+      "ref_region": [
+        146,
+        244,
+        1496,
+        1290
+      ]
+    },
+    {
+      "action": "hover",
+      "target_description": "do donuts",
+      "ref_region": [
+        146,
+        244,
+        1496,
+        1290
+      ]
+    },
+    {
+      "action": "hover",
+      "target_description": "do donuts",
+      "ref_region": [
+        146,
+        244,
+        1496,
+        1290
+      ]
+    },
+    {
+      "action": "hover",
+      "target_description": "do donuts",
+      "ref_region": [
+        146,
+        244,
+        1496,
+        1290
+      ]
+    },
+    {
+      "action": "hover",
+      "target_description": "do donuts",
+      "ref_region": [
+        146,
+        244,
+        1496,
+        1290
+      ]
+    },
+    {
+      "action": "hover",
+      "target_description": "do donuts",
+      "ref_region": [
+        146,
+        244,
+        1496,
+        1290
+      ]
+    },
+    {
+      "action": "hover",
+      "target_description": "do donuts",
+      "ref_region": [
+        146,
+        244,
+        1496,
+        1290
+      ]
+    },
+
     {
       "action": "click",
       "target_description": "click redeem button",

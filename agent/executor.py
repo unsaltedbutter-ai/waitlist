@@ -243,6 +243,7 @@ class PlaybookExecutor:
             'select_payment_method': self._handle_click,  # alias
             'handle_retention': self._handle_retention,
             'verify_success': self._handle_verify_success,
+            'hover': self._handle_hover,
             'scroll': self._handle_scroll,
             'press_key': self._handle_press_key,
             'wait': self._handle_wait,
@@ -369,6 +370,14 @@ class PlaybookExecutor:
                 f'Success verification failed (confidence={result.confidence:.2f}): {result.reasoning}'
             )
         log.info('verify_success: confirmed (confidence=%.2f)', result.confidence)
+        return 1
+
+    def _handle_hover(
+        self, step: PlaybookStep, session: BrowserSession, ctx: JobContext,
+    ) -> int:
+        """Move mouse to random point in bounding box without clicking. 1 VLM call."""
+        screen_x, screen_y = self._find_and_convert(step, session, ctx)
+        mouse.move_to(int(screen_x), int(screen_y), fast=self._profile.mouse_fast)
         return 1
 
     def _handle_scroll(
