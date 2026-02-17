@@ -11,6 +11,7 @@ import random
 import time
 
 import pyautogui
+import Quartz
 
 from . import humanize
 
@@ -141,8 +142,17 @@ def drag(
     points = humanize.apply_jitter(points, magnitude=0.8)
     delays = humanize.velocity_profile(len(points), base_delay=duration / len(points))
 
+    # Use Quartz kCGEventLeftMouseDragged so the window follows the cursor.
+    # pyautogui.moveTo sends kCGEventMouseMoved which macOS ignores during drag.
+    drag_type = Quartz.kCGEventLeftMouseDragged
+    if button == 'right':
+        drag_type = Quartz.kCGEventRightMouseDragged
+
     for i, (px, py) in enumerate(points):
-        pyautogui.moveTo(int(round(px)), int(round(py)), _pause=False)
+        drag_event = Quartz.CGEventCreateMouseEvent(
+            None, drag_type, (px, py), Quartz.kCGMouseButtonLeft,
+        )
+        Quartz.CGEventPost(Quartz.kCGHIDEventTap, drag_event)
         if i < len(delays):
             time.sleep(delays[i])
 
