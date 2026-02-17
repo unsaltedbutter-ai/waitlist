@@ -630,7 +630,7 @@ def cmd_test(args):
         flow=flow,
         credentials={
             'email': test_email,
-            'pass': f'TestPass{random.randint(100000, 999999)}!',
+            'pass': f'{word}{random.randint(1000, 9999)}',
             'name': 'Test User',
             'zip': '10001',
             'birth': '01/01/1990',
