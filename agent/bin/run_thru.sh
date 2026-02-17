@@ -35,8 +35,8 @@ pause 1
 step "5/7  Capture screenshot"
 SCREENSHOT=$("$DIR/screenshot")
 echo "Saved: $SCREENSHOT"
-open "$SCREENSHOT"
-pause 2
+echo "(open it manually after the test: open $SCREENSHOT)"
+pause 1
 
 step "6/7  Close Chrome and clean up"
 "$DIR/chrome" close
