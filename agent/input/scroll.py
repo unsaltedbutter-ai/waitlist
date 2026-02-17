@@ -31,10 +31,12 @@ def scroll(
         _mouse.move_to(x, y)
         time.sleep(random.uniform(0.1, 0.2))
 
-    # Pixel-based scrolling via Quartz. ~40px per click matches a real
-    # trackpad flick. Positive = up, negative = down.
-    pixels_per_click = 40
-    scroll_px = pixels_per_click if direction == 'up' else -pixels_per_click
+    # Pixel-based scrolling via Quartz. macOS "Natural scrolling" (default)
+    # inverts raw scroll events, so negative = content moves down (scroll down)
+    # and positive = content moves up (scroll up). The sign here matches
+    # the user's intent with natural scrolling enabled.
+    pixels_per_click = 80
+    scroll_px = -pixels_per_click if direction == 'up' else pixels_per_click
 
     for i in range(amount):
         event = Quartz.CGEventCreateScrollWheelEvent(
