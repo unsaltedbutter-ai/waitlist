@@ -1,0 +1,148 @@
+"""
+Human-like mouse operations.
+
+All coordinates are in macOS screen points (pyautogui's native system).
+Coordinate translation from VLM image-pixels is handled by coords.py.
+"""
+
+import random
+import time
+
+import pyautogui
+
+from . import humanize
+
+# Safety: disable pyautogui's pause (we handle timing ourselves)
+pyautogui.PAUSE = 0
+# Keep failsafe (move mouse to corner to abort)
+pyautogui.FAILSAFE = True
+
+
+def move_to(x: int, y: int) -> None:
+    """
+    Move mouse to absolute screen coordinates with a human-like Bezier path.
+    Includes velocity profile, jitter, and occasional overshoot.
+    """
+    start = pyautogui.position()
+    sx, sy = start
+    target = (float(x), float(y))
+    distance = ((x - sx) ** 2 + (y - sy) ** 2) ** 0.5
+
+    if distance < 2:
+        pyautogui.moveTo(x, y)
+        return
+
+    n_points = humanize.num_waypoints(distance)
+    duration = humanize.movement_duration(distance)
+
+    # Generate path
+    points = humanize.bezier_curve((sx, sy), target, num_points=n_points)
+    points = humanize.apply_jitter(points, magnitude=1.0 + distance * 0.002)
+    points = humanize.apply_overshoot(points, target, probability=0.12)
+
+    # Generate timing
+    delays = humanize.velocity_profile(len(points), base_delay=duration / len(points))
+
+    # Execute
+    for i, (px, py) in enumerate(points):
+        pyautogui.moveTo(int(round(px)), int(round(py)), _pause=False)
+        if i < len(delays):
+            time.sleep(delays[i])
+
+
+def move_by(dx: int, dy: int) -> None:
+    """Move mouse by a relative offset."""
+    cx, cy = pyautogui.position()
+    move_to(cx + dx, cy + dy)
+
+
+def click(
+    x: int | None = None,
+    y: int | None = None,
+    button: str = 'left',
+) -> None:
+    """
+    Click at coordinates (or current position if no coords given).
+    Includes natural pre-click hover and click duration.
+    """
+    if x is not None and y is not None:
+        move_to(x, y)
+
+    # Pre-click hover: 100-300ms
+    time.sleep(random.uniform(0.1, 0.3))
+
+    # Click with natural press/release duration: 80-150ms
+    press_duration = random.uniform(0.08, 0.15)
+    pyautogui.mouseDown(button=button, _pause=False)
+    time.sleep(press_duration)
+    pyautogui.mouseUp(button=button, _pause=False)
+
+
+def double_click(x: int | None = None, y: int | None = None) -> None:
+    """Double click with 80-200ms gap between clicks."""
+    if x is not None and y is not None:
+        move_to(x, y)
+
+    # Pre-click hover
+    time.sleep(random.uniform(0.1, 0.25))
+
+    # First click
+    press_duration = random.uniform(0.06, 0.12)
+    pyautogui.mouseDown(button='left', _pause=False)
+    time.sleep(press_duration)
+    pyautogui.mouseUp(button='left', _pause=False)
+
+    # Gap between clicks
+    time.sleep(random.uniform(0.08, 0.2))
+
+    # Second click
+    press_duration = random.uniform(0.06, 0.12)
+    pyautogui.mouseDown(button='left', _pause=False)
+    time.sleep(press_duration)
+    pyautogui.mouseUp(button='left', _pause=False)
+
+
+def right_click(x: int | None = None, y: int | None = None) -> None:
+    """Right-click."""
+    click(x, y, button='right')
+
+
+def drag(
+    start_x: int,
+    start_y: int,
+    end_x: int,
+    end_y: int,
+    button: str = 'left',
+) -> None:
+    """
+    Mouse-down at start, Bezier move to end, mouse-up.
+    Used for selections, window resizing, sliders.
+    """
+    move_to(start_x, start_y)
+    time.sleep(random.uniform(0.1, 0.2))
+
+    pyautogui.mouseDown(button=button, _pause=False)
+    time.sleep(random.uniform(0.05, 0.15))
+
+    # Drag path
+    distance = ((end_x - start_x) ** 2 + (end_y - start_y) ** 2) ** 0.5
+    n_points = humanize.num_waypoints(distance)
+    # Drag is slower than free movement
+    duration = humanize.movement_duration(distance) * 1.3
+
+    points = humanize.bezier_curve(
+        (float(start_x), float(start_y)),
+        (float(end_x), float(end_y)),
+        num_points=n_points,
+        curvature=0.15,
+    )
+    points = humanize.apply_jitter(points, magnitude=0.8)
+    delays = humanize.velocity_profile(len(points), base_delay=duration / len(points))
+
+    for i, (px, py) in enumerate(points):
+        pyautogui.moveTo(int(round(px)), int(round(py)), _pause=False)
+        if i < len(delays):
+            time.sleep(delays[i])
+
+    time.sleep(random.uniform(0.05, 0.15))
+    pyautogui.mouseUp(button=button, _pause=False)
