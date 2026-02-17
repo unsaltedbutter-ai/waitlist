@@ -39,7 +39,7 @@ def move_to(x: int, y: int) -> None:
 
     # Generate path
     points = humanize.bezier_curve((sx, sy), target, num_points=n_points)
-    points = humanize.apply_jitter(points, magnitude=1.0 + distance * 0.002)
+    points = humanize.apply_jitter(points, magnitude=0.3 + distance * 0.0005)
     points = humanize.apply_overshoot(points, target, probability=0.12)
 
     # Generate timing
