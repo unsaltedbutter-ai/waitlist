@@ -272,39 +272,47 @@ class PlaybookExecutor:
         self, step: PlaybookStep, session: BrowserSession, ctx: JobContext,
     ) -> int:
         """
-        Type text into a field. 1 VLM call.
+        Type text into a field.
 
-        Sensitive field invariant:
+        Two modes:
+        A) Self-contained: step has ref_region or target_description.
+           Find the field, click it, clear it, type. 1 VLM call.
+        B) Follow-on: step has neither (preceded by a click step that
+           already focused the field). Just type. 0 VLM calls.
+
+        Sensitive field invariant (mode A only):
         1. Screenshot with empty field (safe for VLM)
         2. VLM returns bounding box
         3. Click random point in box, clear field (Cmd+A, backspace)
         4. Type the value
-        5. Press trailing keys ({tab}, {return}) if any
-        6. NO screenshot after typing sensitive data
+        5. NO screenshot after typing sensitive data
         """
-        # Step 1-2: find the field BEFORE typing (field is still empty/safe)
-        screen_x, screen_y = self._find_and_convert(step, session, ctx)
+        inference_calls = 0
 
-        # Step 3: click field and clear
-        mouse.click(int(screen_x), int(screen_y))
-        time.sleep(random.uniform(0.1, 0.3))
-        keyboard.hotkey('command', 'a')
-        time.sleep(random.uniform(0.05, 0.15))
-        keyboard.press_key('backspace')
-        time.sleep(random.uniform(0.05, 0.15))
+        if step.ref_region or step.target_description:
+            # Mode A: find the field, click it, clear it
+            screen_x, screen_y = self._find_and_convert(step, session, ctx)
+            inference_calls = 1
 
-        # Step 4: resolve and type the value (strip trailing key sequences)
+            mouse.click(int(screen_x), int(screen_y))
+            time.sleep(random.uniform(0.1, 0.3))
+            keyboard.hotkey('command', 'a')
+            time.sleep(random.uniform(0.05, 0.15))
+            keyboard.press_key('backspace')
+            time.sleep(random.uniform(0.05, 0.15))
+
+        # Resolve and type the value (strip trailing key sequences)
         raw_value = ctx.resolve_template(step.value)
         value, trailing_keys = parse_value_and_keys(raw_value)
         if value:
             keyboard.type_text(value, speed='medium', accuracy='high')
 
-        # Step 5: press trailing keys (tab, enter)
+        # Press trailing keys (tab, enter)
         for key in trailing_keys:
             time.sleep(random.uniform(0.1, 0.3))
             keyboard.press_key(key)
 
-        return 1
+        return inference_calls
 
     def _handle_retention(
         self, step: PlaybookStep, session: BrowserSession, ctx: JobContext,
