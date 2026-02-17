@@ -21,10 +21,12 @@ pyautogui.PAUSE = 0
 pyautogui.FAILSAFE = True
 
 
-def move_to(x: int, y: int) -> None:
+def move_to(x: int, y: int, fast: bool = False) -> None:
     """
     Move mouse to absolute screen coordinates with a human-like Bezier path.
     Includes velocity profile, jitter, and occasional overshoot.
+
+    fast: same arc shape but ~3x faster (for session setup, not page interaction)
     """
     start = pyautogui.position()
     sx, sy = start
@@ -37,11 +39,14 @@ def move_to(x: int, y: int) -> None:
 
     n_points = humanize.num_waypoints(distance)
     duration = humanize.movement_duration(distance)
+    if fast:
+        duration *= 0.3
 
     # Generate path
     points = humanize.bezier_curve((sx, sy), target, num_points=n_points)
     points = humanize.apply_jitter(points, magnitude=0.15 + distance * 0.00025)
-    points = humanize.apply_overshoot(points, target, probability=0.12)
+    if not fast:
+        points = humanize.apply_overshoot(points, target, probability=0.12)
 
     # Generate timing
     delays = humanize.velocity_profile(len(points), base_delay=duration / len(points))
@@ -53,23 +58,24 @@ def move_to(x: int, y: int) -> None:
             time.sleep(delays[i])
 
 
-def move_by(dx: int, dy: int) -> None:
+def move_by(dx: int, dy: int, fast: bool = False) -> None:
     """Move mouse by a relative offset."""
     cx, cy = pyautogui.position()
-    move_to(cx + dx, cy + dy)
+    move_to(cx + dx, cy + dy, fast=fast)
 
 
 def click(
     x: int | None = None,
     y: int | None = None,
     button: str = 'left',
+    fast: bool = False,
 ) -> None:
     """
     Click at coordinates (or current position if no coords given).
     Includes natural pre-click hover and click duration.
     """
     if x is not None and y is not None:
-        move_to(x, y)
+        move_to(x, y, fast=fast)
 
     # Pre-click hover: 100-300ms
     time.sleep(random.uniform(0.1, 0.3))

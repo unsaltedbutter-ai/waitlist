@@ -15,13 +15,14 @@ def main():
     parser.add_argument('x', type=int, help='X coordinate (or dX with --by)')
     parser.add_argument('y', type=int, help='Y coordinate (or dY with --by)')
     parser.add_argument('--by', action='store_true', help='Move relative to current position')
+    parser.add_argument('--fast', action='store_true', help='Same arc, ~3x faster')
 
     args = parser.parse_args()
 
     if args.by:
-        mouse.move_by(args.x, args.y)
+        mouse.move_by(args.x, args.y, fast=args.fast)
     else:
-        mouse.move_to(args.x, args.y)
+        mouse.move_to(args.x, args.y, fast=args.fast)
 
 
 if __name__ == '__main__':

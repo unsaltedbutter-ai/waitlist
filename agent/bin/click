@@ -16,6 +16,7 @@ def main():
     parser.add_argument('y', type=int, nargs='?', default=None, help='Y coordinate (optional)')
     parser.add_argument('--double', action='store_true', help='Double click')
     parser.add_argument('--right', action='store_true', help='Right click')
+    parser.add_argument('--fast', action='store_true', help='Same arc, ~3x faster')
 
     args = parser.parse_args()
 
@@ -24,7 +25,7 @@ def main():
     elif args.right:
         mouse.right_click(args.x, args.y)
     else:
-        mouse.click(args.x, args.y)
+        mouse.click(args.x, args.y, fast=args.fast)
 
 
 if __name__ == '__main__':
