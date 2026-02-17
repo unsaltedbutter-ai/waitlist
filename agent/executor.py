@@ -107,10 +107,6 @@ class PlaybookExecutor:
                     if shot:
                         screenshots.append(shot)
 
-                # Random wait after step
-                lo, hi = step.wait_after_sec
-                time.sleep(random.uniform(lo, hi))
-
                 if not sr.success and not step.optional:
                     error_message = f'Step {step.step} ({step.action}) failed: {sr.error}'
                     log.error(error_message)
@@ -354,7 +350,11 @@ class PlaybookExecutor:
     def _handle_wait(
         self, step: PlaybookStep, session: BrowserSession, ctx: JobContext,
     ) -> int:
-        """No-op. The post-step random wait in the main loop handles timing."""
+        """Sleep for a random duration within the step's wait_after_sec range."""
+        lo, hi = step.wait_after_sec
+        duration = random.uniform(lo, hi)
+        log.debug('wait: sleeping %.2fs (range [%.1f, %.1f])', duration, lo, hi)
+        time.sleep(duration)
         return 0
 
     # ------------------------------------------------------------------
