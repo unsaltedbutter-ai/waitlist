@@ -250,7 +250,12 @@ class MockInferenceClient(InferenceClient):
         context: str = '',
         ref_region: tuple[int, int, int, int] | None = None,
     ) -> FindElementResult:
-        # Return center-ish box with jitter
+        # Use recorded ref_region when available
+        if ref_region is not None:
+            x1, y1, x2, y2 = ref_region
+            return FindElementResult(x1=x1, y1=y1, x2=x2, y2=y2, confidence=0.95)
+
+        # No recorded coords: return center-ish box with jitter
         cx = self._w // 2 + random.randint(-200, 200)
         cy = self._h // 2 + random.randint(-150, 150)
         hw, hh = random.randint(30, 80), random.randint(15, 30)

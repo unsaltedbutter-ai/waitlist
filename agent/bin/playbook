@@ -588,6 +588,9 @@ def cmd_test(args):
     print(f'Notes: {playbook.notes}')
     print()
 
+    # Check if playbook has recorded coordinates
+    has_coords = any(s.ref_region is not None for s in playbook.steps)
+
     # Select inference client
     if args.coords:
         print('Using CoordinateInferenceClient (recorded ref_region)')
@@ -603,8 +606,12 @@ def cmd_test(args):
             print(f'Using inference server: {studio_url}')
             inference = HttpInferenceClient(base_url=studio_url)
         except Exception:
-            print(f'Inference server not reachable ({studio_url}), using mock.')
-            inference = MockInferenceClient()
+            if has_coords:
+                print(f'Inference server not reachable ({studio_url}), using recorded coordinates.')
+                inference = CoordinateInferenceClient()
+            else:
+                print(f'Inference server not reachable ({studio_url}), using mock.')
+                inference = MockInferenceClient()
 
     # Dummy job context for testing
     ctx = JobContext(
