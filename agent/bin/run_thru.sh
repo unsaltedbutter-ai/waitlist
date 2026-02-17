@@ -17,29 +17,29 @@ pause() {
 }
 
 step "1/7  Launch Chrome (1280x900)"
-"$DIR/chrome" open --width 1280 --height 900
+"$DIR/chrome.py" open --width 1280 --height 900
 pause 1
 
 step "2/7  Check session status"
-"$DIR/chrome" status
+"$DIR/chrome.py" status
 pause 1
 
 step "3/7  Navigate to netflix.com"
-"$DIR/chrome" navigate https://www.netflix.com
+"$DIR/chrome.py" navigate https://www.netflix.com
 pause 3
 
 step "4/7  Confirm Chrome window is listed"
-"$DIR/windows" "Google Chrome"
+"$DIR/windows.py" "Google Chrome"
 pause 1
 
 step "5/7  Capture screenshot"
-SCREENSHOT=$("$DIR/screenshot")
+SCREENSHOT=$("$DIR/screenshot.py")
 echo "Saved: $SCREENSHOT"
 echo "(open it manually after the test: open $SCREENSHOT)"
 pause 1
 
 step "6/7  Close Chrome and clean up"
-"$DIR/chrome" close
+"$DIR/chrome.py" close
 pause 1
 
 step "7/7  Verify temp profile is gone"

@@ -23,6 +23,8 @@ CHROME_PATH = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
 CHROME_ARGS = [
     '--no-first-run',
     '--no-default-browser-check',
+    '--disable-features=PasswordManager',
+    '--disable-infobars',
 ]
 
 

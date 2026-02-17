@@ -6,6 +6,10 @@
   "last_validated": null,
   "steps": [
     {
+      "action": "navigate",
+      "url": "www.netflix.com/signup"
+    },
+    {
       "action": "click",
       "target_description": "Click next button to start",
       "ref_region": [
@@ -46,14 +50,16 @@
         738
       ],
       "checkpoint": false,
-      "checkpoint_prompt": "where is the standard button, not the standard with ads?"
+      "checkpoint_prompt": "where is the standard button, not the standard with ads?",
+      "disabled": true
     },
     {
       "action": "wait",
       "wait_after_sec": [
         2.0,
         4.0
-      ]
+      ],
+      "disabled": true
     },
     {
       "action": "click",
@@ -64,6 +70,7 @@
         2282,
         748
       ],
+      "disabled": true,
       "checkpoint": false,
       "checkpoint_prompt": "where is the premium button? $24.99"
     },
@@ -72,11 +79,12 @@
       "wait_after_sec": [
         2.0,
         4.0
-      ]
+      ],
+      "disabled": true
     },
     {
       "action": "scroll",
-      "target_description": "down 5"
+      "target_description": "down 15"
     },
     {
       "action": "click",
@@ -89,6 +97,14 @@
       ],
       "checkpoint": false,
       "checkpoint_prompt": "where is the next button?"
+    },
+    {
+      "action": "wait",
+      "wait_after_sec": [
+        2.0,
+        4.0
+      ],
+      "disabled": true
     },
     {
       "action": "click",
@@ -119,13 +135,10 @@
       "value": "{email}"
     },
     {
-      "action": "click",
-      "target_description": "tab to next field",
-      "ref_region": [
-        1331,
-        951,
-        1341,
-        961
+      "action": "wait",
+      "wait_after_sec": [
+        0.5,
+        2.0
       ]
     },
     {
@@ -135,18 +148,8 @@
     {
       "action": "wait",
       "wait_after_sec": [
-        1.0,
+        0.25,
         2.0
-      ]
-    },
-    {
-      "action": "click",
-      "target_description": "enter pass",
-      "ref_region": [
-        1331,
-        951,
-        1341,
-        961
       ]
     },
     {
@@ -173,6 +176,13 @@
       "checkpoint_prompt": "how do I finish creating membershi? is there a next button?"
     },
     {
+      "action": "wait",
+      "wait_after_sec": [
+        3.5,
+        5.0
+      ]
+    },
+    {
       "action": "click",
       "target_description": "click skip button",
       "ref_region": [
@@ -183,6 +193,13 @@
       ],
       "checkpoint": false,
       "checkpoint_prompt": "Is there a way to skip verifying email? is there a skip button?"
+    },
+    {
+      "action": "wait",
+      "wait_after_sec": [
+        5.0,
+        12.0
+      ]
     },
     {
       "action": "click",
@@ -199,36 +216,21 @@
     {
       "action": "wait",
       "wait_after_sec": [
-        5.0,
-        10.0
+        2.0,
+        5.0
       ]
-    },
-    {
-      "action": "click",
-      "target_description": "enter gift code",
-      "ref_region": [
-        922,
-        690,
-        1420,
-        736
-      ],
-      "checkpoint": false,
-      "checkpoint_prompt": "where do I enter gift card information?"
     },
     {
       "action": "type_text",
       "value": "{gift}"
     },
     {
-      "action": "click",
-      "target_description": "tab to next field",
-      "ref_region": [
-        1415,
-        731,
-        1425,
-        741
+      "action": "wait",
+      "wait_after_sec": [
+        1.0,
+        3.0
       ]
-    },
+    },    
     {
       "action": "press_key",
       "value": "tab"
@@ -236,24 +238,21 @@
     {
       "action": "wait",
       "wait_after_sec": [
-        1.0,
-        2.0
-      ]
-    },
-    {
-      "action": "click",
-      "target_description": "enter zip code",
-      "ref_region": [
-        1415,
-        731,
-        1425,
-        741
+        0.25,
+        2.5
       ]
     },
     {
       "action": "type_text",
       "value": "{zip}"
     },
+    {
+      "action": "wait",
+      "wait_after_sec": [
+        1.0,
+        2.0
+      ]
+    },    
     {
       "action": "click",
       "target_description": "click redeem button",

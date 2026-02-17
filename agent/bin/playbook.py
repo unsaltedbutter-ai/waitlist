@@ -11,6 +11,7 @@ import argparse
 import json
 import math
 import os
+import random
 import select
 import subprocess
 import sys
@@ -613,15 +614,23 @@ def cmd_test(args):
                 print(f'Inference server not reachable ({studio_url}), using mock.')
                 inference = MockInferenceClient()
 
-    # Dummy job context for testing
+    # Dummy job context with randomized email to avoid "welcome back" flows
+    _words = ['apple', 'google', 'netflix', 'nvidia', 'amd', 'dolby',
+              'coremedia', 'foundation', 'ios', 'chrome', 'safari',
+              'firefox', 'android']
+    word = random.choice(_words)
+    u_suffix = random.randint(1000, 9999)
+    d_suffix = random.randint(1000, 9999)
+    test_email = f'{word}{u_suffix}@{word}{d_suffix}.com'
+
     ctx = JobContext(
         job_id='test-run',
         user_id='test-user',
         service=service,
         flow=flow,
         credentials={
-            'email': 'test@example.com',
-            'pass': 'testpass123',
+            'email': test_email,
+            'pass': f'TestPass{random.randint(100000, 999999)}!',
             'name': 'Test User',
             'zip': '10001',
             'birth': '01/01/1990',
@@ -632,39 +641,74 @@ def cmd_test(args):
             'gift': 'TEST-GIFT-CODE',
         },
     )
+    print(f'  Test email: {test_email}')
 
-    # Interactive step callback
-    def step_callback(idx, step, session):
-        label = f'Step {idx}/{len(playbook.steps) - 1}'
+    # Build human profile from args
+    from dataclasses import replace as dc_replace
+    from agent.profile import NORMAL, PROFILES
 
-        # Auto-execute waits without prompting
-        if step.action == 'wait':
-            lo, hi = step.wait_after_sec
-            print(f'{label}: wait [{lo}, {hi}]')
-            return True
+    base = PROFILES[args.profile] if args.profile else NORMAL
+    overrides = {}
+    if args.mouse is not None:
+        overrides['mouse_fast'] = (args.mouse == 'fast')
+    if args.typing is not None:
+        overrides['type_speed'] = args.typing
+    if args.accuracy is not None:
+        overrides['type_accuracy'] = args.accuracy
+    profile = dc_replace(base, **overrides) if overrides else base
 
-        flags = []
-        if step.disabled:
-            flags.append('DISABLED')
-        if step.optional:
-            flags.append('optional')
-        flag_str = f'  [{", ".join(flags)}]' if flags else ''
-        print(f'{label}: {step.action} "{step.target_description or step.value}"{flag_str}')
-        if step.checkpoint and step.checkpoint_prompt:
-            print(f'  [checkpoint] "{step.checkpoint_prompt}"')
-        if step.is_sensitive:
-            print(f'  [sensitive]')
-        if step.ref_region:
-            print(f'  [ref_region] {list(step.ref_region)}')
+    # Print settings banner
+    profile_label = args.profile or 'normal'
+    if overrides:
+        profile_label += ' (customized)'
+    print()
+    print(f'  Profile:  {profile_label}')
+    print(f'  Mouse:    {"fast" if profile.mouse_fast else "normal (Bezier arc)"}')
+    print(f'  Typing:   {profile.type_speed}')
+    print(f'  Accuracy: {profile.type_accuracy}')
+    print(f'  Decision: {profile.decision_delay[0]:.1f}-{profile.decision_delay[1]:.1f}s')
+    if args.no_prompt:
+        print(f'  Mode:     no-prompt (auto-execute all steps)')
+    else:
+        print(f'  Mode:     interactive (prompt before each step)')
 
-        choice = input('Enter=execute, s=skip, q=quit: ').strip().lower()
-        if choice == 'q':
-            raise KeyboardInterrupt('User quit')
-        if choice != 's':
-            _focus_chrome(session.pid)
-        return choice != 's'
+    # Step callback (None in no-prompt mode)
+    callback = None
 
-    executor = PlaybookExecutor(inference, step_callback=step_callback)
+    if not args.no_prompt:
+        def step_callback(idx, step, session):
+            label = f'Step {idx}/{len(playbook.steps) - 1}'
+
+            # Auto-execute waits without prompting
+            if step.action == 'wait':
+                lo, hi = step.wait_after_sec
+                print(f'{label}: wait [{lo}, {hi}]')
+                return True
+
+            flags = []
+            if step.disabled:
+                flags.append('DISABLED')
+            if step.optional:
+                flags.append('optional')
+            flag_str = f'  [{", ".join(flags)}]' if flags else ''
+            print(f'{label}: {step.action} "{step.target_description or step.value}"{flag_str}')
+            if step.checkpoint and step.checkpoint_prompt:
+                print(f'  [checkpoint] "{step.checkpoint_prompt}"')
+            if step.is_sensitive:
+                print(f'  [sensitive]')
+            if step.ref_region:
+                print(f'  [ref_region] {list(step.ref_region)}')
+
+            choice = input('Enter=execute, s=skip, q=quit: ').strip().lower()
+            if choice == 'q':
+                raise KeyboardInterrupt('User quit')
+            if choice != 's':
+                _focus_chrome(session.pid)
+            return choice != 's'
+
+        callback = step_callback
+
+    executor = PlaybookExecutor(inference, step_callback=callback, profile=profile)
 
     print()
     print('Starting interactive test run...')
@@ -738,6 +782,16 @@ def main():
     p_test.add_argument('--tier', default='', help='Plan tier')
     p_test.add_argument('--mock', action='store_true', help='Force mock inference')
     p_test.add_argument('--coords', action='store_true', help='Use recorded ref_region coordinates')
+    p_test.add_argument('--no-prompt', action='store_true', dest='no_prompt',
+                        help='Run all steps without prompting (auto-execute)')
+    p_test.add_argument('--profile', choices=['fast', 'normal', 'cautious'], default=None,
+                        help='Human behavior preset (default: normal)')
+    p_test.add_argument('--mouse', choices=['fast', 'normal'], default=None,
+                        help='Override mouse speed')
+    p_test.add_argument('--typing', choices=['instant', 'fast', 'medium', 'slow'], default=None,
+                        help='Override typing speed')
+    p_test.add_argument('--accuracy', choices=['high', 'average', 'low'], default=None,
+                        help='Override typing accuracy')
 
     sub.add_parser('list', help='List all playbooks')
 

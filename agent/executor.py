@@ -23,6 +23,7 @@ from agent.config import (
 )
 from agent.inference import InferenceClient
 from agent.input import coords, keyboard, mouse, scroll, window
+from agent.profile import NORMAL, HumanProfile
 from agent.playbook import (
     ExecutionResult,
     JobContext,
@@ -45,15 +46,17 @@ class PlaybookExecutor:
         self,
         inference: InferenceClient,
         step_callback: Callable[[int, PlaybookStep, BrowserSession], bool] | None = None,
+        profile: HumanProfile = NORMAL,
     ):
         """
         inference: VLM client (Http, Coordinate, or Mock)
         step_callback: called before each step with (index, step, session).
                        Return True to proceed, False to skip.
-                       Used by the 'playbook test' CLI for interactive dry runs.
+        profile: human behavioral profile (mouse speed, typing, accuracy, decision delay)
         """
         self._inference = inference
         self._step_callback = step_callback
+        self._profile = profile
         self._total_inference_calls = 0
 
     def run(self, playbook: Playbook, ctx: JobContext) -> ExecutionResult:
@@ -203,6 +206,12 @@ class PlaybookExecutor:
                         error=f'Checkpoint failed: page state does not match "{step.checkpoint_prompt}"',
                     )
 
+            # Human-like pause before interactive actions
+            if step.action not in ('navigate', 'wait', 'press_key'):
+                lo, hi = self._profile.decision_delay
+                if hi > 0:
+                    time.sleep(random.uniform(lo, hi))
+
             # Dispatch to action handler
             handler = self._get_handler(step.action)
             calls = handler(step, session, ctx)
@@ -265,7 +274,7 @@ class PlaybookExecutor:
     ) -> int:
         """Screenshot, VLM find_element (bounding box), pick random point, click. 1 VLM call."""
         screen_x, screen_y = self._find_and_convert(step, session, ctx)
-        mouse.click(int(screen_x), int(screen_y))
+        mouse.click(int(screen_x), int(screen_y), fast=self._profile.mouse_fast)
         return 1
 
     def _handle_type_text(
@@ -294,7 +303,7 @@ class PlaybookExecutor:
             screen_x, screen_y = self._find_and_convert(step, session, ctx)
             inference_calls = 1
 
-            mouse.click(int(screen_x), int(screen_y))
+            mouse.click(int(screen_x), int(screen_y), fast=self._profile.mouse_fast)
             time.sleep(random.uniform(0.1, 0.3))
             keyboard.hotkey('command', 'a')
             time.sleep(random.uniform(0.05, 0.15))
@@ -305,7 +314,7 @@ class PlaybookExecutor:
         raw_value = ctx.resolve_template(step.value)
         value, trailing_keys = parse_value_and_keys(raw_value)
         if value:
-            keyboard.type_text(value, speed='medium', accuracy='high')
+            keyboard.type_text(value, speed=self._profile.type_speed, accuracy=self._profile.type_accuracy)
 
         # Press trailing keys (tab, enter)
         for key in trailing_keys:
@@ -338,7 +347,7 @@ class PlaybookExecutor:
             # Find and click the cancel/continue button
             screen_x, screen_y = self._find_and_convert(step, session, ctx)
             inference_calls += 1
-            mouse.click(int(screen_x), int(screen_y))
+            mouse.click(int(screen_x), int(screen_y), fast=self._profile.mouse_fast)
 
             # Wait for page transition
             lo, hi = step.wait_after_sec
