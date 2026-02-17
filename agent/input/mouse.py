@@ -122,30 +122,36 @@ def drag(
     end_x: int,
     end_y: int,
     button: str = 'left',
+    fast: bool = False,
 ) -> None:
     """
     Mouse-down at start, Bezier move to end, mouse-up.
     Used for selections, window resizing, sliders.
+
+    fast: minimal timing, no jitter (for session setup, not page interaction)
     """
-    move_to(start_x, start_y)
-    time.sleep(random.uniform(0.1, 0.2))
+    move_to(start_x, start_y, fast=fast)
+    time.sleep(0.02 if fast else random.uniform(0.1, 0.2))
 
     pyautogui.mouseDown(button=button, _pause=False)
-    time.sleep(random.uniform(0.05, 0.15))
+    time.sleep(0.02 if fast else random.uniform(0.05, 0.15))
 
     # Drag path
     distance = ((end_x - start_x) ** 2 + (end_y - start_y) ** 2) ** 0.5
     n_points = humanize.num_waypoints(distance)
-    # Drag is slower than free movement
     duration = humanize.movement_duration(distance) * 1.3
+    if fast:
+        duration *= 0.15
+        n_points = max(n_points // 3, 5)
 
     points = humanize.bezier_curve(
         (float(start_x), float(start_y)),
         (float(end_x), float(end_y)),
         num_points=n_points,
-        curvature=0.15,
+        curvature=0.15 if not fast else 0.02,
     )
-    points = humanize.apply_jitter(points, magnitude=0.8)
+    if not fast:
+        points = humanize.apply_jitter(points, magnitude=0.8)
     delays = humanize.velocity_profile(len(points), base_delay=duration / len(points))
 
     # Use Quartz kCGEventLeftMouseDragged so the window follows the cursor.
@@ -162,5 +168,5 @@ def drag(
         if i < len(delays):
             time.sleep(delays[i])
 
-    time.sleep(random.uniform(0.05, 0.15))
+    time.sleep(0.02 if fast else random.uniform(0.05, 0.15))
     pyautogui.mouseUp(button=button, _pause=False)

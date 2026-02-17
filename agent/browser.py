@@ -72,11 +72,11 @@ def create_session(width: int = 1280, height: int = 900) -> BrowserSession:
         },
     )
 
-    # Focus and resize to requested dimensions
+    # Focus and resize to requested dimensions (fast: no human-like timing)
     window.focus_window_by_pid(process.pid)
+    time.sleep(0.05)
+    window.resize_window_by_drag('Google Chrome', width, height, fast=True)
     time.sleep(0.2)
-    window.resize_window_by_drag('Google Chrome', width, height)
-    time.sleep(0.5)
 
     # Refresh bounds after resize
     get_session_window(session)
@@ -117,29 +117,31 @@ def _kill_pid(pid: int) -> None:
         pass
 
 
-def navigate(session: BrowserSession, url: str) -> None:
+def navigate(session: BrowserSession, url: str, fast: bool = False) -> None:
     """
     Navigate Chrome to a URL using keyboard shortcuts.
 
     Focuses the specific Chrome instance by PID, Cmd+L to address bar,
     Cmd+A to select all, types the URL, presses Enter, waits for initial load.
+
+    fast: minimal timing (for initial navigation before human behavior matters)
     """
     window.focus_window_by_pid(session.pid)
-    time.sleep(0.3)
+    time.sleep(0.05 if fast else 0.3)
 
     keyboard.hotkey('command', 'l')
-    time.sleep(0.2)
+    time.sleep(0.05 if fast else 0.2)
 
     keyboard.hotkey('command', 'a')
-    time.sleep(0.1)
+    time.sleep(0.03 if fast else 0.1)
 
-    keyboard.type_text(url, speed='fast', accuracy='high')
-    time.sleep(0.1)
+    keyboard.type_text(url, speed='instant' if fast else 'fast', accuracy='high')
+    time.sleep(0.03 if fast else 0.1)
 
     keyboard.press_key('enter')
 
     # Wait for page to start loading
-    time.sleep(2.5)
+    time.sleep(2.0 if fast else 2.5)
 
 
 def get_session_window(session: BrowserSession) -> dict:

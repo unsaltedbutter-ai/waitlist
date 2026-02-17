@@ -250,11 +250,11 @@ class PlaybookExecutor:
     def _handle_navigate(
         self, step: PlaybookStep, session: BrowserSession, ctx: JobContext,
     ) -> int:
-        """Navigate to URL. No VLM calls."""
+        """Navigate to URL. No VLM calls. Always fast (URL bar typing is invisible)."""
         url = ctx.resolve_template(step.url) if step.url else ''
         if not url:
             raise ValueError('Navigate step has no URL')
-        browser.navigate(session, url)
+        browser.navigate(session, url, fast=True)
         time.sleep(PAGE_LOAD_WAIT)
         # Refresh window bounds (pages can trigger resizes)
         browser.get_session_window(session)

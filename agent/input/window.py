@@ -124,11 +124,14 @@ def resize_window_by_drag(
     width: int,
     height: int,
     title_contains: str | None = None,
+    fast: bool = False,
 ) -> bool:
     """
     Resize a window by dragging its bottom-right corner.
     Human-like: Bezier drag, not programmatic snap.
     Returns True if the window was found and drag was attempted.
+
+    fast: minimal timing (for session setup, not page interaction)
     """
     bounds = get_window_bounds(app_name, title_contains)
     if bounds is None:
@@ -136,7 +139,7 @@ def resize_window_by_drag(
 
     # Focus the window first
     focus_window(app_name)
-    time.sleep(0.2)
+    time.sleep(0.05 if fast else 0.2)
 
     # Current bottom-right corner (in screen points)
     current_br_x = bounds['x'] + bounds['width']
@@ -151,7 +154,7 @@ def resize_window_by_drag(
     grab_x = current_br_x - 3
     grab_y = current_br_y - 3
 
-    mouse.drag(grab_x, grab_y, target_br_x, target_br_y)
+    mouse.drag(grab_x, grab_y, target_br_x, target_br_y, fast=fast)
     return True
 
 

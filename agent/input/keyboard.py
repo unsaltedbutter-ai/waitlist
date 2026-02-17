@@ -23,9 +23,16 @@ def type_text(
     """
     Type text with human-like timing.
 
-    speed: 'fast' (~60ms avg), 'medium' (~120ms avg), 'slow' (~200ms avg)
+    speed: 'instant' (no delay, for setup), 'fast' (~60ms avg),
+           'medium' (~120ms avg), 'slow' (~200ms avg)
     accuracy: 'high' (no typos), 'average' (~3% typo rate), 'low' (~8% typo rate)
     """
+    # Instant mode: fire keys as fast as possible, no humanization
+    if speed == 'instant':
+        for char in text:
+            _type_char(char)
+        return
+
     actions = humanize.typo_generator(text, accuracy=accuracy)
     prev_char = ''
 
