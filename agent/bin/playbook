@@ -144,12 +144,17 @@ class DwellDetector:
 # record command
 # ------------------------------------------------------------------
 
-def _execute_scroll(direction, amount):
-    """Actually scroll Chrome so the user can see the effect."""
-    from agent.input import scroll as scroll_mod
+def _focus_chrome():
+    """Bring Chrome to front. Called after terminal input so user can keep hovering."""
     from agent.input import window as win_mod
     win_mod.focus_window('Google Chrome')
-    time.sleep(0.2)
+    time.sleep(0.3)
+
+
+def _execute_scroll(direction, amount):
+    """Focus Chrome and scroll so the user can see the effect."""
+    from agent.input import scroll as scroll_mod
+    _focus_chrome()
     scroll_mod.scroll(direction, amount)
 
 
@@ -286,6 +291,7 @@ def cmd_record(args):
         if stashed_tl is not None:
             print(f'  (top-left stashed at ({int(stashed_tl[0])}, {int(stashed_tl[1])}))')
 
+        print('  tl | br | center | type | skip | done')
         cmd = input(': ').strip().lower()
 
         if cmd == 'done':
@@ -297,6 +303,7 @@ def cmd_record(args):
         if cmd == 'tl':
             stashed_tl = (img_x, img_y)
             print(f'  Stashed top-left ({int(img_x)}, {int(img_y)}). Hover over bottom-right now.')
+            _focus_chrome()
             return 'continue'
 
         if cmd == 'br':
@@ -309,6 +316,7 @@ def cmd_record(args):
             desc = _prompt_description()
             if not desc:
                 print('  -> Skipped (no description)')
+                _focus_chrome()
                 return 'continue'
             cp = input('  checkpoint? (y/n) [n]: ').strip().lower()
             cp_prompt = ''
@@ -320,6 +328,7 @@ def cmd_record(args):
             if value:
                 _add_type_step(value, sens)
             print()
+            _focus_chrome()
             return 'continue'
 
         if cmd == 'center':
@@ -329,6 +338,7 @@ def cmd_record(args):
             desc = _prompt_description()
             if not desc:
                 print('  -> Skipped (no description)')
+                _focus_chrome()
                 return 'continue'
             cp = input('  checkpoint? (y/n) [n]: ').strip().lower()
             cp_prompt = ''
@@ -340,6 +350,7 @@ def cmd_record(args):
             if value:
                 _add_type_step(value, sens)
             print()
+            _focus_chrome()
             return 'continue'
 
         if cmd == 'type':
@@ -349,6 +360,7 @@ def cmd_record(args):
             desc = _prompt_description()
             if not desc:
                 print('  -> Skipped (no description)')
+                _focus_chrome()
                 return 'continue'
             _add_click_step(region, desc)
             # Required type value
@@ -358,6 +370,7 @@ def cmd_record(args):
             else:
                 print('  (no value entered, click-only)')
             print()
+            _focus_chrome()
             return 'continue'
 
         print(f'  Unknown: "{cmd}". Use: tl, br, center, type, skip, done')
@@ -385,6 +398,7 @@ def cmd_record(args):
                 print(f'  -> Step {step_num}: navigate "{url}"')
                 step_num += 1
             print()
+            _focus_chrome()
             return 'continue'
 
         if cmd == 'scroll':
@@ -413,6 +427,7 @@ def cmd_record(args):
             print(f'  -> Step {step_num}: scroll {direction} {amount}')
             step_num += 1
             print()
+            _focus_chrome()
             return 'continue'
 
         if cmd == 'wait':
