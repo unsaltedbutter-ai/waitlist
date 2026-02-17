@@ -19,13 +19,44 @@ if ! xcode-select -p &>/dev/null; then
 fi
 echo "[ok] Xcode Command Line Tools installed"
 
-# 2. Check Python 3
-if ! command -v python3 &>/dev/null; then
-    echo "[error] python3 not found. Install it via Xcode CLT or Homebrew."
-    exit 1
+# 2. Ensure Python >= 3.11 (install via Homebrew if needed)
+MIN_MAJOR=3
+MIN_MINOR=11
+PYTHON_BIN=""
+
+# Check python3.13, python3.12, python3.11, then fall back to python3
+for candidate in python3.13 python3.12 python3.11 python3; do
+    if command -v "$candidate" &>/dev/null; then
+        ver=$("$candidate" -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')")
+        major="${ver%%.*}"
+        minor="${ver#*.}"
+        if [ "$major" -ge "$MIN_MAJOR" ] && [ "$minor" -ge "$MIN_MINOR" ]; then
+            PYTHON_BIN="$(command -v "$candidate")"
+            break
+        fi
+    fi
+done
+
+if [ -z "$PYTHON_BIN" ]; then
+    echo "Python >= ${MIN_MAJOR}.${MIN_MINOR} not found. Installing via Homebrew..."
+
+    if ! command -v brew &>/dev/null; then
+        echo "Homebrew not found. Installing Homebrew first..."
+        /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+        eval "$(/opt/homebrew/bin/brew shellenv)"
+    fi
+
+    brew install python@3.13
+    PYTHON_BIN="$(command -v python3.13)"
+
+    if [ -z "$PYTHON_BIN" ]; then
+        echo "[error] brew install succeeded but python3.13 not found on PATH."
+        echo "Try: eval \"\$(/opt/homebrew/bin/brew shellenv)\" and re-run."
+        exit 1
+    fi
 fi
-PYTHON_VERSION=$(python3 --version 2>&1)
-echo "[ok] $PYTHON_VERSION"
+
+echo "[ok] $("$PYTHON_BIN" --version) ($PYTHON_BIN)"
 
 # 3. Create venv (fresh each time)
 if [ -d "$VENV_DIR" ]; then
@@ -34,7 +65,7 @@ if [ -d "$VENV_DIR" ]; then
 fi
 
 echo "Creating venv at $VENV_DIR..."
-python3 -m venv "$VENV_DIR"
+"$PYTHON_BIN" -m venv "$VENV_DIR"
 echo "[ok] venv created"
 
 # 4. Install dependencies
