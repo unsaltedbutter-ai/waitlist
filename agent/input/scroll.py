@@ -32,7 +32,10 @@ def scroll(
         _mouse.move_to(x, y)
         time.sleep(random.uniform(0.1, 0.2))
 
-    scroll_value = 1 if direction == 'up' else -1
+    # Each "click" sends 5 scroll wheel units. macOS scroll units are tiny,
+    # so 1 unit is barely perceptible. 5 matches a real trackpad flick.
+    units_per_click = 5
+    scroll_value = units_per_click if direction == 'up' else -units_per_click
 
     for i in range(amount):
         pyautogui.scroll(scroll_value, _pause=False)
