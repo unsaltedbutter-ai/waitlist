@@ -55,7 +55,7 @@
         246,
         644,
         1538,
-        738
+        1538
       ]
     },
     {
@@ -77,7 +77,7 @@
         246,
         644,
         1538,
-        738
+        1538
       ]
     },
     {
@@ -153,7 +153,7 @@
         246,
         644,
         350,
-        738
+        1538
       ]
     },
     {
@@ -240,7 +240,7 @@
         146,
         244,
         450,
-        538
+        1538
       ]
     },
     {
@@ -263,20 +263,20 @@
       "checkpoint_prompt": "Is there a way to skip verifying email? is there a skip button?"
     },
     {
-      "action": "wait",
-      "wait_after_sec": [
-        5.0,
-        12.0
-      ]
-    },
-    {
       "action": "hover",
       "target_description": "do donuts",
       "ref_region": [
         146,
         244,
         450,
-        538
+        1538
+      ]
+    },
+    {
+      "action": "wait",
+      "wait_after_sec": [
+        2.0,
+        5.0
       ]
     },
     {
@@ -286,17 +286,17 @@
         146,
         244,
         1496,
-        1290
+        1538
       ]
     },
     {
       "action": "click",
-      "target_description": "click gift code",
+      "target_description": "click gift code as payment type",
       "ref_region": [
         936,
-        1422,
-        1440,
-        1464
+        1410,
+        1222,
+        1460
       ],
       "checkpoint": false,
       "checkpoint_prompt": "Where can I click to use a gift card?"
@@ -309,14 +309,26 @@
       ]
     },
     {
+      "action": "click",
+      "target_description": "click gift code text field",
+      "ref_region": [
+        930,
+        688,
+        1252,
+        726
+      ],
+      "checkpoint": false,
+      "checkpoint_prompt": "Where do I type in my gift code?"
+    },
+    {
       "action": "type_text",
       "value": "{gift}"
     },
     {
       "action": "wait",
       "wait_after_sec": [
-        1.0,
-        3.0
+        0.40,
+        2.0
       ]
     },    
     {
@@ -348,7 +360,7 @@
         146,
         244,
         1496,
-        1290
+        1538
       ]
     },
     {
@@ -358,7 +370,7 @@
         146,
         244,
         1496,
-        1290
+        1538
       ]
     },
     {
@@ -368,7 +380,7 @@
         146,
         244,
         1496,
-        1290
+        1538
       ]
     },
     {
@@ -378,7 +390,7 @@
         146,
         244,
         1496,
-        1290
+        1538
       ]
     },
     {
@@ -388,7 +400,7 @@
         146,
         244,
         1496,
-        1290
+        1538
       ]
     },
     {
@@ -398,7 +410,7 @@
         146,
         244,
         1496,
-        1290
+        1538
       ]
     },
     {
@@ -408,7 +420,7 @@
         146,
         244,
         1496,
-        1290
+        1538
       ]
     },
     {
@@ -418,7 +430,7 @@
         146,
         244,
         1496,
-        1290
+        1538
       ]
     },
     {
@@ -428,7 +440,7 @@
         146,
         244,
         1496,
-        1290
+        1538
       ]
     },
     {
@@ -438,7 +450,7 @@
         146,
         244,
         1496,
-        1290
+        1538
       ]
     },
 
@@ -446,10 +458,10 @@
       "action": "click",
       "target_description": "click redeem button",
       "ref_region": [
-        934,
-        1156,
-        1578,
-        1214
+        942,
+        1152,
+        1516,
+        1204
       ],
       "checkpoint": false,
       "checkpoint_prompt": "Where is the redeem button?"
