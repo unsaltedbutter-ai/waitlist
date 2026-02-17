@@ -7,7 +7,7 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from agent.config import PLAYBOOK_DIR, SENSITIVE_VARS
+from agent.config import KEY_VARS, PLAYBOOK_DIR, SENSITIVE_VARS
 
 
 # ---------------------------------------------------------------------------
@@ -39,6 +39,10 @@ class PlaybookStep:
     fallback: str = ''  # 'infer' = full VLM if step can't be resolved
     expected_title_contains: str = ''
 
+    # Reference region from recording (image-pixel coords): [x1, y1, x2, y2]
+    # Used by CoordinateInferenceClient for playback without VLM.
+    ref_region: tuple[int, int, int, int] | None = None
+
     @property
     def is_sensitive(self) -> bool:
         """True if explicitly sensitive or value contains a sensitive template var."""
@@ -52,6 +56,12 @@ class PlaybookStep:
         wait = d.get('wait_after_sec', [1.0, 2.0])
         if isinstance(wait, list):
             wait = tuple(wait)
+
+        ref = d.get('ref_region')
+        if isinstance(ref, list) and len(ref) == 4:
+            ref = tuple(ref)
+        else:
+            ref = None
 
         return PlaybookStep(
             step=d['step'],
@@ -68,6 +78,7 @@ class PlaybookStep:
             wait_after_sec=wait,
             fallback=d.get('fallback', ''),
             expected_title_contains=d.get('expected_title_contains', ''),
+            ref_region=ref,
         )
 
     def to_dict(self) -> dict:
@@ -97,6 +108,8 @@ class PlaybookStep:
             d['fallback'] = self.fallback
         if self.expected_title_contains:
             d['expected_title_contains'] = self.expected_title_contains
+        if self.ref_region is not None:
+            d['ref_region'] = list(self.ref_region)
         return d
 
 
@@ -114,11 +127,15 @@ class Playbook:
     notes: str
     last_validated: str | None
     steps: tuple[PlaybookStep, ...]
+    tier: str = ''  # e.g. 'ads', 'standard', 'premium'
 
     @staticmethod
-    def load(service: str, flow: str) -> Playbook:
-        """Load a playbook from agent/playbooks/<service>_<flow>.json."""
-        path = PLAYBOOK_DIR / f'{service}_{flow}.json'
+    def load(service: str, flow: str, tier: str = '') -> Playbook:
+        """Load a playbook from agent/playbooks/<service>_<flow>[_<tier>].json."""
+        filename = f'{service}_{flow}'
+        if tier:
+            filename += f'_{tier}'
+        path = PLAYBOOK_DIR / f'{filename}.json'
         if not path.exists():
             raise FileNotFoundError(f'Playbook not found: {path}')
         return Playbook.from_file(path)
@@ -135,6 +152,7 @@ class Playbook:
             notes=data.get('notes', ''),
             last_validated=data.get('last_validated'),
             steps=tuple(PlaybookStep.from_dict(s) for s in data['steps']),
+            tier=data.get('tier', ''),
         )
 
     @staticmethod
@@ -153,6 +171,7 @@ class Playbook:
                 results.append({
                     'service': data.get('service', stem),
                     'flow': data.get('flow', ''),
+                    'tier': data.get('tier', ''),
                     'version': data.get('version', 1),
                     'steps': len(data.get('steps', [])),
                     'last_validated': data.get('last_validated'),
@@ -164,7 +183,7 @@ class Playbook:
 
     def to_dict(self) -> dict:
         """Serialize to a JSON-compatible dict."""
-        return {
+        d = {
             'service': self.service,
             'flow': self.flow,
             'version': self.version,
@@ -172,16 +191,54 @@ class Playbook:
             'last_validated': self.last_validated,
             'steps': [s.to_dict() for s in self.steps],
         }
+        if self.tier:
+            d['tier'] = self.tier
+        return d
 
     def save(self, path: Path | None = None) -> Path:
         """Write the playbook to JSON. Defaults to canonical path."""
         if path is None:
-            path = PLAYBOOK_DIR / f'{self.service}_{self.flow}.json'
+            filename = f'{self.service}_{self.flow}'
+            if self.tier:
+                filename += f'_{self.tier}'
+            path = PLAYBOOK_DIR / f'{filename}.json'
         path.parent.mkdir(parents=True, exist_ok=True)
         with open(path, 'w') as f:
             json.dump(self.to_dict(), f, indent=2)
             f.write('\n')
         return path
+
+
+# ---------------------------------------------------------------------------
+# Template helpers
+# ---------------------------------------------------------------------------
+
+def parse_value_and_keys(raw: str) -> tuple[str, list[str]]:
+    """
+    Parse a recording value like '{email}{tab}' into the text value
+    and trailing key presses.
+
+    Returns (value, [key, ...]) where keys are pyautogui key names.
+    e.g. '{email}{tab}' -> ('{email}', ['tab'])
+         '{pass}{return}' -> ('{pass}', ['return'])
+         '{email}' -> ('{email}', [])
+    """
+    keys = []
+    value = raw
+    # Strip trailing key vars
+    while True:
+        stripped = False
+        for kv in KEY_VARS:
+            if value.endswith(kv):
+                key_name = kv.strip('{}')
+                if key_name == 'return':
+                    key_name = 'enter'  # pyautogui uses 'enter'
+                keys.insert(0, key_name)
+                value = value[:-len(kv)]
+                stripped = True
+        if not stripped:
+            break
+    return value, keys
 
 
 # ---------------------------------------------------------------------------
@@ -197,26 +254,15 @@ class JobContext:
     service: str
     flow: str
     credentials: dict[str, str] = field(default_factory=dict)
-    # credentials keys: email, password, card_number, card_expiry, card_cvv
-    gift_card_code: str = ''
-    billing_zip: str = ''
+    # credentials keys: email, pass, name, zip, birth, gender, cc, cvv, exp, gift
 
     def resolve_template(self, template: str) -> str:
-        """Replace {user_email}, {user_password}, etc. with actual values."""
+        """Replace {email}, {pass}, etc. with actual values from credentials."""
         if not template or '{' not in template:
             return template
-        replacements = {
-            '{user_email}': self.credentials.get('email', ''),
-            '{user_password}': self.credentials.get('password', ''),
-            '{card_number}': self.credentials.get('card_number', ''),
-            '{card_expiry}': self.credentials.get('card_expiry', ''),
-            '{card_cvv}': self.credentials.get('card_cvv', ''),
-            '{gift_card_code}': self.gift_card_code,
-            '{billing_zip}': self.billing_zip,
-        }
         result = template
-        for key, val in replacements.items():
-            result = result.replace(key, val)
+        for key, val in self.credentials.items():
+            result = result.replace('{' + key + '}', val)
         return result
 
     def destroy(self) -> None:
@@ -224,10 +270,6 @@ class JobContext:
         for key in list(self.credentials.keys()):
             self.credentials[key] = '\x00' * len(self.credentials[key])
         self.credentials.clear()
-        if self.gift_card_code:
-            self.gift_card_code = '\x00' * len(self.gift_card_code)
-        if self.billing_zip:
-            self.billing_zip = '\x00' * len(self.billing_zip)
 
 
 # ---------------------------------------------------------------------------

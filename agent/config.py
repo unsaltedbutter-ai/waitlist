@@ -24,11 +24,18 @@ PAGE_LOAD_WAIT = 2.5
 RECORD_DWELL_THRESHOLD_SEC = 3.0
 RECORD_DWELL_RADIUS_PX = 5
 
-# --- Sensitive template vars (never screenshot after typing these) ---
-SENSITIVE_VARS = frozenset({
-    '{user_password}',
-    '{card_number}',
-    '{card_expiry}',
-    '{card_cvv}',
-    '{gift_card_code}',
-})
+# --- Template variables ---
+# Normal (not sensitive)
+NORMAL_VARS = frozenset({'{email}', '{name}', '{zip}', '{birth}', '{gender}'})
+
+# Sensitive (never screenshot after typing these)
+SENSITIVE_VARS = frozenset({'{pass}', '{gift}', '{cc}', '{cvv}', '{exp}'})
+
+# All template vars
+ALL_VARS = NORMAL_VARS | SENSITIVE_VARS
+
+# Special key sequences (stripped from value, become press_key steps)
+KEY_VARS = frozenset({'{tab}', '{return}'})
+
+# Display hint for recording prompts
+VARS_HINT = '{email} {pass} {gift} {name} {zip} {birth} {gender} {cc} {cvv} {exp} {tab} {return}'

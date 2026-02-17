@@ -3,6 +3,11 @@
 Defines the contract between the agent (Mac Mini) and the inference server (Mac Studio).
 The Mac Studio's FastAPI server will implement /api/find_element, /api/checkpoint,
 and /api/infer_action endpoints.
+
+Three client implementations:
+  HttpInferenceClient    - real VLM on Mac Studio (production)
+  CoordinateInferenceClient - recorded ref_region from playbook (no VLM needed)
+  MockInferenceClient    - random center-ish coords (loop testing)
 """
 
 from __future__ import annotations
@@ -22,10 +27,23 @@ from agent.config import INFERENCE_TIMEOUT, INFERENCE_URL
 
 @dataclass(frozen=True)
 class FindElementResult:
-    """VLM response: where a UI element is in image-pixel coordinates."""
-    x: int
-    y: int
+    """Where a UI element is in image-pixel coordinates (bounding box)."""
+    x1: int
+    y1: int
+    x2: int
+    y2: int
     confidence: float  # 0.0 to 1.0
+
+    def random_point(self) -> tuple[int, int]:
+        """Pick a random point within the bounding box, weighted toward center."""
+        # Gaussian centered on midpoint, clipped to box
+        cx = (self.x1 + self.x2) / 2
+        cy = (self.y1 + self.y2) / 2
+        sx = (self.x2 - self.x1) / 4  # ~95% within box
+        sy = (self.y2 - self.y1) / 4
+        x = int(min(max(random.gauss(cx, sx), self.x1), self.x2))
+        y = int(min(max(random.gauss(cy, sy), self.y1), self.y2))
+        return x, y
 
 
 @dataclass(frozen=True)
@@ -60,8 +78,9 @@ class InferenceClient(ABC):
         screenshot_b64: str,
         description: str,
         context: str = '',
+        ref_region: tuple[int, int, int, int] | None = None,
     ) -> FindElementResult:
-        """Locate a UI element in the screenshot. Returns image-pixel coords."""
+        """Locate a UI element in the screenshot. Returns bounding box in image-pixel coords."""
 
     @abstractmethod
     def checkpoint(
@@ -97,6 +116,7 @@ class HttpInferenceClient(InferenceClient):
         screenshot_b64: str,
         description: str,
         context: str = '',
+        ref_region: tuple[int, int, int, int] | None = None,
     ) -> FindElementResult:
         resp = self._client.post(
             f'{self._base_url}/api/find_element',
@@ -109,8 +129,10 @@ class HttpInferenceClient(InferenceClient):
         resp.raise_for_status()
         data = resp.json()
         return FindElementResult(
-            x=data['x'],
-            y=data['y'],
+            x1=data['x1'],
+            y1=data['y1'],
+            x2=data['x2'],
+            y2=data['y2'],
             confidence=data.get('confidence', 0.0),
         )
 
@@ -164,6 +186,53 @@ class HttpInferenceClient(InferenceClient):
 
 
 # ---------------------------------------------------------------------------
+# Coordinate client (uses recorded ref_region, no VLM)
+# ---------------------------------------------------------------------------
+
+class CoordinateInferenceClient(InferenceClient):
+    """
+    Uses ref_region from the playbook step to return click targets.
+    No VLM needed. For testing playbooks against real Chrome on the Mac Mini
+    before the Mac Studio is online.
+
+    Checkpoints always pass (no visual verification without VLM).
+    """
+
+    def find_element(
+        self,
+        screenshot_b64: str,
+        description: str,
+        context: str = '',
+        ref_region: tuple[int, int, int, int] | None = None,
+    ) -> FindElementResult:
+        if ref_region is None:
+            raise ValueError(
+                f'CoordinateInferenceClient requires ref_region but step has none '
+                f'(description: "{description}")'
+            )
+        x1, y1, x2, y2 = ref_region
+        return FindElementResult(x1=x1, y1=y1, x2=x2, y2=y2, confidence=1.0)
+
+    def checkpoint(
+        self,
+        screenshot_b64: str,
+        prompt: str,
+        context: str = '',
+    ) -> CheckpointResult:
+        return CheckpointResult(
+            on_track=True, confidence=1.0,
+            reasoning='Coordinate mode: checkpoints skipped',
+        )
+
+    def infer_action(
+        self,
+        screenshot_b64: str,
+        context: str = '',
+    ) -> InferActionResult:
+        raise NotImplementedError('CoordinateInferenceClient does not support infer_action')
+
+
+# ---------------------------------------------------------------------------
 # Mock client (for testing without GPU)
 # ---------------------------------------------------------------------------
 
@@ -179,11 +248,16 @@ class MockInferenceClient(InferenceClient):
         screenshot_b64: str,
         description: str,
         context: str = '',
+        ref_region: tuple[int, int, int, int] | None = None,
     ) -> FindElementResult:
-        # Return center-ish with jitter
-        x = self._w // 2 + random.randint(-200, 200)
-        y = self._h // 2 + random.randint(-150, 150)
-        return FindElementResult(x=x, y=y, confidence=0.85)
+        # Return center-ish box with jitter
+        cx = self._w // 2 + random.randint(-200, 200)
+        cy = self._h // 2 + random.randint(-150, 150)
+        hw, hh = random.randint(30, 80), random.randint(15, 30)
+        return FindElementResult(
+            x1=cx - hw, y1=cy - hh, x2=cx + hw, y2=cy + hh,
+            confidence=0.85,
+        )
 
     def checkpoint(
         self,

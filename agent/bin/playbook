@@ -2,15 +2,16 @@
 """Playbook CLI: record, test, and list playbook files.
 
 Commands:
-    record  --service <s> --flow <f>   Walk through a flow, record steps by dwell-detection
-    test    --service <s> --flow <f>   Interactive dry-run of an existing playbook
-    list                               Table of all playbooks with metadata
+    record  --service <s> --flow <f> [--tier <t>]   Record steps by dwell-detection
+    test    --service <s> --flow <f> [--tier <t>]   Interactive dry-run
+    list                                             Table of all playbooks
 """
 
 import argparse
 import json
 import math
 import os
+import select
 import subprocess
 import sys
 import threading
@@ -74,8 +75,16 @@ def _play_sound():
         pass
 
 
+def _playbook_filename(service, flow, tier):
+    """Build the playbook filename stem."""
+    name = f'{service}_{flow}'
+    if tier:
+        name += f'_{tier}'
+    return name
+
+
 # ------------------------------------------------------------------
-# record command
+# Dwell detector
 # ------------------------------------------------------------------
 
 class DwellDetector:
@@ -120,130 +129,45 @@ class DwellDetector:
 
             dist = math.hypot(mx - anchor_x, my - anchor_y)
             if dist > self.radius:
-                # Mouse moved, reset anchor
                 anchor_x, anchor_y = mx, my
                 anchor_time = time.monotonic()
                 fired = False
             elif not fired and (time.monotonic() - anchor_time) >= self.threshold:
-                # Dwell detected
                 with self._lock:
                     self._dwell_position = (mx, my)
                 fired = True
 
-            time.sleep(0.1)  # 10Hz
+            time.sleep(0.1)
 
 
-def _prompt_step_details(action: str, step_num: int) -> dict | None:
-    """Interactive prompts for step metadata based on action type."""
-    step = {'step': step_num, 'action': action}
+# ------------------------------------------------------------------
+# record command
+# ------------------------------------------------------------------
 
-    if action == 'click':
-        desc = input('  target_description: ').strip()
-        if not desc:
-            return None
-        step['target_description'] = desc
-        cp = input('  checkpoint? (y/n) [n]: ').strip().lower()
-        if cp == 'y':
-            step['checkpoint'] = True
-            step['checkpoint_prompt'] = input('  checkpoint_prompt: ').strip()
-        wait = input('  wait_after_sec [1,3]: ').strip()
-        if wait:
-            parts = [float(x.strip()) for x in wait.split(',')]
-            step['wait_after_sec'] = parts[:2] if len(parts) >= 2 else [parts[0], parts[0] + 1]
-        else:
-            step['wait_after_sec'] = [1, 3]
-
-    elif action == 'type_text':
-        desc = input('  target_description: ').strip()
-        if not desc:
-            return None
-        step['target_description'] = desc
-        step['value'] = input('  value (e.g. {user_email}): ').strip()
-        sens = input('  sensitive? (y/n) [n]: ').strip().lower()
-        if sens == 'y':
-            step['sensitive'] = True
-        step['wait_after_sec'] = [0.5, 1.5]
-
-    elif action == 'navigate':
-        url = input('  url: ').strip()
-        if not url:
-            return None
-        step['url'] = url
-        step['wait_after_sec'] = [2, 5]
-
-    elif action == 'scroll':
-        direction = input('  direction (up/down) [down]: ').strip() or 'down'
-        amount = input('  amount [3]: ').strip() or '3'
-        step['target_description'] = f'{direction} {amount}'
-        step['wait_after_sec'] = [0.5, 1.5]
-
-    elif action == 'checkpoint':
-        step['action'] = 'click'  # checkpoints attach to an action
-        step['checkpoint'] = True
-        step['checkpoint_prompt'] = input('  checkpoint_prompt: ').strip()
-        step['target_description'] = input('  target_description (what to click after): ').strip()
-        step['wait_after_sec'] = [1, 3]
-
-    elif action == 'select_plan':
-        desc = input('  target_description (plan name): ').strip()
-        if not desc:
-            return None
-        step['target_description'] = desc
-        step['checkpoint'] = True
-        step['checkpoint_prompt'] = input('  checkpoint_prompt: ').strip()
-        step['wait_after_sec'] = [2, 4]
-
-    elif action == 'select_payment_method':
-        desc = input('  target_description (payment option): ').strip()
-        if not desc:
-            return None
-        step['target_description'] = desc
-        step['wait_after_sec'] = [1, 3]
-
-    elif action == 'handle_retention':
-        desc = input('  target_description: ').strip()
-        if not desc:
-            return None
-        step['target_description'] = desc
-        step['checkpoint'] = True
-        step['checkpoint_prompt'] = input('  checkpoint_prompt: ').strip()
-        step['may_repeat'] = True
-        max_r = input('  max_repeats [5]: ').strip() or '5'
-        step['max_repeats'] = int(max_r)
-        step['wait_after_sec'] = [2, 4]
-
-    elif action == 'verify_success':
-        step['checkpoint'] = True
-        step['checkpoint_prompt'] = input('  checkpoint_prompt: ').strip()
-        step['target_description'] = input('  target_description: ').strip()
-        step['wait_after_sec'] = [2, 4]
-
-    elif action == 'wait':
-        lo = input('  wait_sec_low [2]: ').strip() or '2'
-        hi = input('  wait_sec_high [4]: ').strip() or '4'
-        step['wait_after_sec'] = [float(lo), float(hi)]
-
-    elif action == 'press_key':
-        key = input('  key (e.g. enter, tab, escape): ').strip()
-        if not key:
-            return None
-        step['value'] = key
-        step['wait_after_sec'] = [0.5, 1.5]
-
-    else:
-        print(f'  Unknown action: {action}')
-        return None
-
-    return step
+def _execute_scroll(direction, amount):
+    """Actually scroll Chrome so the user can see the effect."""
+    from agent.input import scroll as scroll_mod
+    from agent.input import window as win_mod
+    win_mod.focus_window('Google Chrome')
+    time.sleep(0.2)
+    scroll_mod.scroll(direction, amount)
 
 
 def cmd_record(args):
     from agent import browser, screenshot as ss
-    from agent.config import PLAYBOOK_DIR, PLAYBOOK_REF_DIR, RECORD_DWELL_RADIUS_PX, RECORD_DWELL_THRESHOLD_SEC
-    from agent.input import coords, window
+    from agent.config import (
+        PLAYBOOK_DIR,
+        PLAYBOOK_REF_DIR,
+        RECORD_DWELL_RADIUS_PX,
+        RECORD_DWELL_THRESHOLD_SEC,
+        VARS_HINT,
+    )
+    from agent.input import coords
 
     service = args.service
     flow = args.flow
+    tier = args.tier or ''
+    pb_name = _playbook_filename(service, flow, tier)
 
     # Attach to existing Chrome session or open a new one
     session = _load_chrome_session()
@@ -255,12 +179,11 @@ def cmd_record(args):
         own_session = True
         print(f'Chrome launched (PID {session.pid})')
     else:
-        # Refresh bounds
         browser.get_session_window(session)
         print(f'Attached to Chrome (PID {session.pid})')
 
     # Ref screenshot dir
-    ref_dir = PLAYBOOK_REF_DIR / f'{service}_{flow}'
+    ref_dir = PLAYBOOK_REF_DIR / pb_name
     ref_dir.mkdir(parents=True, exist_ok=True)
 
     # Start dwell detector
@@ -272,81 +195,279 @@ def cmd_record(args):
 
     steps = []
     step_num = 1
+    stashed_tl: tuple[int, int] | None = None  # top-left corner waiting for bottom-right
 
     print()
-    print(f'Recording: {service} {flow}')
+    print(f'Recording: {pb_name}')
     print('Hover over elements for 3+ seconds to mark them.')
-    print('Type "manual" at the prompt for steps without dwell (navigate, scroll, wait).')
-    print('Type "done" to finish recording.')
+    print('Type "manual" for steps without dwell (navigate, scroll, wait).')
+    print('Type "done" to finish.')
     print()
+
+    def _make_region_from_center(img_x, img_y):
+        """10x10 px region centered on dwell point."""
+        return [int(img_x) - 5, int(img_y) - 5, int(img_x) + 5, int(img_y) + 5]
+
+    def _make_region_from_corners(tl_img, br_img):
+        """Region from top-left and bottom-right image coords."""
+        return [int(tl_img[0]), int(tl_img[1]), int(br_img[0]), int(br_img[1])]
+
+    def _save_ref_screenshot(step_n):
+        ref_path = ref_dir / f'step_{step_n:02d}.png'
+        ss.capture_window(session.window_id, str(ref_path))
+        return ref_path
+
+    def _prompt_type_value():
+        """Prompt for a value to type, show variable hints. Empty = no typing."""
+        print(f'  type? ({VARS_HINT})')
+        raw = input('  > ').strip()
+        if not raw:
+            return None, False
+        sens = input('  sensitive? (y/n) [n]: ').strip().lower() == 'y'
+        return raw, sens
+
+    def _prompt_description():
+        return input('  desc> ').strip()
+
+    def _add_click_step(region, desc, checkpoint=False, cp_prompt=''):
+        nonlocal step_num
+        step = {
+            'step': step_num,
+            'action': 'click',
+            'target_description': desc,
+            'ref_region': region,
+            'wait_after_sec': [1, 3],
+        }
+        if checkpoint:
+            step['checkpoint'] = True
+            step['checkpoint_prompt'] = cp_prompt
+        steps.append(step)
+        print(f'  -> Step {step_num}: click "{desc}" region={region}')
+        step_num += 1
+
+    def _add_type_step(value, sensitive):
+        nonlocal step_num
+        # Strip trailing {tab}/{return} for the type_text step
+        from agent.playbook import parse_value_and_keys
+        clean_value, trailing_keys = parse_value_and_keys(value)
+
+        if clean_value:
+            step = {
+                'step': step_num,
+                'action': 'type_text',
+                'value': clean_value,
+                'wait_after_sec': [0.5, 1.5],
+            }
+            if sensitive:
+                step['sensitive'] = True
+            steps.append(step)
+            print(f'  -> Step {step_num}: type_text "{clean_value}"{"  [SENSITIVE]" if sensitive else ""}')
+            step_num += 1
+
+        for key in trailing_keys:
+            step = {
+                'step': step_num,
+                'action': 'press_key',
+                'value': key,
+                'wait_after_sec': [0.3, 0.8],
+            }
+            steps.append(step)
+            print(f'  -> Step {step_num}: press_key "{key}"')
+            step_num += 1
+
+    def _handle_dwell(screen_x, screen_y):
+        nonlocal stashed_tl
+
+        browser.get_session_window(session)
+        img_x, img_y = coords.screen_to_image(screen_x, screen_y, session.bounds)
+
+        print(f'[ding] Dwell at ({int(img_x)}, {int(img_y)}) window-relative')
+
+        if stashed_tl is not None:
+            print(f'  (top-left stashed at ({int(stashed_tl[0])}, {int(stashed_tl[1])}))')
+
+        cmd = input(': ').strip().lower()
+
+        if cmd == 'done':
+            return 'done'
+
+        if cmd == 'skip':
+            return 'continue'
+
+        if cmd == 'tl':
+            stashed_tl = (img_x, img_y)
+            print(f'  Stashed top-left ({int(img_x)}, {int(img_y)}). Hover over bottom-right now.')
+            return 'continue'
+
+        if cmd == 'br':
+            if stashed_tl is None:
+                print('  No top-left stashed. Use "tl" first.')
+                return 'continue'
+            region = _make_region_from_corners(stashed_tl, (img_x, img_y))
+            stashed_tl = None
+            _save_ref_screenshot(step_num)
+            desc = _prompt_description()
+            if not desc:
+                print('  -> Skipped (no description)')
+                return 'continue'
+            cp = input('  checkpoint? (y/n) [n]: ').strip().lower()
+            cp_prompt = ''
+            if cp == 'y':
+                cp_prompt = input('  checkpoint_prompt: ').strip()
+            _add_click_step(region, desc, checkpoint=(cp == 'y'), cp_prompt=cp_prompt)
+            # Optional follow-up type
+            value, sens = _prompt_type_value()
+            if value:
+                _add_type_step(value, sens)
+            print()
+            return 'continue'
+
+        if cmd == 'center':
+            region = _make_region_from_center(img_x, img_y)
+            stashed_tl = None
+            _save_ref_screenshot(step_num)
+            desc = _prompt_description()
+            if not desc:
+                print('  -> Skipped (no description)')
+                return 'continue'
+            cp = input('  checkpoint? (y/n) [n]: ').strip().lower()
+            cp_prompt = ''
+            if cp == 'y':
+                cp_prompt = input('  checkpoint_prompt: ').strip()
+            _add_click_step(region, desc, checkpoint=(cp == 'y'), cp_prompt=cp_prompt)
+            # Optional follow-up type
+            value, sens = _prompt_type_value()
+            if value:
+                _add_type_step(value, sens)
+            print()
+            return 'continue'
+
+        if cmd == 'type':
+            region = _make_region_from_center(img_x, img_y)
+            stashed_tl = None
+            _save_ref_screenshot(step_num)
+            desc = _prompt_description()
+            if not desc:
+                print('  -> Skipped (no description)')
+                return 'continue'
+            _add_click_step(region, desc)
+            # Required type value
+            value, sens = _prompt_type_value()
+            if value:
+                _add_type_step(value, sens)
+            else:
+                print('  (no value entered, click-only)')
+            print()
+            return 'continue'
+
+        print(f'  Unknown: "{cmd}". Use: tl, br, center, type, skip, done')
+        return 'continue'
+
+    def _handle_manual():
+        nonlocal step_num
+
+        print()
+        cmd = input('manual> (navigate / scroll / wait / press_key / done): ').strip().lower()
+
+        if cmd == 'done':
+            return 'done'
+
+        if cmd == 'navigate':
+            url = input('  url: ').strip()
+            if url:
+                step = {
+                    'step': step_num,
+                    'action': 'navigate',
+                    'url': url,
+                    'wait_after_sec': [2, 5],
+                }
+                steps.append(step)
+                print(f'  -> Step {step_num}: navigate "{url}"')
+                step_num += 1
+            print()
+            return 'continue'
+
+        if cmd == 'scroll':
+            direction = input('  direction (up/down) [down]: ').strip().lower() or 'down'
+            amount_str = input('  amount [3]: ').strip() or '3'
+            amount = int(amount_str)
+            # Execute the scroll so user can see the result
+            print(f'  Scrolling {direction} {amount}...')
+            _execute_scroll(direction, amount)
+            ok = input('  Good? (y/n/redo) [y]: ').strip().lower()
+            while ok == 'redo' or ok == 'n':
+                if ok == 'n':
+                    amount_str = input('  new amount: ').strip()
+                    amount = int(amount_str)
+                print(f'  Scrolling {direction} {amount}...')
+                _execute_scroll(direction, amount)
+                ok = input('  Good? (y/n/redo) [y]: ').strip().lower()
+            _save_ref_screenshot(step_num)
+            step = {
+                'step': step_num,
+                'action': 'scroll',
+                'target_description': f'{direction} {amount}',
+                'wait_after_sec': [0.5, 1.5],
+            }
+            steps.append(step)
+            print(f'  -> Step {step_num}: scroll {direction} {amount}')
+            step_num += 1
+            print()
+            return 'continue'
+
+        if cmd == 'wait':
+            lo = input('  wait_sec_low [2]: ').strip() or '2'
+            hi = input('  wait_sec_high [4]: ').strip() or '4'
+            step = {
+                'step': step_num,
+                'action': 'wait',
+                'wait_after_sec': [float(lo), float(hi)],
+            }
+            steps.append(step)
+            print(f'  -> Step {step_num}: wait [{lo}, {hi}]')
+            step_num += 1
+            print()
+            return 'continue'
+
+        if cmd == 'press_key':
+            key = input('  key (enter, tab, escape, ...): ').strip()
+            if key:
+                step = {
+                    'step': step_num,
+                    'action': 'press_key',
+                    'value': key,
+                    'wait_after_sec': [0.3, 0.8],
+                }
+                steps.append(step)
+                print(f'  -> Step {step_num}: press_key "{key}"')
+                step_num += 1
+            print()
+            return 'continue'
+
+        print(f'  Unknown: "{cmd}"')
+        print()
+        return 'continue'
 
     try:
         while True:
-            # Check for dwell
             dwell = detector.pop_dwell()
 
             if dwell is not None:
-                screen_x, screen_y = dwell
                 _play_sound()
-
-                # Get window-relative coords
-                browser.get_session_window(session)
-                img_x, img_y = coords.screen_to_image(screen_x, screen_y, session.bounds)
-
-                # Save reference screenshot
-                ref_path = ref_dir / f'step_{step_num:02d}.png'
-                ss.capture_window(session.window_id, str(ref_path))
-
-                print(f'[ding] Dwell at ({int(img_x)}, {int(img_y)}) window-relative')
-                print(f'Screenshot: {ref_path}')
-                print()
-
-                action = input(
-                    'Action? (click / type_text / select_plan / select_payment_method / '
-                    'handle_retention / verify_success / checkpoint / skip / done): '
-                ).strip().lower()
-
-                if action == 'done':
+                result = _handle_dwell(dwell[0], dwell[1])
+                if result == 'done':
                     break
-                if action == 'skip':
-                    continue
-
-                step_data = _prompt_step_details(action, step_num)
-                if step_data is not None:
-                    steps.append(step_data)
-                    print(f'  -> Step {step_num} recorded ({action})')
-                    step_num += 1
-                else:
-                    print('  -> Skipped (incomplete input)')
-                print()
 
             else:
-                # No dwell, check for manual input (non-blocking via timeout)
-                # We poll: check stdin if there's a manual command
-                import select
                 readable, _, _ = select.select([sys.stdin], [], [], 0.2)
                 if readable:
                     line = sys.stdin.readline().strip().lower()
                     if line == 'done':
                         break
                     if line == 'manual':
-                        print()
-                        action = input(
-                            'Manual action? (navigate / scroll / wait / press_key / done): '
-                        ).strip().lower()
-                        if action == 'done':
+                        result = _handle_manual()
+                        if result == 'done':
                             break
-                        step_data = _prompt_step_details(action, step_num)
-                        if step_data is not None:
-                            # Save reference screenshot for manual steps too
-                            ref_path = ref_dir / f'step_{step_num:02d}.png'
-                            ss.capture_window(session.window_id, str(ref_path))
-                            steps.append(step_data)
-                            print(f'  -> Step {step_num} recorded ({action})')
-                            step_num += 1
-                        else:
-                            print('  -> Skipped (incomplete input)')
-                        print()
 
     finally:
         detector.stop()
@@ -355,21 +476,24 @@ def cmd_record(args):
         print('No steps recorded.')
         return
 
-    # Build playbook JSON
+    # Build and write playbook JSON
     playbook_data = {
         'service': service,
         'flow': flow,
         'version': 1,
-        'last_validated': None,
         'notes': f'Recorded with playbook record on {time.strftime("%Y-%m-%d")}',
+        'last_validated': None,
         'steps': steps,
     }
+    if tier:
+        playbook_data['tier'] = tier
 
-    out_path = PLAYBOOK_DIR / f'{service}_{flow}.json'
+    out_path = PLAYBOOK_DIR / f'{pb_name}.json'
     with open(out_path, 'w') as f:
         json.dump(playbook_data, f, indent=2)
         f.write('\n')
 
+    print()
     print(f'Playbook written: {out_path}')
     print(f'Reference screenshots: {ref_dir}/')
     print(f'{len(steps)} steps recorded.')
@@ -382,20 +506,31 @@ def cmd_record(args):
 def cmd_test(args):
     from agent.config import INFERENCE_URL
     from agent.executor import PlaybookExecutor
-    from agent.inference import HttpInferenceClient, MockInferenceClient
+    from agent.inference import (
+        CoordinateInferenceClient,
+        HttpInferenceClient,
+        MockInferenceClient,
+    )
     from agent.playbook import JobContext, Playbook
 
     service = args.service
     flow = args.flow
+    tier = args.tier or ''
 
-    playbook = Playbook.load(service, flow)
-    print(f'Loaded: {service}_{flow} v{playbook.version} ({len(playbook.steps)} steps)')
+    playbook = Playbook.load(service, flow, tier)
+    pb_name = _playbook_filename(service, flow, tier)
+    print(f'Loaded: {pb_name} v{playbook.version} ({len(playbook.steps)} steps)')
     print(f'Notes: {playbook.notes}')
     print()
 
-    # Use real inference if STUDIO_URL is set and reachable, otherwise mock
-    use_mock = args.mock
-    if not use_mock:
+    # Select inference client
+    if args.coords:
+        print('Using CoordinateInferenceClient (recorded ref_region)')
+        inference = CoordinateInferenceClient()
+    elif args.mock:
+        print('Using MockInferenceClient')
+        inference = MockInferenceClient()
+    else:
         studio_url = os.getenv('STUDIO_URL', INFERENCE_URL)
         try:
             import httpx
@@ -404,11 +539,7 @@ def cmd_test(args):
             inference = HttpInferenceClient(base_url=studio_url)
         except Exception:
             print(f'Inference server not reachable ({studio_url}), using mock.')
-            use_mock = True
-
-    if use_mock:
-        print('Using MockInferenceClient')
-        inference = MockInferenceClient()
+            inference = MockInferenceClient()
 
     # Dummy job context for testing
     ctx = JobContext(
@@ -418,24 +549,29 @@ def cmd_test(args):
         flow=flow,
         credentials={
             'email': 'test@example.com',
-            'password': 'testpass123',
-            'card_number': '4111111111111111',
-            'card_expiry': '12/28',
-            'card_cvv': '123',
+            'pass': 'testpass123',
+            'name': 'Test User',
+            'zip': '10001',
+            'birth': '01/01/1990',
+            'gender': 'other',
+            'cc': '4111111111111111',
+            'cvv': '123',
+            'exp': '12/28',
+            'gift': 'TEST-GIFT-CODE',
         },
-        gift_card_code='TEST-GIFT-CODE',
-        billing_zip='10001',
     )
 
     # Interactive step callback
     def step_callback(step, session):
-        print(f'Step {step.step}/{len(playbook.steps)}: {step.action} "{step.target_description}"')
+        print(f'Step {step.step}/{len(playbook.steps)}: {step.action} "{step.target_description or step.value}"')
         if step.checkpoint and step.checkpoint_prompt:
-            print(f'  [checkpoint] Will verify: "{step.checkpoint_prompt}"')
+            print(f'  [checkpoint] "{step.checkpoint_prompt}"')
         if step.is_sensitive:
-            print(f'  [sensitive] Value will not be logged')
+            print(f'  [sensitive]')
+        if step.ref_region:
+            print(f'  [ref_region] {list(step.ref_region)}')
 
-        choice = input('Press Enter to execute, "s" to skip, "q" to quit: ').strip().lower()
+        choice = input('Enter=execute, s=skip, q=quit: ').strip().lower()
         if choice == 'q':
             raise KeyboardInterrupt('User quit')
         return choice != 's'
@@ -449,7 +585,7 @@ def cmd_test(args):
     try:
         result = executor.run(playbook, ctx)
     except KeyboardInterrupt:
-        print('\nTest run aborted by user.')
+        print('\nTest run aborted.')
         return
 
     print()
@@ -462,7 +598,7 @@ def cmd_test(args):
     # Update last_validated on success
     if result.success:
         from agent.config import PLAYBOOK_DIR
-        pb_path = PLAYBOOK_DIR / f'{service}_{flow}.json'
+        pb_path = PLAYBOOK_DIR / f'{pb_name}.json'
         with open(pb_path) as f:
             data = json.load(f)
         data['last_validated'] = time.strftime('%Y-%m-%dT%H:%M:%S')
@@ -484,15 +620,14 @@ def cmd_list(args):
         print('No playbooks found.')
         return
 
-    # Table header
-    print(f'{"Service":<15} {"Flow":<10} {"Ver":>4} {"Steps":>6} {"Last Validated":<20}')
-    print('-' * 60)
+    print(f'{"Service":<15} {"Flow":<10} {"Tier":<10} {"Ver":>4} {"Steps":>6} {"Last Validated":<20}')
+    print('-' * 70)
 
     for pb in playbooks:
         validated = pb['last_validated'] or 'never'
         print(
-            f'{pb["service"]:<15} {pb["flow"]:<10} {pb["version"]:>4} '
-            f'{pb["steps"]:>6} {validated:<20}'
+            f'{pb["service"]:<15} {pb["flow"]:<10} {pb.get("tier", ""):<10} '
+            f'{pb["version"]:>4} {pb["steps"]:>6} {validated:<20}'
         )
 
 
@@ -507,11 +642,14 @@ def main():
     p_record = sub.add_parser('record', help='Record a new playbook by walking through a flow')
     p_record.add_argument('--service', required=True, help='Service name (e.g. netflix)')
     p_record.add_argument('--flow', required=True, help='Flow type (signup or cancel)')
+    p_record.add_argument('--tier', default='', help='Plan tier (e.g. ads, standard, premium)')
 
     p_test = sub.add_parser('test', help='Interactive dry-run of a playbook')
     p_test.add_argument('--service', required=True, help='Service name')
     p_test.add_argument('--flow', required=True, help='Flow type')
-    p_test.add_argument('--mock', action='store_true', help='Force mock inference (skip server check)')
+    p_test.add_argument('--tier', default='', help='Plan tier')
+    p_test.add_argument('--mock', action='store_true', help='Force mock inference')
+    p_test.add_argument('--coords', action='store_true', help='Use recorded ref_region coordinates')
 
     sub.add_parser('list', help='List all playbooks')
 

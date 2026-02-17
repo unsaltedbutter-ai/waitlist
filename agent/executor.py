@@ -29,6 +29,7 @@ from agent.playbook import (
     Playbook,
     PlaybookStep,
     StepResult,
+    parse_value_and_keys,
 )
 
 log = logging.getLogger(__name__)
@@ -43,7 +44,7 @@ class PlaybookExecutor:
         step_callback: Callable[[PlaybookStep, BrowserSession], bool] | None = None,
     ):
         """
-        inference: VLM client (HttpInferenceClient or MockInferenceClient)
+        inference: VLM client (Http, Coordinate, or Mock)
         step_callback: called before each step with (step, session).
                        Return True to proceed, False to skip.
                        Used by the 'playbook test' CLI for interactive dry runs.
@@ -231,7 +232,7 @@ class PlaybookExecutor:
     def _handle_click(
         self, step: PlaybookStep, session: BrowserSession, ctx: JobContext,
     ) -> int:
-        """Screenshot, VLM find_element, convert coords, click. 1 VLM call."""
+        """Screenshot, VLM find_element (bounding box), pick random point, click. 1 VLM call."""
         screen_x, screen_y = self._find_and_convert(step, session, ctx)
         mouse.click(int(screen_x), int(screen_y))
         return 1
@@ -244,10 +245,11 @@ class PlaybookExecutor:
 
         Sensitive field invariant:
         1. Screenshot with empty field (safe for VLM)
-        2. VLM returns coordinates
-        3. Click field, clear it (Cmd+A, backspace)
+        2. VLM returns bounding box
+        3. Click random point in box, clear field (Cmd+A, backspace)
         4. Type the value
-        5. NO screenshot after typing sensitive data
+        5. Press trailing keys ({tab}, {return}) if any
+        6. NO screenshot after typing sensitive data
         """
         # Step 1-2: find the field BEFORE typing (field is still empty/safe)
         screen_x, screen_y = self._find_and_convert(step, session, ctx)
@@ -260,9 +262,16 @@ class PlaybookExecutor:
         keyboard.press_key('backspace')
         time.sleep(random.uniform(0.05, 0.15))
 
-        # Step 4: type the resolved value
-        value = ctx.resolve_template(step.value)
-        keyboard.type_text(value, speed='medium', accuracy='high')
+        # Step 4: resolve and type the value (strip trailing key sequences)
+        raw_value = ctx.resolve_template(step.value)
+        value, trailing_keys = parse_value_and_keys(raw_value)
+        if value:
+            keyboard.type_text(value, speed='medium', accuracy='high')
+
+        # Step 5: press trailing keys (tab, enter)
+        for key in trailing_keys:
+            time.sleep(random.uniform(0.1, 0.3))
+            keyboard.press_key(key)
 
         return 1
 
@@ -355,22 +364,33 @@ class PlaybookExecutor:
     def _find_and_convert(
         self, step: PlaybookStep, session: BrowserSession, ctx: JobContext,
     ) -> tuple[float, float]:
-        """Screenshot, ask VLM to find element, convert image coords to screen coords."""
+        """
+        Screenshot, ask inference to find element (bounding box),
+        pick random point within box, convert to screen coords.
+        """
         shot_b64 = screenshot.capture_to_base64(session.window_id)
 
         context = f'Service: {ctx.service}, Flow: {ctx.flow}, Step {step.step}: {step.action}'
-        result = self._inference.find_element(shot_b64, step.target_description, context)
+        result = self._inference.find_element(
+            shot_b64, step.target_description, context,
+            ref_region=step.ref_region,
+        )
         self._total_inference_calls += 1
 
+        # Pick random point within bounding box
+        img_x, img_y = result.random_point()
+
         log.debug(
-            'find_element: "%s" at (%d, %d) confidence=%.2f',
-            step.target_description, result.x, result.y, result.confidence,
+            'find_element: "%s" box=(%d,%d,%d,%d) click=(%d,%d) confidence=%.2f',
+            step.target_description,
+            result.x1, result.y1, result.x2, result.y2,
+            img_x, img_y, result.confidence,
         )
 
         # Convert image-pixel coords to screen points
         browser.get_session_window(session)
         screen_x, screen_y = coords.image_to_screen(
-            result.x, result.y, session.bounds,
+            img_x, img_y, session.bounds,
         )
         return screen_x, screen_y
 
