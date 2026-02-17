@@ -646,6 +646,8 @@ def cmd_test(args):
         choice = input('Enter=execute, s=skip, q=quit: ').strip().lower()
         if choice == 'q':
             raise KeyboardInterrupt('User quit')
+        if choice != 's':
+            _focus_chrome(session.pid)
         return choice != 's'
 
     executor = PlaybookExecutor(inference, step_callback=step_callback)
