@@ -35,8 +35,7 @@ def _save_session(session):
 
 
 def _load_session():
-    """Restore a BrowserSession from disk, re-attaching to the process."""
-    import subprocess
+    """Restore a BrowserSession from disk."""
     from agent.browser import BrowserSession
 
     if not os.path.exists(SESSION_FILE):
@@ -56,16 +55,9 @@ def _load_session():
         os.unlink(SESSION_FILE)
         sys.exit(1)
 
-    # Reconstruct a Popen-like object that can send signals
-    # We can't recover the original Popen, but we can wrap the PID
-    process = subprocess.Popen.__new__(subprocess.Popen)
-    process.pid = pid
-    process._child_created = True
-    process.returncode = None
-
     return BrowserSession(
         pid=pid,
-        process=process,
+        process=None,
         profile_dir=data['profile_dir'],
         window_id=data.get('window_id', 0),
         bounds=data.get('bounds', {}),

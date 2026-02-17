@@ -8,6 +8,7 @@ no automation flags.
 
 from __future__ import annotations
 
+import os
 import shutil
 import signal
 import subprocess
@@ -28,7 +29,7 @@ CHROME_ARGS = [
 @dataclass
 class BrowserSession:
     pid: int
-    process: subprocess.Popen
+    process: subprocess.Popen | None  # None when restored from disk
     profile_dir: str
     window_id: int = 0
     bounds: dict = field(default_factory=dict)
@@ -88,20 +89,30 @@ def close_session(session: BrowserSession) -> None:
     SIGTERM first, wait up to 3s, then SIGKILL if still alive.
     Always removes the profile directory.
     """
-    try:
-        session.process.send_signal(signal.SIGTERM)
-        session.process.wait(timeout=3)
-    except subprocess.TimeoutExpired:
-        session.process.kill()
-        session.process.wait(timeout=2)
-    except OSError:
-        pass  # already dead
-
+    _kill_pid(session.pid)
     shutil.rmtree(session.profile_dir, ignore_errors=True)
 
-    # Verify process is gone
-    if session.process.poll() is None:
-        session.process.kill()
+
+def _kill_pid(pid: int) -> None:
+    """SIGTERM a process, wait up to 3s, SIGKILL if still alive."""
+    try:
+        os.kill(pid, signal.SIGTERM)
+    except OSError:
+        return  # already dead
+
+    deadline = time.monotonic() + 3.0
+    while time.monotonic() < deadline:
+        try:
+            os.kill(pid, 0)  # probe
+        except OSError:
+            return  # gone
+        time.sleep(0.2)
+
+    # Still alive after 3s
+    try:
+        os.kill(pid, signal.SIGKILL)
+    except OSError:
+        pass
 
 
 def navigate(session: BrowserSession, url: str) -> None:
