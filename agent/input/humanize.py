@@ -5,6 +5,8 @@ Bezier curves, velocity profiles, jitter, typo generation.
 No pyautogui dependency: pure math only.
 """
 
+from __future__ import annotations
+
 import math
 import random
 import string

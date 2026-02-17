@@ -5,6 +5,8 @@ All coordinates are in macOS screen points (pyautogui's native system).
 Coordinate translation from VLM image-pixels is handled by coords.py.
 """
 
+from __future__ import annotations
+
 import random
 import time
 

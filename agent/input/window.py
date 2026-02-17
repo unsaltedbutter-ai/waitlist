@@ -5,6 +5,8 @@ Listing windows, getting bounds, focusing apps, and
 human-like window resizing (drag, not programmatic snap).
 """
 
+from __future__ import annotations
+
 import time
 
 import Quartz

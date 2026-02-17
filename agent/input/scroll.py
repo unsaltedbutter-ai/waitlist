@@ -4,6 +4,8 @@ Human-like scrolling.
 Variable speed between scroll ticks to avoid robotic uniformity.
 """
 
+from __future__ import annotations
+
 import random
 import time
 
