@@ -636,6 +636,13 @@ def cmd_test(args):
     # Interactive step callback
     def step_callback(idx, step, session):
         label = f'Step {idx}/{len(playbook.steps) - 1}'
+
+        # Auto-execute waits without prompting
+        if step.action == 'wait':
+            lo, hi = step.wait_after_sec
+            print(f'{label}: wait [{lo}, {hi}]')
+            return True
+
         flags = []
         if step.disabled:
             flags.append('DISABLED')
