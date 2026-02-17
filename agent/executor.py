@@ -323,6 +323,9 @@ class PlaybookExecutor:
         self, step: PlaybookStep, session: BrowserSession, ctx: JobContext,
     ) -> int:
         """Scroll up or down. No VLM calls."""
+        # Ensure correct Chrome instance is focused
+        window.focus_window_by_pid(session.pid)
+
         # Parse direction and amount from target_description or defaults
         direction = 'down'
         amount = 3

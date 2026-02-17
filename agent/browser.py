@@ -51,8 +51,8 @@ def create_session(width: int = 1280, height: int = 900) -> BrowserSession:
         stderr=subprocess.DEVNULL,
     )
 
-    # Poll for the Chrome window to appear (up to 10s)
-    win_info = _wait_for_window('Google Chrome', timeout=10.0)
+    # Poll for the Chrome window to appear (up to 10s), scoped to this PID
+    win_info = _wait_for_window('Google Chrome', pid=process.pid, timeout=10.0)
     if win_info is None:
         # Chrome didn't produce a window; kill and clean up
         process.kill()
@@ -72,7 +72,9 @@ def create_session(width: int = 1280, height: int = 900) -> BrowserSession:
         },
     )
 
-    # Resize to requested dimensions
+    # Focus and resize to requested dimensions
+    window.focus_window_by_pid(process.pid)
+    time.sleep(0.2)
     window.resize_window_by_drag('Google Chrome', width, height)
     time.sleep(0.5)
 
@@ -119,10 +121,10 @@ def navigate(session: BrowserSession, url: str) -> None:
     """
     Navigate Chrome to a URL using keyboard shortcuts.
 
-    Focuses Chrome, Cmd+L to address bar, Cmd+A to select all,
-    types the URL, presses Enter, waits for initial load.
+    Focuses the specific Chrome instance by PID, Cmd+L to address bar,
+    Cmd+A to select all, types the URL, presses Enter, waits for initial load.
     """
-    window.focus_window('Google Chrome')
+    window.focus_window_by_pid(session.pid)
     time.sleep(0.3)
 
     keyboard.hotkey('command', 'l')
@@ -143,12 +145,13 @@ def navigate(session: BrowserSession, url: str) -> None:
 def get_session_window(session: BrowserSession) -> dict:
     """
     Re-fetch Chrome's window bounds and update the session.
+    Uses the session PID to find the correct Chrome instance.
 
     Returns the current bounds dict: {x, y, width, height}.
     """
-    win_info = window.get_window_bounds('Google Chrome')
+    win_info = window.get_window_bounds('Google Chrome', pid=session.pid)
     if win_info is None:
-        raise RuntimeError('Chrome window not found')
+        raise RuntimeError(f'Chrome window not found for PID {session.pid}')
 
     session.window_id = win_info['id']
     session.bounds = {
@@ -160,11 +163,13 @@ def get_session_window(session: BrowserSession) -> dict:
     return session.bounds
 
 
-def _wait_for_window(app_name: str, timeout: float = 10.0) -> dict | None:
+def _wait_for_window(
+    app_name: str, pid: int | None = None, timeout: float = 10.0,
+) -> dict | None:
     """Poll for a window to appear. Returns window info or None on timeout."""
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
-        windows = window.list_windows(app_name)
+        windows = window.list_windows(app_name, pid=pid)
         if windows:
             return windows[0]
         time.sleep(0.5)
