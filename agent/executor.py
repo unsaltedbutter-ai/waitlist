@@ -34,6 +34,9 @@ from agent.playbook import (
 
 log = logging.getLogger(__name__)
 
+# Default probability for optional step chains (0.0-1.0)
+OPTIONAL_CHAIN_CHANCE = 0.5
+
 
 class PlaybookExecutor:
     """Reads a playbook, steps through it, uses VLM for element-finding and checkpoints."""
@@ -41,11 +44,11 @@ class PlaybookExecutor:
     def __init__(
         self,
         inference: InferenceClient,
-        step_callback: Callable[[PlaybookStep, BrowserSession], bool] | None = None,
+        step_callback: Callable[[int, PlaybookStep, BrowserSession], bool] | None = None,
     ):
         """
         inference: VLM client (Http, Coordinate, or Mock)
-        step_callback: called before each step with (step, session).
+        step_callback: called before each step with (index, step, session).
                        Return True to proceed, False to skip.
                        Used by the 'playbook test' CLI for interactive dry runs.
         """
@@ -81,34 +84,66 @@ class PlaybookExecutor:
             )
 
             # 2. Step through the playbook
-            for step in playbook.steps:
+            skip_optional_chain = False
+
+            for idx, step in enumerate(playbook.steps):
                 elapsed = time.monotonic() - start
                 if elapsed > TOTAL_EXECUTION_TIMEOUT:
-                    error_message = f'Total execution timeout ({TOTAL_EXECUTION_TIMEOUT}s) exceeded at step {step.step}'
+                    error_message = (
+                        f'Total execution timeout ({TOTAL_EXECUTION_TIMEOUT}s) '
+                        f'exceeded at step {idx}'
+                    )
                     log.error(error_message)
                     break
 
-                # Optional step_callback (interactive mode)
+                # Skip disabled steps
+                if step.disabled:
+                    step_results.append(StepResult(
+                        index=idx, action=step.action,
+                        success=True, skipped=True,
+                    ))
+                    continue
+
+                # Optional chain logic: consecutive optional steps share fate.
+                # First optional step in a chain rolls the dice. If skipped,
+                # all following optional steps skip too. Chain ends at the
+                # first non-optional step.
+                if step.optional:
+                    if idx == 0 or not playbook.steps[idx - 1].optional:
+                        # First in a new optional chain: roll the dice
+                        skip_optional_chain = random.random() > OPTIONAL_CHAIN_CHANCE
+                    if skip_optional_chain:
+                        log.info('Skipping optional step %d (%s)', idx, step.action)
+                        step_results.append(StepResult(
+                            index=idx, action=step.action,
+                            success=True, skipped=True,
+                        ))
+                        continue
+                else:
+                    # Non-optional step: reset chain state
+                    skip_optional_chain = False
+
+                # Interactive callback (test mode)
                 if self._step_callback is not None:
-                    proceed = self._step_callback(step, session)
+                    proceed = self._step_callback(idx, step, session)
                     if not proceed:
                         step_results.append(StepResult(
-                            step=step.step, action=step.action,
+                            index=idx, action=step.action,
                             success=True, skipped=True,
                         ))
                         continue
 
-                sr = self._execute_step(step, session, ctx)
+                sr = self._execute_step(idx, step, session, ctx)
                 step_results.append(sr)
 
                 # Save non-sensitive screenshot for audit log
                 if sr.success and not step.is_sensitive:
-                    shot = self._save_audit_screenshot(step, session, ctx)
+                    shot = self._save_audit_screenshot(idx, session, ctx)
                     if shot:
                         screenshots.append(shot)
 
                 if not sr.success and not step.optional:
-                    error_message = f'Step {step.step} ({step.action}) failed: {sr.error}'
+                    error_message = f'Step {idx} ({step.action}) failed: {sr.error}'
                     log.error(error_message)
                     break
             else:
@@ -148,7 +183,7 @@ class PlaybookExecutor:
     # ------------------------------------------------------------------
 
     def _execute_step(
-        self, step: PlaybookStep, session: BrowserSession, ctx: JobContext,
+        self, idx: int, step: PlaybookStep, session: BrowserSession, ctx: JobContext,
     ) -> StepResult:
         """Execute a single step: checkpoint (if needed), then action handler."""
         step_start = time.monotonic()
@@ -157,11 +192,11 @@ class PlaybookExecutor:
         try:
             # Checkpoint before action (if requested)
             if step.checkpoint and step.checkpoint_prompt:
-                cp_result = self._run_checkpoint(step, session)
+                cp_result = self._run_checkpoint(idx, step, session)
                 inference_calls += 1
                 if not cp_result:
                     return StepResult(
-                        step=step.step, action=step.action,
+                        index=idx, action=step.action,
                         success=False,
                         duration_seconds=round(time.monotonic() - step_start, 2),
                         inference_calls=inference_calls,
@@ -175,7 +210,7 @@ class PlaybookExecutor:
 
             duration = round(time.monotonic() - step_start, 2)
             return StepResult(
-                step=step.step, action=step.action,
+                index=idx, action=step.action,
                 success=True, duration_seconds=duration,
                 inference_calls=inference_calls,
             )
@@ -183,7 +218,7 @@ class PlaybookExecutor:
         except Exception as exc:
             duration = round(time.monotonic() - step_start, 2)
             return StepResult(
-                step=step.step, action=step.action,
+                index=idx, action=step.action,
                 success=False, duration_seconds=duration,
                 inference_calls=inference_calls,
                 error=str(exc),
@@ -284,7 +319,7 @@ class PlaybookExecutor:
 
         for i in range(max_iters):
             # Checkpoint: are we still on a retention page?
-            still_retention = self._run_checkpoint(step, session)
+            still_retention = self._run_checkpoint(i, step, session)
             inference_calls += 1
 
             if not still_retention:
@@ -373,7 +408,7 @@ class PlaybookExecutor:
         """
         shot_b64 = screenshot.capture_to_base64(session.window_id)
 
-        context = f'Service: {ctx.service}, Flow: {ctx.flow}, Step {step.step}: {step.action}'
+        context = f'Service: {ctx.service}, Flow: {ctx.flow}, Action: {step.action}'
         result = self._inference.find_element(
             shot_b64, step.target_description, context,
             ref_region=step.ref_region,
@@ -397,7 +432,9 @@ class PlaybookExecutor:
         )
         return screen_x, screen_y
 
-    def _run_checkpoint(self, step: PlaybookStep, session: BrowserSession) -> bool:
+    def _run_checkpoint(
+        self, idx: int, step: PlaybookStep, session: BrowserSession,
+    ) -> bool:
         """Take screenshot, ask VLM if page state is correct. Returns True if on track."""
         shot_b64 = screenshot.capture_to_base64(session.window_id)
         result = self._inference.checkpoint(shot_b64, step.checkpoint_prompt)
@@ -405,24 +442,24 @@ class PlaybookExecutor:
 
         log.info(
             'checkpoint step %d: on_track=%s confidence=%.2f reason=%s',
-            step.step, result.on_track, result.confidence, result.reasoning,
+            idx, result.on_track, result.confidence, result.reasoning,
         )
         return result.on_track
 
     def _save_audit_screenshot(
-        self, step: PlaybookStep, session: BrowserSession, ctx: JobContext,
+        self, idx: int, session: BrowserSession, ctx: JobContext,
     ) -> dict | None:
         """Save a screenshot for the audit log. Returns metadata dict or None."""
         try:
             ts = int(time.time() * 1000)
-            filename = f'{ctx.job_id}_step{step.step:02d}_{ts}.png'
+            filename = f'{ctx.job_id}_step{idx:02d}_{ts}.png'
             path = SCREENSHOT_DIR / filename
             screenshot.capture_window(session.window_id, str(path))
             return {
-                'step': step.step,
+                'index': idx,
                 'timestamp': ts,
                 'path': str(path),
             }
         except Exception:
-            log.warning('Failed to save audit screenshot for step %d', step.step, exc_info=True)
+            log.warning('Failed to save audit screenshot for step %d', idx, exc_info=True)
             return None

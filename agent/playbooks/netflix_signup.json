@@ -6,114 +6,121 @@
   "notes": "Netflix has reCAPTCHA on signup. STARTING POINT, will need adjustment after real testing.",
   "steps": [
     {
-      "step": 1,
       "action": "navigate",
       "url": "https://www.netflix.com/signup",
       "expected_title_contains": "Netflix"
     },
     {
-      "step": 2,
       "action": "wait",
-      "wait_after_sec": [2, 5]
+      "wait_after_sec": [
+        2,
+        5
+      ]
     },
     {
-      "step": 3,
       "action": "click",
       "target_description": "Get Started or Next button",
       "fallback": "infer"
     },
     {
-      "step": 4,
       "action": "wait",
-      "wait_after_sec": [1, 3]
+      "wait_after_sec": [
+        1,
+        3
+      ]
     },
     {
-      "step": 5,
       "action": "select_plan",
       "target_description": "Standard plan option (ad-free)",
       "checkpoint": true,
       "checkpoint_prompt": "Is this a Netflix plan selection page showing Standard and Premium options? Which plan is highlighted?"
     },
     {
-      "step": 6,
       "action": "wait",
-      "wait_after_sec": [2, 4]
+      "wait_after_sec": [
+        2,
+        4
+      ]
     },
     {
-      "step": 7,
       "action": "click",
       "target_description": "Continue or Next button after plan selection"
     },
     {
-      "step": 8,
       "action": "wait",
-      "wait_after_sec": [1, 3]
+      "wait_after_sec": [
+        1,
+        3
+      ]
     },
     {
-      "step": 9,
       "action": "type_text",
       "target_description": "Email input field",
       "value": "{email}"
     },
     {
-      "step": 10,
       "action": "type_text",
       "target_description": "Password input field",
       "value": "{pass}"
     },
     {
-      "step": 11,
       "action": "wait",
-      "wait_after_sec": [0.5, 1.5]
+      "wait_after_sec": [
+        0.5,
+        1.5
+      ]
     },
     {
-      "step": 12,
       "action": "click",
       "target_description": "Continue or Next button after email/password",
       "checkpoint": true,
       "checkpoint_prompt": "Have we successfully entered email and password? Is there a Continue/Next button visible?"
     },
     {
-      "step": 13,
       "action": "wait",
-      "wait_after_sec": [2, 4]
+      "wait_after_sec": [
+        2,
+        4
+      ]
     },
     {
-      "step": 14,
       "action": "select_payment_method",
       "target_description": "Gift Card payment option"
     },
     {
-      "step": 15,
       "action": "wait",
-      "wait_after_sec": [1, 3]
+      "wait_after_sec": [
+        1,
+        3
+      ]
     },
     {
-      "step": 16,
       "action": "type_text",
       "target_description": "Gift card or pin input field",
       "value": "{gift}",
       "sensitive": true
     },
     {
-      "step": 17,
       "action": "wait",
-      "wait_after_sec": [0.5, 1.5]
+      "wait_after_sec": [
+        0.5,
+        1.5
+      ]
     },
     {
-      "step": 18,
       "action": "click",
       "target_description": "Start Membership or Submit button",
       "checkpoint": true,
       "checkpoint_prompt": "Is this the final confirmation page before submitting payment? Are all fields filled?"
     },
     {
-      "step": 19,
       "action": "wait",
-      "wait_after_sec": [3, 6]
+      "wait_after_sec": [
+        3,
+        6
+      ]
     },
     {
-      "step": 20,
       "action": "verify_success",
       "target_description": "Welcome screen, confirmation page, or 'Choose your profile' page",
       "checkpoint": true,

@@ -16,9 +16,8 @@ from agent.config import KEY_VARS, PLAYBOOK_DIR, SENSITIVE_VARS
 
 @dataclass(frozen=True)
 class PlaybookStep:
-    """Single step in a playbook flow."""
+    """Single step in a playbook flow. Index is derived from array position at runtime."""
 
-    step: int
     action: str  # navigate, click, type_text, select_plan, select_payment_method,
                  # handle_retention, verify_success, scroll, press_key, wait
 
@@ -27,6 +26,7 @@ class PlaybookStep:
     value: str = ''
     sensitive: bool = False
     optional: bool = False
+    disabled: bool = False
 
     checkpoint: bool = False
     checkpoint_prompt: str = ''
@@ -64,13 +64,13 @@ class PlaybookStep:
             ref = None
 
         return PlaybookStep(
-            step=d['step'],
             action=d['action'],
             target_description=d.get('target_description', ''),
             url=d.get('url', ''),
             value=d.get('value', ''),
             sensitive=d.get('sensitive', False),
             optional=d.get('optional', False),
+            disabled=d.get('disabled', False),
             checkpoint=d.get('checkpoint', False),
             checkpoint_prompt=d.get('checkpoint_prompt', ''),
             may_repeat=d.get('may_repeat', False),
@@ -83,7 +83,7 @@ class PlaybookStep:
 
     def to_dict(self) -> dict:
         """Serialize to a JSON-compatible dict. Omits default-value fields."""
-        d: dict = {'step': self.step, 'action': self.action}
+        d: dict = {'action': self.action}
         if self.target_description:
             d['target_description'] = self.target_description
         if self.url:
@@ -94,6 +94,8 @@ class PlaybookStep:
             d['sensitive'] = True
         if self.optional:
             d['optional'] = True
+        if self.disabled:
+            d['disabled'] = True
         if self.checkpoint:
             d['checkpoint'] = True
         if self.checkpoint_prompt:
@@ -280,7 +282,7 @@ class JobContext:
 class StepResult:
     """Outcome of a single playbook step."""
 
-    step: int
+    index: int  # 0-based position in the steps array
     action: str
     success: bool
     duration_seconds: float = 0.0

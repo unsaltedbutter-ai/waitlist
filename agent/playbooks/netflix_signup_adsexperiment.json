@@ -1,0 +1,275 @@
+{
+  "service": "netflix",
+  "flow": "signup",
+  "version": 1,
+  "notes": "Recorded with playbook record on 2026-02-17",
+  "last_validated": null,
+  "steps": [
+    {
+      "action": "click",
+      "target_description": "Click next button to start",
+      "ref_region": [
+        910,
+        1194,
+        1614,
+        1252
+      ],
+      "checkpoint": false,
+      "checkpoint_prompt": "Where is the next button to start choosing a plan?"
+    },
+    {
+      "action": "wait",
+      "wait_after_sec": [
+        2.0,
+        6.0
+      ]
+    },
+    {
+      "action": "click",
+      "target_description": "choose ads $7.99",
+      "ref_region": [
+        246,
+        644,
+        814,
+        738
+      ],
+      "checkpoint": false,
+      "checkpoint_prompt": "Where is the Standards with ads plan"
+    },
+    {
+      "action": "click",
+      "target_description": "select standard plan $17.99",
+      "ref_region": [
+        972,
+        646,
+        1538,
+        738
+      ],
+      "checkpoint": false,
+      "checkpoint_prompt": "where is the standard button, not the standard with ads?"
+    },
+    {
+      "action": "wait",
+      "wait_after_sec": [
+        2.0,
+        4.0
+      ]
+    },
+    {
+      "action": "click",
+      "target_description": "select premium button",
+      "ref_region": [
+        1708,
+        646,
+        2282,
+        748
+      ],
+      "checkpoint": false,
+      "checkpoint_prompt": "where is the premium button? $24.99"
+    },
+    {
+      "action": "wait",
+      "wait_after_sec": [
+        2.0,
+        4.0
+      ]
+    },
+    {
+      "action": "scroll",
+      "target_description": "down 5"
+    },
+    {
+      "action": "click",
+      "target_description": "click next button",
+      "ref_region": [
+        1080,
+        1542,
+        1470,
+        1584
+      ],
+      "checkpoint": false,
+      "checkpoint_prompt": "where is the next button?"
+    },
+    {
+      "action": "click",
+      "target_description": "click next button",
+      "ref_region": [
+        1102,
+        1094,
+        1422,
+        1140
+      ],
+      "checkpoint": false,
+      "checkpoint_prompt": "how do we finish setting up your account? is there a next button?"
+    },
+    {
+      "action": "click",
+      "target_description": "select email field",
+      "ref_region": [
+        926,
+        942,
+        1336,
+        956
+      ],
+      "checkpoint": false,
+      "checkpoint_prompt": "where is the email field?"
+    },
+    {
+      "action": "type_text",
+      "value": "{email}"
+    },
+    {
+      "action": "click",
+      "target_description": "tab to next field",
+      "ref_region": [
+        1331,
+        951,
+        1341,
+        961
+      ]
+    },
+    {
+      "action": "press_key",
+      "value": "tab"
+    },
+    {
+      "action": "wait",
+      "wait_after_sec": [
+        1.0,
+        2.0
+      ]
+    },
+    {
+      "action": "click",
+      "target_description": "enter pass",
+      "ref_region": [
+        1331,
+        951,
+        1341,
+        961
+      ]
+    },
+    {
+      "action": "type_text",
+      "value": "{pass}"
+    },
+    {
+      "action": "wait",
+      "wait_after_sec": [
+        1.0,
+        3.0
+      ]
+    },
+    {
+      "action": "click",
+      "target_description": "click the next button",
+      "ref_region": [
+        996,
+        1184,
+        1424,
+        1236
+      ],
+      "checkpoint": false,
+      "checkpoint_prompt": "how do I finish creating membershi? is there a next button?"
+    },
+    {
+      "action": "click",
+      "target_description": "click skip button",
+      "ref_region": [
+        964,
+        1230,
+        1496,
+        1290
+      ],
+      "checkpoint": false,
+      "checkpoint_prompt": "Is there a way to skip verifying email? is there a skip button?"
+    },
+    {
+      "action": "click",
+      "target_description": "click gift code",
+      "ref_region": [
+        936,
+        1422,
+        1440,
+        1464
+      ],
+      "checkpoint": false,
+      "checkpoint_prompt": "Where can I click to use a gift card?"
+    },
+    {
+      "action": "wait",
+      "wait_after_sec": [
+        5.0,
+        10.0
+      ]
+    },
+    {
+      "action": "click",
+      "target_description": "enter gift code",
+      "ref_region": [
+        922,
+        690,
+        1420,
+        736
+      ],
+      "checkpoint": false,
+      "checkpoint_prompt": "where do I enter gift card information?"
+    },
+    {
+      "action": "type_text",
+      "value": "{gift}"
+    },
+    {
+      "action": "click",
+      "target_description": "tab to next field",
+      "ref_region": [
+        1415,
+        731,
+        1425,
+        741
+      ]
+    },
+    {
+      "action": "press_key",
+      "value": "tab"
+    },
+    {
+      "action": "wait",
+      "wait_after_sec": [
+        1.0,
+        2.0
+      ]
+    },
+    {
+      "action": "click",
+      "target_description": "enter zip code",
+      "ref_region": [
+        1415,
+        731,
+        1425,
+        741
+      ]
+    },
+    {
+      "action": "type_text",
+      "value": "{zip}"
+    },
+    {
+      "action": "click",
+      "target_description": "click redeem button",
+      "ref_region": [
+        934,
+        1156,
+        1578,
+        1214
+      ],
+      "checkpoint": false,
+      "checkpoint_prompt": "Where is the redeem button?"
+    },
+    {
+      "action": "type_text",
+      "value": "sleep 5,10"
+    }
+  ],
+  "tier": "ads2"
+}
