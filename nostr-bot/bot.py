@@ -193,10 +193,10 @@ class BotNotificationHandler(HandleNotification):
         if user is None:
             return "Join the waitlist"
 
-        # Registered but hasn't paid membership: not fully onboarded
-        if not await db.has_paid_membership(user["id"]):
+        # Registered but hasn't completed onboarding
+        if not await db.has_onboarded(user["id"]):
             base_url = os.getenv("BASE_URL", "https://unsaltedbutter.ai")
-            return f"Finish setting up your account first.\n\n{base_url}/login"
+            return f"Complete your setup first.\n\n{base_url}/login"
 
         return await commands.handle_dm(user["id"], user["status"], message)
 

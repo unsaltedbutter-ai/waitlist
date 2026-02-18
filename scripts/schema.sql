@@ -1,4 +1,4 @@
--- SCHEMA.sql — UnsaltedButter Database Schema (v2 — Solo/Duo, Gift Card Only)
+-- SCHEMA.sql -- UnsaltedButter Database Schema (v3: Prepaid Balance Model)
 -- Run: psql -h <host> -U butter -d unsaltedbutter -f scripts/schema.sql
 --
 -- ENCRYPTION: Each _enc BYTEA field stores 12-byte IV || ciphertext || 16-byte GCM auth tag.
@@ -33,8 +33,7 @@ DROP TABLE IF EXISTS service_account_balances CASCADE;
 DROP TABLE IF EXISTS rotation_queue CASCADE;
 DROP TABLE IF EXISTS streaming_credentials CASCADE;
 DROP TABLE IF EXISTS signup_questions CASCADE;
-DROP TABLE IF EXISTS membership_pricing CASCADE;
-DROP TABLE IF EXISTS membership_payments CASCADE;
+DROP TABLE IF EXISTS platform_config CASCADE;
 DROP TABLE IF EXISTS streaming_services CASCADE;
 DROP TABLE IF EXISTS users CASCADE;
 
@@ -44,18 +43,14 @@ DROP TABLE IF EXISTS users CASCADE;
 
 CREATE TABLE users (
     id                    UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    nostr_npub            TEXT UNIQUE,                          -- primary auth (Nostr public key)
+    nostr_npub            TEXT UNIQUE,                          -- primary auth (Nostr hex pubkey)
     email                 TEXT UNIQUE,                          -- fallback auth
     password_hash         TEXT,                                 -- bcrypt, only if email auth
     telegram_handle       TEXT,                                 -- optional, for notifications
-    status                TEXT NOT NULL DEFAULT 'active'
-                          CHECK (status IN ('active', 'expiring', 'churned')),
-    membership_plan       TEXT NOT NULL DEFAULT 'solo'          -- solo = 1 rotation, duo = 2 simultaneous
-                          CHECK (membership_plan IN ('solo', 'duo')),
-    billing_period        TEXT NOT NULL DEFAULT 'monthly'
-                          CHECK (billing_period IN ('monthly', 'annual')),
-    membership_expires_at TIMESTAMPTZ,                          -- when current paid period ends
-    free_days_remaining   INT DEFAULT 0,                        -- manually allocated by operator
+    status                TEXT NOT NULL DEFAULT 'auto_paused'
+                          CHECK (status IN ('active', 'paused', 'auto_paused')),
+    onboarded_at          TIMESTAMPTZ,                          -- set when user completes onboarding
+    paused_at             TIMESTAMPTZ,                          -- set when user pauses
     signup_answers_enc    BYTEA,                                -- AES-256-GCM encrypted JSON: {question_id: answer}
     created_at            TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at            TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -104,7 +99,7 @@ CREATE TABLE streaming_services (
     updated_at                    TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- Seed data — all services we support (prices as of early 2026)
+-- Seed data (prices as of early 2026)
 INSERT INTO streaming_services
     (id, display_name, signup_url, monthly_price_cents, plan_name,
      gift_card_supported, gift_card_provider, gift_card_denominations_cents,
@@ -112,7 +107,7 @@ INSERT INTO streaming_services
 VALUES
     ('netflix',     'Netflix',      'https://www.netflix.com/signup',
      1799, 'Standard',      TRUE, 'bitrefill', '{2500,5000,10000}',
-     TRUE, 'reCAPTCHA on signup page — #1 risk'),
+     TRUE, 'reCAPTCHA on signup page'),
 
     ('apple_tv',    'Apple TV+',    'https://tv.apple.com/',
      1299, 'Standard',      TRUE, 'bitrefill', '{1000,2500,5000}',
@@ -153,7 +148,7 @@ CREATE TABLE service_plans (
     monthly_price_cents   INT NOT NULL,
     has_ads               BOOLEAN DEFAULT FALSE,
     is_bundle             BOOLEAN DEFAULT FALSE,
-    bundle_services       TEXT[],                               -- service IDs in bundle, e.g. {'disney_plus','hulu','espn_plus'}
+    bundle_services       TEXT[],                               -- service IDs in bundle
     display_order         INT NOT NULL DEFAULT 0,
     active                BOOLEAN DEFAULT TRUE
 );
@@ -189,25 +184,19 @@ VALUES
     ('peacock_premium_plus',  'peacock',     'Premium Plus',            1699, FALSE, FALSE, NULL, 72);
 
 -- ============================================================
--- MEMBERSHIP PRICING (operator-set, sats-denominated)
+-- PLATFORM CONFIG (operator-set parameters)
 -- ============================================================
 
-CREATE TABLE membership_pricing (
-    plan       TEXT NOT NULL CHECK (plan IN ('solo', 'duo')),
-    period     TEXT NOT NULL CHECK (period IN ('monthly', 'annual')),
-    price_sats INT NOT NULL,
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    PRIMARY KEY (plan, period)
+CREATE TABLE platform_config (
+    key        TEXT PRIMARY KEY,
+    value      TEXT NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-INSERT INTO membership_pricing (plan, period, price_sats) VALUES
-    ('solo', 'monthly', 4400),
-    ('solo', 'annual',  3500),
-    ('duo',  'monthly', 7300),
-    ('duo',  'annual',  5850);
+INSERT INTO platform_config (key, value) VALUES ('platform_fee_sats', '4400');
 
 -- ============================================================
--- STREAMING CREDENTIALS (encrypted, destroyed on membership end)
+-- STREAMING CREDENTIALS (encrypted, destroyed on account deletion)
 -- ============================================================
 
 CREATE TABLE streaming_credentials (
@@ -230,20 +219,20 @@ CREATE TABLE rotation_queue (
     service_id      TEXT NOT NULL REFERENCES streaming_services(id),
     position        INT NOT NULL,                              -- 1 = next up
     plan_id         TEXT REFERENCES service_plans(id),         -- which tier/plan for this service
+    extend_current  BOOLEAN DEFAULT FALSE,                     -- TRUE = stay on this service next cycle
     created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     UNIQUE(user_id, service_id),
     UNIQUE(user_id, position)
 );
 
 -- ============================================================
--- ROTATION SLOTS (active service slots — 1 for Solo, 2 for Duo)
--- Each slot independently tracks its current service and locked-in next service.
+-- ROTATION SLOTS (single active service slot per user)
 -- ============================================================
 
 CREATE TABLE rotation_slots (
     id                        UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id                   UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    slot_number               INT NOT NULL CHECK (slot_number IN (1, 2)),
+    slot_number               INT NOT NULL CHECK (slot_number = 1),
     current_service_id        TEXT REFERENCES streaming_services(id),
     current_subscription_id   UUID,                            -- FK added after subscriptions table
     next_service_id           TEXT REFERENCES streaming_services(id),
@@ -257,7 +246,6 @@ CREATE TABLE rotation_slots (
 
 -- ============================================================
 -- SERVICE ACCOUNT BALANCES (gift card balance remaining at each streaming service)
--- Agent reads this after cancel. Informs whether next rotation needs a new gift card.
 -- ============================================================
 
 CREATE TABLE service_account_balances (
@@ -277,25 +265,26 @@ CREATE TABLE subscriptions (
     id                    UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id               UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     service_id            TEXT NOT NULL REFERENCES streaming_services(id),
-    slot_number           INT,                                 -- which rotation slot (1 or 2)
-    plan_id               TEXT REFERENCES service_plans(id),   -- which tier
+    slot_number           INT,                                 -- always 1 in prepaid model
+    plan_id               TEXT REFERENCES service_plans(id),
     status                TEXT NOT NULL DEFAULT 'queued'
                           CHECK (status IN (
-                              'queued',              -- waiting in rotation queue
-                              'signup_scheduled',    -- agent job created
-                              'active',              -- subscribed and streaming
-                              'cancel_scheduled',    -- cancel job created (7-14 days after signup)
-                              'cancelled',           -- cancel confirmed by agent
-                              'cancel_failed',       -- cancel attempt failed
-                              'signup_failed'        -- signup attempt failed
+                              'queued',
+                              'signup_scheduled',
+                              'active',
+                              'lapsing',
+                              'cancel_scheduled',
+                              'cancelled',
+                              'cancel_failed',
+                              'signup_failed'
                           )),
     signed_up_at          TIMESTAMPTZ,
-    cancel_scheduled_at   TIMESTAMPTZ,                         -- when we plan to cancel
-    cancel_confirmed_at   TIMESTAMPTZ,                         -- when agent confirmed the cancel
-    subscription_end_date TIMESTAMPTZ,                         -- billing cycle end (from cancel confirmation)
-    gift_card_amount_cents INT,                                -- gift card used for this subscription
-    estimated_lapse_at    TIMESTAMPTZ,                         -- when subscription is expected to lapse
-    actual_lapsed_at      TIMESTAMPTZ,                         -- when subscription actually lapsed
+    cancel_scheduled_at   TIMESTAMPTZ,
+    cancel_confirmed_at   TIMESTAMPTZ,
+    subscription_end_date TIMESTAMPTZ,
+    gift_card_amount_cents INT,
+    estimated_lapse_at    TIMESTAMPTZ,
+    actual_lapsed_at      TIMESTAMPTZ,
     created_at            TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at            TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -306,24 +295,7 @@ ALTER TABLE rotation_slots
     FOREIGN KEY (current_subscription_id) REFERENCES subscriptions(id);
 
 -- ============================================================
--- MEMBERSHIP PAYMENTS (BTC/Lightning — for the UnsaltedButter subscription itself)
--- ============================================================
-
-CREATE TABLE membership_payments (
-    id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id           UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    btcpay_invoice_id TEXT NOT NULL UNIQUE,
-    amount_sats       BIGINT NOT NULL,
-    amount_usd_cents  INT NOT NULL,                            -- approximate USD value at payment time (via live BTC/USD rate)
-    period_start      TIMESTAMPTZ NOT NULL,
-    period_end        TIMESTAMPTZ NOT NULL,
-    status            TEXT NOT NULL DEFAULT 'pending'
-                      CHECK (status IN ('pending', 'paid', 'expired', 'refunded')),
-    created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
--- ============================================================
--- SERVICE CREDITS (BTC balance per user — for gift card purchases)
+-- SERVICE CREDITS (sats balance per user)
 -- ============================================================
 
 CREATE TABLE service_credits (
@@ -334,7 +306,7 @@ CREATE TABLE service_credits (
 );
 
 -- ============================================================
--- CREDIT TRANSACTIONS (ledger — every credit movement)
+-- CREDIT TRANSACTIONS (ledger: every credit movement)
 -- ============================================================
 
 CREATE TABLE credit_transactions (
@@ -345,7 +317,7 @@ CREATE TABLE credit_transactions (
                            'prepayment',          -- user added BTC credits
                            'zap_topup',           -- credits via Nostr zap
                            'lock_in_debit',       -- credits deducted at day-14 lock-in (gift card purchase)
-                           'membership_fee',      -- monthly/annual membership charge
+                           'platform_fee',        -- platform fee charge at rotation start
                            'refund'               -- refund back to user
                        )),
     amount_sats        BIGINT NOT NULL,            -- positive = credit, negative = debit
@@ -356,7 +328,7 @@ CREATE TABLE credit_transactions (
 );
 
 -- ============================================================
--- BTC PREPAYMENTS (Lightning invoices for adding service credits)
+-- BTC PREPAYMENTS (Lightning invoices for adding sats)
 -- ============================================================
 
 CREATE TABLE btc_prepayments (
@@ -372,29 +344,27 @@ CREATE TABLE btc_prepayments (
 );
 
 -- ============================================================
--- GIFT CARD PURCHASES (company property, earmarked for user's service)
--- Gift cards are owned by the company. User never sees the code.
--- Purchased at lock-in, redeemed at subscribe time.
+-- GIFT CARD PURCHASES
 -- ============================================================
 
 CREATE TABLE gift_card_purchases (
     id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id             UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     service_id          TEXT NOT NULL REFERENCES streaming_services(id),
-    slot_number         INT,                                   -- which rotation slot this is for
+    slot_number         INT,
     provider            TEXT NOT NULL DEFAULT 'bitrefill'
                         CHECK (provider IN ('bitrefill', 'manual')),
-    denomination_cents  INT NOT NULL,                          -- face value of the card
-    cost_sats           BIGINT NOT NULL,                       -- BTC cost at time of purchase
+    denomination_cents  INT NOT NULL,
+    cost_sats           BIGINT NOT NULL,
     gift_card_code_enc  BYTEA,                                 -- AES-256-GCM encrypted code
-    external_order_id   TEXT,                                  -- Bitrefill order ID
+    external_order_id   TEXT,
     status              TEXT NOT NULL DEFAULT 'pending'
                         CHECK (status IN (
-                            'pending',      -- purchase initiated
-                            'purchased',    -- code received, stored encrypted
-                            'redeemed',     -- applied to streaming service account
-                            'failed',       -- purchase failed
-                            'refunded'      -- refunded (if possible)
+                            'pending',
+                            'purchased',
+                            'redeemed',
+                            'failed',
+                            'refunded'
                         )),
     purchased_at        TIMESTAMPTZ,
     redeemed_at         TIMESTAMPTZ,
@@ -410,30 +380,30 @@ CREATE TABLE agent_jobs (
     user_id         UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     service_id      TEXT NOT NULL REFERENCES streaming_services(id),
     subscription_id UUID REFERENCES subscriptions(id),
-    slot_number     INT,                                       -- which rotation slot
+    slot_number     INT,
     flow_type       TEXT NOT NULL
                     CHECK (flow_type IN (
-                        'signup',              -- create account / resume subscription + redeem gift card
-                        'cancel',              -- cancel subscription 7-14 days after signup
-                        'gift_card_purchase'   -- buy gift card via Bitrefill during lock-in window
+                        'signup',
+                        'cancel',
+                        'gift_card_purchase'
                     )),
     status          TEXT NOT NULL DEFAULT 'pending'
                     CHECK (status IN ('pending', 'claimed', 'in_progress',
                                       'completed', 'failed', 'dead_letter')),
-    scheduled_for   DATE NOT NULL,                             -- which day to execute
-    scheduled_hour  INT,                                       -- preferred hour (0-23), nullable
+    scheduled_for   DATE NOT NULL,
+    scheduled_hour  INT,
     attempt_count   INT DEFAULT 0,
     max_attempts    INT DEFAULT 3,
     claimed_at      TIMESTAMPTZ,
     started_at      TIMESTAMPTZ,
     completed_at    TIMESTAMPTZ,
     error_message   TEXT,
-    result_data     JSONB,                                     -- flow-specific output (e.g. cancel end date, balance)
+    result_data     JSONB,
     created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 -- ============================================================
--- ACTION LOG (audit trail of every agent action)
+-- ACTION LOG (audit trail)
 -- ============================================================
 
 CREATE TABLE action_logs (
@@ -448,12 +418,12 @@ CREATE TABLE action_logs (
     inference_count  INT,
     playbook_version INT,
     error_message    TEXT,
-    screenshots      JSONB,                                    -- [{step, timestamp, path}] — PII redacted
+    screenshots      JSONB,
     created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 -- ============================================================
--- ACTION METRICS (aggregated stats per service per flow, for capacity planning)
+-- ACTION METRICS (aggregated stats per service per flow)
 -- ============================================================
 
 CREATE TABLE action_metrics (
@@ -463,7 +433,7 @@ CREATE TABLE action_metrics (
     avg_duration_seconds FLOAT,
     avg_steps            FLOAT,
     p95_duration_seconds FLOAT,
-    success_rate         FLOAT,                                -- 0.0 to 1.0
+    success_rate         FLOAT,
     sample_count         INT DEFAULT 0,
     last_updated         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     UNIQUE(service_id, flow_type)
@@ -476,11 +446,11 @@ CREATE TABLE action_metrics (
 CREATE TABLE playbooks (
     id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     service_id     TEXT NOT NULL REFERENCES streaming_services(id),
-    flow_type      TEXT NOT NULL                               -- matches agent_jobs.flow_type
+    flow_type      TEXT NOT NULL
                    CHECK (flow_type IN ('signup', 'cancel', 'gift_card_purchase')),
     version        INT NOT NULL DEFAULT 1,
-    steps          JSONB NOT NULL,                             -- array of step objects
-    dom_hashes     JSONB,                                      -- expected hashes per step
+    steps          JSONB NOT NULL,
+    dom_hashes     JSONB,
     status         TEXT NOT NULL DEFAULT 'active'
                    CHECK (status IN ('active', 'needs_review', 'deprecated')),
     last_validated TIMESTAMPTZ,
@@ -489,7 +459,7 @@ CREATE TABLE playbooks (
 );
 
 -- ============================================================
--- WAITLIST (simple: contact info + invite status)
+-- WAITLIST
 -- ============================================================
 
 CREATE TABLE waitlist (
@@ -498,20 +468,20 @@ CREATE TABLE waitlist (
     nostr_npub        TEXT,
     invited           BOOLEAN DEFAULT FALSE,
     invited_at        TIMESTAMPTZ,
-    invite_code       TEXT UNIQUE,                              -- generated by operator, used at signup
-    invite_dm_pending BOOLEAN DEFAULT FALSE,                    -- TRUE = bot should DM the invite link
-    redeemed_at       TIMESTAMPTZ DEFAULT NULL,                 -- set when invite code is consumed at signup
+    invite_code       TEXT UNIQUE,
+    invite_dm_pending BOOLEAN DEFAULT FALSE,
+    redeemed_at       TIMESTAMPTZ DEFAULT NULL,
     created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    CHECK (email IS NOT NULL OR nostr_npub IS NOT NULL)         -- at least one contact method
+    CHECK (email IS NOT NULL OR nostr_npub IS NOT NULL)
 );
 
 -- ============================================================
--- NOSTR OTP (one-time login codes, DM-based auth)
+-- NOSTR OTP (one-time login codes)
 -- ============================================================
 
 CREATE TABLE nostr_otp (
-    npub_hex    TEXT PRIMARY KEY,                               -- one active OTP per npub (upsert)
-    code        TEXT NOT NULL UNIQUE,                           -- 12-digit numeric, displayed as XXXXXX-XXXXXX
+    npub_hex    TEXT PRIMARY KEY,
+    code        TEXT NOT NULL UNIQUE,
     expires_at  TIMESTAMPTZ NOT NULL,
     created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -537,7 +507,7 @@ CREATE INDEX idx_prt_user_id ON password_reset_tokens(user_id);
 
 CREATE TABLE operator_alerts (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    alert_type      TEXT NOT NULL,                             -- 'cancel_failed', 'playbook_stale', 'hardware_down', etc.
+    alert_type      TEXT NOT NULL,
     severity        TEXT NOT NULL DEFAULT 'warning'
                     CHECK (severity IN ('info', 'warning', 'critical')),
     title           TEXT NOT NULL DEFAULT '',
@@ -549,7 +519,7 @@ CREATE TABLE operator_alerts (
 );
 
 -- ============================================================
--- USER CONSENTS (legal — authorization capture)
+-- USER CONSENTS (legal)
 -- ============================================================
 
 CREATE TABLE user_consents (
@@ -563,14 +533,14 @@ CREATE TABLE user_consents (
 );
 
 -- ============================================================
--- NOTIFICATION LOG (dedup outbound DM notifications from Nostr bot)
+-- NOTIFICATION LOG (dedup outbound DM notifications)
 -- ============================================================
 
 CREATE TABLE notification_log (
     id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id           UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    notification_type TEXT NOT NULL CHECK (notification_type IN ('lock_in_approaching', 'membership_due', 'credit_topup')),
-    reference_id      TEXT,           -- e.g. service_id or period identifier, for dedup
+    notification_type TEXT NOT NULL CHECK (notification_type IN ('lock_in_approaching', 'low_balance', 'auto_paused', 'credit_topup')),
+    reference_id      TEXT,
     sent_at           TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
@@ -605,7 +575,6 @@ CREATE TABLE zap_receipts (
 
 -- Users
 CREATE INDEX idx_users_status ON users(status);
-CREATE INDEX idx_users_expires ON users(membership_expires_at);
 
 -- Rotation
 CREATE INDEX idx_rotation_queue_user ON rotation_queue(user_id, position);

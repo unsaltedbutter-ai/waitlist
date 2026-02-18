@@ -31,14 +31,14 @@ describe("GET /api/operator/ledger", () => {
       mockQueryResult([
         {
           month: "2026-02",
-          membership_revenue: "0",
+          platform_fee_revenue: "0",
           credit_deposits: "1455000",
           gift_card_purchases: "592000",
           refunds: "0",
         },
         {
           month: "2026-01",
-          membership_revenue: "50000",
+          platform_fee_revenue: "50000",
           credit_deposits: "800000",
           gift_card_purchases: "300000",
           refunds: "10000",
@@ -56,7 +56,7 @@ describe("GET /api/operator/ledger", () => {
 
     expect(data.months[0]).toEqual({
       month: "2026-02",
-      membership_revenue: 0,
+      platform_fee_revenue: 0,
       credit_deposits: 1455000,
       gift_card_purchases: 592000,
       refunds: 0,
@@ -65,7 +65,7 @@ describe("GET /api/operator/ledger", () => {
 
     expect(data.months[1]).toEqual({
       month: "2026-01",
-      membership_revenue: 50000,
+      platform_fee_revenue: 50000,
       credit_deposits: 800000,
       gift_card_purchases: 300000,
       refunds: 10000,

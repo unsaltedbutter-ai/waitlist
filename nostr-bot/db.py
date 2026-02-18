@@ -45,14 +45,14 @@ def _get_pool() -> asyncpg.Pool:
 
 
 async def get_user_by_npub(npub_hex: str) -> dict | None:
-    """Look up a user by their Nostr hex pubkey. Returns {id: UUID, status: str} or None."""
+    """Look up a user by their Nostr hex pubkey. Returns {id, status, onboarded_at} or None."""
     row = await _get_pool().fetchrow(
-        "SELECT id, status FROM users WHERE nostr_npub = $1",
+        "SELECT id, status, onboarded_at FROM users WHERE nostr_npub = $1",
         npub_hex,
     )
     if row is None:
         return None
-    return {"id": row["id"], "status": row["status"]}
+    return {"id": row["id"], "status": row["status"], "onboarded_at": row["onboarded_at"]}
 
 
 # ── Status ───────────────────────────────────────────────────
@@ -296,13 +296,69 @@ async def credit_zap(
             return new_balance
 
 
-async def has_paid_membership(user_id: UUID) -> bool:
-    """True if the user has at least one paid membership payment."""
+async def has_onboarded(user_id: UUID) -> bool:
+    """True if the user has completed onboarding (onboarded_at is set)."""
     row = await _get_pool().fetchrow(
-        "SELECT 1 FROM membership_payments WHERE user_id = $1 AND status = 'paid' LIMIT 1",
+        "SELECT 1 FROM users WHERE id = $1 AND onboarded_at IS NOT NULL",
         user_id,
     )
     return row is not None
+
+
+async def pause_user(user_id: UUID) -> bool:
+    """Set user to paused status. Only works from active or auto_paused. Returns True if updated."""
+    result = await _get_pool().execute(
+        "UPDATE users SET status = 'paused', paused_at = NOW() WHERE id = $1 AND status IN ('active', 'auto_paused')",
+        user_id,
+    )
+    return result.split()[-1] != "0"
+
+
+async def get_platform_fee() -> int:
+    """Read platform fee from platform_config. Returns 4400 as default."""
+    row = await _get_pool().fetchrow(
+        "SELECT value FROM platform_config WHERE key = 'platform_fee_sats'",
+    )
+    return int(row["value"]) if row else 4400
+
+
+async def get_required_balance(user_id: UUID) -> dict | None:
+    """Get the required balance for the user's next rotation.
+
+    Returns {"platform_fee_sats", "gift_card_cost_sats", "total_sats"} or None if no queue.
+    """
+    pool = _get_pool()
+    platform_fee = await get_platform_fee()
+
+    row = await pool.fetchrow(
+        """
+        SELECT sp.monthly_price_cents
+        FROM rotation_queue rq
+        JOIN service_plans sp ON sp.service_id = rq.service_id
+        WHERE rq.user_id = $1 AND rq.position = 1
+        ORDER BY sp.monthly_price_cents ASC
+        LIMIT 1
+        """,
+        user_id,
+    )
+    if row is None:
+        return None
+
+    gift_card_cost_sats = row["monthly_price_cents"] * 10
+    return {
+        "platform_fee_sats": platform_fee,
+        "gift_card_cost_sats": gift_card_cost_sats,
+        "total_sats": platform_fee + gift_card_cost_sats,
+    }
+
+
+async def activate_user(user_id: UUID) -> bool:
+    """Set user to active status, clear paused_at. Returns True if updated."""
+    result = await _get_pool().execute(
+        "UPDATE users SET status = 'active', paused_at = NULL WHERE id = $1",
+        user_id,
+    )
+    return result.split()[-1] != "0"
 
 
 # ── OTP ─────────────────────────────────────────────────────

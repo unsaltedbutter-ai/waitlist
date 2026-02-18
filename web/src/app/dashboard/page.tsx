@@ -176,6 +176,34 @@ function isItemPinned(item: QueueItem): boolean {
   );
 }
 
+/** Display label for user status. */
+function userStatusLabel(status: string): string {
+  switch (status) {
+    case "active":
+      return "Active";
+    case "paused":
+      return "Paused";
+    case "auto_paused":
+      return "Paused (low balance)";
+    default:
+      return status;
+  }
+}
+
+/** CSS class for user status badge. */
+function userStatusBadgeClass(status: string): string {
+  switch (status) {
+    case "active":
+      return "bg-green-900/50 text-green-400 border border-green-700";
+    case "paused":
+      return "bg-neutral-800/50 text-neutral-400 border border-neutral-700";
+    case "auto_paused":
+      return "bg-amber-900/50 text-amber-400 border border-amber-700";
+    default:
+      return "bg-neutral-800/50 text-neutral-400 border border-neutral-700";
+  }
+}
+
 // ---------------------------------------------------------------------------
 // SortableItem (draggable queue item)
 // ---------------------------------------------------------------------------
@@ -405,8 +433,13 @@ export default function DashboardPage() {
   const [queue, setQueue] = useState<QueueItem[]>([]);
   const [slots, setSlots] = useState<SlotData[]>([]);
   const [credits, setCredits] = useState<Credits | null>(null);
+  const [platformFeeSats, setPlatformFeeSats] = useState<number | null>(null);
   const [loadingData, setLoadingData] = useState(true);
   const [error, setError] = useState("");
+
+  // Pause/unpause
+  const [pauseLoading, setPauseLoading] = useState(false);
+  const [unpauseError, setUnpauseError] = useState("");
 
   // Confirmation dialogs
   const [confirmAction, setConfirmAction] = useState<{
@@ -423,24 +456,18 @@ export default function DashboardPage() {
   const [deleteInput, setDeleteInput] = useState("");
   const [deleteLoading, setDeleteLoading] = useState(false);
 
-  const isDuo = user?.membership_plan === "duo";
-
   // ---------- Data fetching ----------
 
   const fetchData = useCallback(async () => {
     setLoadingData(true);
     setError("");
     try {
-      const fetches: Promise<Response>[] = [
+      const [qRes, cRes, sRes, pRes] = await Promise.all([
         authFetch("/api/queue"),
         authFetch("/api/credits"),
-      ];
-
-      // Fetch slots for all users (Solo gets 1, Duo gets 2)
-      fetches.push(authFetch("/api/slots"));
-
-      const responses = await Promise.all(fetches);
-      const [qRes, cRes, sRes] = responses;
+        authFetch("/api/slots"),
+        fetch("/api/platform-config"),
+      ]);
 
       if (!qRes.ok || !cRes.ok) {
         setError("Failed to load dashboard data.");
@@ -456,6 +483,11 @@ export default function DashboardPage() {
       if (sRes && sRes.ok) {
         const sData = await sRes.json();
         setSlots(sData.slots);
+      }
+
+      if (pRes.ok) {
+        const pData = await pRes.json();
+        setPlatformFeeSats(pData.platform_fee_sats);
       }
     } catch {
       setError("Failed to load dashboard data.");
@@ -476,7 +508,7 @@ export default function DashboardPage() {
   const pinnedItems = queue.filter(isItemPinned);
   const sortableItems = queue.filter((q) => !isItemPinned(q));
 
-  // For Solo users without slot data, fall back to the old active item detection
+  // For users without slot data, fall back to the old active item detection
   const activeItem = queue.find(
     (q) =>
       q.subscription_status === "active" ||
@@ -559,9 +591,7 @@ export default function DashboardPage() {
   const handleSendBackToQueue = useCallback(
     async (serviceId: string) => {
       // Move the service from next_service on its slot back to the end of the queue.
-      // Reorder: put it at the end of the current queue order.
       const currentOrder = queue.map((q) => q.service_id);
-      // If the service is already in the queue, move it to the end
       const filtered = currentOrder.filter((id) => id !== serviceId);
       const newOrder = [...filtered, serviceId];
 
@@ -588,6 +618,50 @@ export default function DashboardPage() {
     },
     [queue, fetchData]
   );
+
+  // ---------- Pause / Unpause ----------
+
+  const handlePause = useCallback(async () => {
+    setPauseLoading(true);
+    setUnpauseError("");
+    try {
+      const res = await authFetch("/api/pause", { method: "POST" });
+      if (res.ok) {
+        // Reload page to reflect new status
+        window.location.reload();
+      } else {
+        const data = await res.json().catch(() => ({}));
+        setUnpauseError(data.error || "Failed to pause.");
+      }
+    } catch {
+      setUnpauseError("Connection failed.");
+    } finally {
+      setPauseLoading(false);
+    }
+  }, []);
+
+  const handleUnpause = useCallback(async () => {
+    setPauseLoading(true);
+    setUnpauseError("");
+    try {
+      const res = await authFetch("/api/unpause", { method: "POST" });
+      if (res.ok) {
+        window.location.reload();
+      } else if (res.status === 402) {
+        const data = await res.json();
+        setUnpauseError(
+          `Not enough sats. You need ${formatSats(data.shortfall_sats)} more sats to resume.`
+        );
+      } else {
+        const data = await res.json().catch(() => ({}));
+        setUnpauseError(data.error || "Failed to unpause.");
+      }
+    } catch {
+      setUnpauseError("Connection failed.");
+    } finally {
+      setPauseLoading(false);
+    }
+  }, []);
 
   // ---------- Delete account ----------
 
@@ -623,12 +697,11 @@ export default function DashboardPage() {
 
   // ---------- Render ----------
 
-  const containerWidth = isDuo ? "max-w-4xl" : "max-w-2xl";
   const hasSlots = slots.length > 0;
 
   return (
     <main className="min-h-screen">
-      <div className={`${containerWidth} mx-auto px-4 py-12 space-y-8`}>
+      <div className="max-w-2xl mx-auto px-4 py-12 space-y-8">
         <h1 className="text-4xl font-bold tracking-tight text-foreground">
           Your rotation
         </h1>
@@ -643,22 +716,12 @@ export default function DashboardPage() {
             {/* 1. Slot Cards (or single active subscription card)        */}
             {/* --------------------------------------------------------- */}
             {hasSlots ? (
-              <div
-                className={
-                  isDuo
-                    ? "grid grid-cols-1 md:grid-cols-2 gap-4"
-                    : ""
-                }
-              >
+              <div>
                 {slots.map((slot) => (
                   <SlotCard
                     key={slot.slot_number}
                     slot={slot}
-                    slotLabel={
-                      isDuo
-                        ? `Slot ${slot.slot_number}`
-                        : "Current subscription"
-                    }
+                    slotLabel="Current subscription"
                     onStay={(serviceId, serviceName) =>
                       setConfirmAction({ type: "stay", serviceId, serviceName })
                     }
@@ -670,7 +733,7 @@ export default function DashboardPage() {
                 ))}
               </div>
             ) : (
-              /* Fallback: no slots exist yet (Solo, pre-orchestrator) */
+              /* Fallback: no slots exist yet (pre-orchestrator) */
               <section className="bg-surface border border-border rounded p-6">
                 <h2 className="text-sm font-medium text-muted mb-4">
                   Current subscription
@@ -906,29 +969,55 @@ export default function DashboardPage() {
             <section className="bg-surface border border-border rounded p-6 space-y-6">
               <h2 className="text-sm font-medium text-muted mb-4">Account</h2>
 
-              <div className="text-sm text-foreground space-y-2">
-                <div>
-                  <span className="text-muted">Membership:</span>{" "}
-                  <span className="font-medium">
-                    {user.status === "active" ? "Active" : user.status}
-                    {user.membership_expires_at &&
-                      ` \u2014 renews ${formatDate(user.membership_expires_at)}`}
-                  </span>
-                </div>
-                <div>
-                  <span className="text-muted">Plan:</span>{" "}
-                  <span className="font-medium capitalize">
-                    {user.membership_plan}
-                  </span>
-                  {user.membership_plan === "solo" && (
-                    <Link
-                      href="/dashboard/upgrade"
-                      className="ml-3 text-xs text-accent hover:text-accent/80 transition-colors"
+              {/* Status + pause toggle */}
+              <div className="space-y-4">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <span className="text-sm text-muted">Status:</span>
+                    <span
+                      className={`text-xs font-medium px-2 py-0.5 rounded ${userStatusBadgeClass(user.status)}`}
                     >
-                      Upgrade to Duo
-                    </Link>
+                      {userStatusLabel(user.status)}
+                    </span>
+                  </div>
+
+                  {/* iOS-style toggle for active/paused */}
+                  {(user.status === "active" || user.status === "paused") && (
+                    <button
+                      type="button"
+                      onClick={user.status === "active" ? handlePause : handleUnpause}
+                      disabled={pauseLoading}
+                      className={`relative inline-flex h-7 w-12 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none disabled:opacity-50 ${
+                        user.status === "active" ? "bg-green-600" : "bg-neutral-600"
+                      }`}
+                      role="switch"
+                      aria-checked={user.status === "active"}
+                      aria-label={user.status === "active" ? "Pause rotation" : "Resume rotation"}
+                    >
+                      <span
+                        className={`pointer-events-none inline-block h-6 w-6 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
+                          user.status === "active" ? "translate-x-5" : "translate-x-0"
+                        }`}
+                      />
+                    </button>
                   )}
                 </div>
+
+                {user.status === "auto_paused" && (
+                  <p className="text-sm text-amber-400">
+                    Paused (low balance). Add sats to resume automatically.
+                  </p>
+                )}
+
+                {unpauseError && (
+                  <p className="text-red-400 text-sm">{unpauseError}</p>
+                )}
+
+                {platformFeeSats !== null && (
+                  <div className="text-sm text-muted">
+                    Platform fee: {formatSats(platformFeeSats)} sats/mo
+                  </div>
+                )}
               </div>
 
               {/* Nostr bot */}
@@ -938,7 +1027,7 @@ export default function DashboardPage() {
                     {process.env.NEXT_PUBLIC_NOSTR_BOT_NAME}
                   </h3>
                   <p className="text-sm text-muted">
-                    DM for status, queue, skip, or stay commands.
+                    DM for status, queue, skip, stay, or pause commands.
                   </p>
                   {process.env.NEXT_PUBLIC_NOSTR_BOT_NPUB && (
                     <button

@@ -3,40 +3,12 @@ import { withAuth } from "@/lib/auth";
 import { query } from "@/lib/db";
 import { usdCentsToSats } from "@/lib/btc-price";
 
-type MembershipPlan = "solo" | "duo";
-type BillingPeriod = "monthly" | "annual";
-
 export const POST = withAuth(async (req: NextRequest, { userId }) => {
-  let body: {
-    amount_usd_cents?: number;
-    amount_sats?: number;
-    membership_plan?: MembershipPlan;
-    billing_period?: BillingPeriod;
-    service_credit_usd_cents?: number;
-  } = {};
+  let body: { amount_sats?: number; amount_usd_cents?: number } = {};
   try {
     body = await req.json();
   } catch {
-    // Empty body is OK — creates open-amount invoice
-  }
-
-  const isMembership =
-    body.membership_plan !== undefined && body.billing_period !== undefined;
-
-  // Validate membership fields if present
-  if (isMembership) {
-    if (!["solo", "duo"].includes(body.membership_plan!)) {
-      return NextResponse.json(
-        { error: "Invalid membership_plan" },
-        { status: 400 }
-      );
-    }
-    if (!["monthly", "annual"].includes(body.billing_period!)) {
-      return NextResponse.json(
-        { error: "Invalid billing_period" },
-        { status: 400 }
-      );
-    }
+    // Empty body is OK: creates an open-amount invoice
   }
 
   let amountSats: number | undefined;
@@ -44,13 +16,6 @@ export const POST = withAuth(async (req: NextRequest, { userId }) => {
     amountSats = body.amount_sats;
   } else if (body.amount_usd_cents) {
     amountSats = await usdCentsToSats(body.amount_usd_cents);
-  }
-
-  // Add service credit (gift card cost) for membership invoices
-  let serviceCreditSats = 0;
-  if (isMembership && body.service_credit_usd_cents && body.service_credit_usd_cents > 0) {
-    serviceCreditSats = await usdCentsToSats(body.service_credit_usd_cents);
-    amountSats = (amountSats ?? 0) + serviceCreditSats;
   }
 
   // Create BTCPay invoice
@@ -65,16 +30,7 @@ export const POST = withAuth(async (req: NextRequest, { userId }) => {
     );
   }
 
-  const metadata: Record<string, unknown> = isMembership
-    ? {
-        userId,
-        type: "membership",
-        membership_plan: body.membership_plan,
-        billing_period: body.billing_period,
-        service_credit_usd_cents: body.service_credit_usd_cents ?? 0,
-        service_credit_sats: serviceCreditSats,
-      }
-    : { userId, type: "prepayment" };
+  const metadata = { userId, type: "prepayment" };
 
   const invoicePayload: Record<string, unknown> = {
     currency: "BTC",
@@ -142,28 +98,12 @@ export const POST = withAuth(async (req: NextRequest, { userId }) => {
     // Non-fatal: bolt11 will be null, frontend falls back to checkout URL
   }
 
-  if (isMembership) {
-    // Record membership payment (pending) so the webhook can find it
-    const now = new Date();
-    const periodEnd =
-      body.billing_period === "annual"
-        ? new Date(now.getFullYear() + 1, now.getMonth(), now.getDate())
-        : new Date(now.getFullYear(), now.getMonth() + 1, now.getDate());
-
-    await query(
-      `INSERT INTO membership_payments
-         (user_id, btcpay_invoice_id, amount_sats, amount_usd_cents, period_start, period_end, status)
-       VALUES ($1, $2, $3, 0, $4, $5, 'pending')`,
-      [userId, invoice.id, amountSats ?? 0, now.toISOString(), periodEnd.toISOString()]
-    );
-  } else {
-    // Record prepayment in DB
-    await query(
-      `INSERT INTO btc_prepayments (user_id, btcpay_invoice_id, requested_amount_sats, status)
-       VALUES ($1, $2, $3, 'pending')`,
-      [userId, invoice.id, amountSats ?? null]
-    );
-  }
+  // Record prepayment in DB
+  await query(
+    `INSERT INTO btc_prepayments (user_id, btcpay_invoice_id, requested_amount_sats, status)
+     VALUES ($1, $2, $3, 'pending')`,
+    [userId, invoice.id, amountSats ?? null]
+  );
 
   return NextResponse.json({
     invoiceId: invoice.id,

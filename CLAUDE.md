@@ -14,7 +14,7 @@ You are a Staff-Level Software Architect who loves beautiful software design and
 
 ## What This Project Is
 
-UnsaltedButter is a streaming subscription rotation service. Two plans: Solo (4,400 sats/mo, 3,500 sats/mo annual — 1 rotation) and Duo (7,300 sats/mo, 5,850 sats/mo annual — 2 simultaneous). BTC/Lightning only. Pricing is operator-set in the `membership_pricing` table (sats-denominated). We automate subscribing/cancelling streaming services using gift cards so users never pay for multiple simultaneously. AI-driven browser automation on real Chrome — indistinguishable from a human.
+UnsaltedButter is a streaming subscription rotation service. Prepaid sats balance model: one active service at a time, 4,400 sats/mo platform fee (DB-configurable via `platform_config` table). BTC/Lightning only. Users deposit sats, we draw down for platform fees and gift cards. Three statuses: active, paused, auto_paused. No tiers, no billing dates. We automate subscribing/cancelling streaming services using gift cards so users never pay for multiple simultaneously. AI-driven browser automation on real Chrome, indistinguishable from a human.
 
 ## Read These Files First
 
@@ -65,4 +65,4 @@ unsaltedbutter.ai/
 
 ## Current Status
 
-Full plan written. No code exists yet. Starting from scratch.
+Web app (Next.js): complete, all pages and API routes, tests passing. Nostr bot (Python): complete, 5 commands + pause, NIP-57 zap handling. VPS deployed. Agent + Orchestrator: not started (waiting on hardware).

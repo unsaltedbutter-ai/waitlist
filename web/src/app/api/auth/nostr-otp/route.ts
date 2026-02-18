@@ -111,8 +111,8 @@ export async function POST(req: NextRequest) {
   // Create user and redeem invite in a single transaction
   const userId = await transaction(async (txQuery) => {
     const result = await txQuery<{ id: string }>(
-      `INSERT INTO users (nostr_npub, status, membership_plan, billing_period)
-       VALUES ($1, 'active', 'solo', 'monthly')
+      `INSERT INTO users (nostr_npub, status)
+       VALUES ($1, 'auto_paused')
        RETURNING id`,
       [npubHex]
     );

@@ -42,13 +42,14 @@ export async function verifyPassword(
   return compare(password, hashed);
 }
 
-/** True if user has never completed a membership payment (hasn't finished onboarding). */
+/** True if user has not completed onboarding (onboarded_at is NULL). */
 export async function needsOnboarding(userId: string): Promise<boolean> {
-  const result = await query<{ count: string }>(
-    "SELECT COUNT(*)::text AS count FROM membership_payments WHERE user_id = $1 AND status = 'paid'",
+  const result = await query<{ onboarded_at: string | null }>(
+    "SELECT onboarded_at FROM users WHERE id = $1",
     [userId]
   );
-  return result.rows[0].count === "0";
+  if (result.rows.length === 0) return true;
+  return result.rows[0].onboarded_at === null;
 }
 
 /** Extract userId from Authorization header. Returns null if invalid. */

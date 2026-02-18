@@ -8,13 +8,17 @@ vi.mock("@/lib/db", () => ({
   transaction: vi.fn(),
 }));
 
-// Mock btc-price module
-vi.mock("@/lib/btc-price", () => ({
-  satsToUsdCents: vi.fn(),
+// Mock auto-resume dependencies (dynamically imported by the route)
+vi.mock("@/lib/margin-call", () => ({
+  getRequiredBalance: vi.fn(),
+}));
+vi.mock("@/lib/orchestrator-notify", () => ({
+  notifyOrchestrator: vi.fn(),
 }));
 
 import { query, transaction } from "@/lib/db";
-import { satsToUsdCents } from "@/lib/btc-price";
+import { getRequiredBalance } from "@/lib/margin-call";
+import { notifyOrchestrator } from "@/lib/orchestrator-notify";
 import { POST } from "../route";
 
 const WEBHOOK_SECRET = "whsec_test_secret";
@@ -45,29 +49,21 @@ function settledPayload(invoiceId = "inv_123") {
   return { type: "InvoiceSettled", invoiceId };
 }
 
-/** Mock fetch to return Lightning payment-methods response, then optionally an invoice metadata response. */
+/** Mock fetch to return Lightning payment-methods response. */
 function mockBtcpayFetch(
   totalPaid: string,
-  metadata?: Record<string, unknown>,
+  _metadata?: Record<string, unknown>,
   paymentMethodId = "BTC-LN"
 ) {
-  const responses: Response[] = [
+  const spy = vi.spyOn(global, "fetch");
+  spy.mockResolvedValueOnce(
     new Response(
       JSON.stringify([
         { paymentMethodId, totalPaid },
       ]),
       { status: 200 }
     ),
-  ];
-  if (metadata) {
-    responses.push(
-      new Response(JSON.stringify({ metadata }), { status: 200 })
-    );
-  }
-  const spy = vi.spyOn(global, "fetch");
-  for (const r of responses) {
-    spy.mockResolvedValueOnce(r);
-  }
+  );
   return spy;
 }
 
@@ -79,15 +75,16 @@ beforeEach(() => {
   vi.stubEnv("BTCPAY_STORE_ID", "store_test");
   vi.mocked(query).mockReset();
   vi.mocked(transaction).mockReset();
-  vi.mocked(satsToUsdCents).mockReset();
+  vi.mocked(getRequiredBalance).mockReset();
+  vi.mocked(notifyOrchestrator).mockReset();
 });
 
 // ============================================================
 // Prepayment (service credits) tests
 // ============================================================
 
-describe("BTCPay webhook — prepayments", () => {
-  it("valid HMAC + InvoiceSettled → credits account", async () => {
+describe("BTCPay webhook: prepayments", () => {
+  it("valid HMAC + InvoiceSettled credits account", async () => {
     const payload = settledPayload();
     const body = JSON.stringify(payload);
 
@@ -106,6 +103,11 @@ describe("BTCPay webhook — prepayments", () => {
       );
       return cb(txQuery as any);
     });
+
+    // post-transaction: user status query (not auto_paused, so no resume)
+    vi.mocked(query).mockResolvedValueOnce(
+      mockQueryResult([{ status: "active", onboarded_at: "2026-01-01T00:00:00Z" }])
+    );
 
     const req = makeRequest(payload, sign(body));
     const res = await POST(req as any);
@@ -133,6 +135,11 @@ describe("BTCPay webhook — prepayments", () => {
       return cb(txQuery as any);
     });
 
+    // post-transaction: user status query
+    vi.mocked(query).mockResolvedValueOnce(
+      mockQueryResult([{ status: "active", onboarded_at: "2026-01-01T00:00:00Z" }])
+    );
+
     const req = makeRequest(payload, sign(body));
     const res = await POST(req as any);
     const data = await res.json();
@@ -141,7 +148,7 @@ describe("BTCPay webhook — prepayments", () => {
     expect(data.credited_sats).toBe(10000);
   });
 
-  it("invalid HMAC → 401", async () => {
+  it("invalid HMAC returns 401", async () => {
     const payload = settledPayload();
     const req = makeRequest(payload, "sha256=wrong");
     const res = await POST(req as any);
@@ -150,7 +157,7 @@ describe("BTCPay webhook — prepayments", () => {
     expect(query).not.toHaveBeenCalled();
   });
 
-  it("missing signature header → 401 (security: must not skip verification)", async () => {
+  it("missing signature header returns 401 (must not skip verification)", async () => {
     const payload = settledPayload();
 
     vi.mocked(query).mockResolvedValueOnce(
@@ -163,7 +170,7 @@ describe("BTCPay webhook — prepayments", () => {
     expect(res.status).toBe(401);
   });
 
-  it("non-InvoiceSettled event → 200, no credit", async () => {
+  it("non-InvoiceSettled event returns 200, no credit", async () => {
     const payload = { type: "InvoiceCreated", invoiceId: "inv_123" };
     const body = JSON.stringify(payload);
     const req = makeRequest(payload, sign(body));
@@ -173,7 +180,7 @@ describe("BTCPay webhook — prepayments", () => {
     expect(query).not.toHaveBeenCalled();
   });
 
-  it("already-paid prepayment → idempotent 200", async () => {
+  it("already-paid prepayment returns idempotent 200", async () => {
     const payload = settledPayload();
     const body = JSON.stringify(payload);
 
@@ -188,23 +195,22 @@ describe("BTCPay webhook — prepayments", () => {
     expect(transaction).not.toHaveBeenCalled();
   });
 
-  it("unknown invoice (not prepayment, not membership) → 200, no credit", async () => {
+  it("unknown invoice (not in btc_prepayments) returns 200, no credit", async () => {
     const payload = settledPayload("inv_unknown");
     const body = JSON.stringify(payload);
 
-    // btc_prepayments: not found
-    vi.mocked(query).mockResolvedValueOnce(mockQueryResult([]));
-    // membership_payments: not found
+    // btc_prepayments: not found (single query, no membership lookup)
     vi.mocked(query).mockResolvedValueOnce(mockQueryResult([]));
 
     const req = makeRequest(payload, sign(body));
     const res = await POST(req as any);
 
     expect(res.status).toBe(200);
+    expect(query).toHaveBeenCalledTimes(1);
     expect(transaction).not.toHaveBeenCalled();
   });
 
-  it("missing invoiceId → 400", async () => {
+  it("missing invoiceId returns 400", async () => {
     const payload = { type: "InvoiceSettled" };
     const body = JSON.stringify(payload);
     const req = makeRequest(payload, sign(body));
@@ -213,7 +219,7 @@ describe("BTCPay webhook — prepayments", () => {
     expect(res.status).toBe(400);
   });
 
-  it("BTCPay API failure → 502", async () => {
+  it("BTCPay API failure returns 502", async () => {
     const payload = settledPayload();
     const body = JSON.stringify(payload);
 
@@ -233,324 +239,128 @@ describe("BTCPay webhook — prepayments", () => {
 });
 
 // ============================================================
-// Membership payment tests
+// Auto-resume tests
 // ============================================================
 
-describe("BTCPay webhook — membership payments", () => {
-  it("membership invoice settled → updates user plan and records payment", async () => {
-    const payload = settledPayload("inv_mem_1");
+describe("BTCPay webhook: auto-resume after prepayment", () => {
+  /** Helper: set up a standard prepayment flow through the transaction, then
+   *  configure the post-transaction queries for auto-resume testing. */
+  function setupPrepaymentFlow(receivedSats: number) {
+    const payload = settledPayload("inv_resume");
     const body = JSON.stringify(payload);
 
-    // query 1: btc_prepayments — not found
-    vi.mocked(query).mockResolvedValueOnce(mockQueryResult([]));
-    // query 2: membership_payments — found
+    // query 1: lookup prepayment
     vi.mocked(query).mockResolvedValueOnce(
-      mockQueryResult([{
-        id: "mp_1",
-        user_id: "user_1",
-        status: "pending",
-        period_start: "2026-02-15T00:00:00Z",
-        period_end: "2026-03-15T00:00:00Z",
-      }])
+      mockQueryResult([{ id: "prep_ar", user_id: "user_ar", status: "pending" }])
     );
 
-    // fetch 1: payment-methods (sats received)
-    // fetch 2: invoice metadata (plan + billing_period)
-    mockBtcpayFetch("0.00044", {
-      userId: "user_1",
-      type: "membership",
-      membership_plan: "solo",
-      billing_period: "monthly",
-    });
+    // fetch BTCPay payment-methods
+    const btcAmount = (receivedSats / 100_000_000).toFixed(8);
+    mockBtcpayFetch(btcAmount);
 
-    // satsToUsdCents mock
-    vi.mocked(satsToUsdCents).mockResolvedValueOnce(299);
-
-    // transaction mock
+    // transaction: execute callback, return credit_sats
     vi.mocked(transaction).mockImplementationOnce(async (cb) => {
-      const txQuery = vi.fn().mockResolvedValue(mockQueryResult([]));
+      const txQuery = vi.fn().mockResolvedValue(
+        mockQueryResult([{ credit_sats: receivedSats }])
+      );
       return cb(txQuery as any);
     });
 
-    const req = makeRequest(payload, sign(body));
-    const res = await POST(req as any);
-    const data = await res.json();
+    return { payload, body };
+  }
 
-    expect(res.status).toBe(200);
-    expect(data.membership).toBe("solo");
-    expect(data.billing_period).toBe("monthly");
-    expect(satsToUsdCents).toHaveBeenCalledWith(44000);
-    expect(transaction).toHaveBeenCalled();
+  it("auto_paused + onboarded user with sufficient balance gets activated", async () => {
+    const { payload, body } = setupPrepaymentFlow(50000);
 
-    // Verify the transaction callback received correct SQL
-    const txQuery = vi.mocked(transaction).mock.calls[0][0];
-    const mockTxFn = vi.fn().mockResolvedValue(mockQueryResult([]));
-    await txQuery(mockTxFn as any);
-
-    // First call: UPDATE users
-    const userUpdate = mockTxFn.mock.calls[0];
-    expect(userUpdate[0]).toContain("UPDATE users");
-    expect(userUpdate[1]).toEqual([
-      "user_1", "solo", "monthly", "2026-03-15T00:00:00Z",
-    ]);
-
-    // Second call: UPDATE membership_payments
-    const mpUpdate = mockTxFn.mock.calls[1];
-    expect(mpUpdate[0]).toContain("UPDATE membership_payments");
-    expect(mpUpdate[1]).toEqual(["inv_mem_1", 44000, 299]);
-  });
-
-  it("annual membership invoice → correct metadata passed through", async () => {
-    const payload = settledPayload("inv_mem_annual");
-    const body = JSON.stringify(payload);
-
-    vi.mocked(query).mockResolvedValueOnce(mockQueryResult([]));
+    // post-transaction query 2: user status + onboarded_at
     vi.mocked(query).mockResolvedValueOnce(
-      mockQueryResult([{
-        id: "mp_2",
-        user_id: "user_2",
-        status: "pending",
-        period_start: "2026-02-15T00:00:00Z",
-        period_end: "2027-02-15T00:00:00Z",
-      }])
+      mockQueryResult([{ status: "auto_paused", onboarded_at: "2026-01-15T00:00:00Z" }])
     );
 
-    mockBtcpayFetch("0.00035", {
-      userId: "user_2",
-      type: "membership",
-      membership_plan: "duo",
-      billing_period: "annual",
-    });
+    // query 3: rotation_queue (next service)
+    vi.mocked(query).mockResolvedValueOnce(
+      mockQueryResult([{ service_id: "svc_netflix" }])
+    );
 
-    vi.mocked(satsToUsdCents).mockResolvedValueOnce(399);
+    // getRequiredBalance returns less than current balance
+    vi.mocked(getRequiredBalance).mockResolvedValueOnce({
+      totalSats: 40000,
+      giftCardSats: 35000,
+      marginSats: 5000,
+    } as any);
 
-    vi.mocked(transaction).mockImplementationOnce(async (cb) => {
-      const txQuery = vi.fn().mockResolvedValue(mockQueryResult([]));
-      return cb(txQuery as any);
-    });
+    // query 4: current balance from service_credits
+    vi.mocked(query).mockResolvedValueOnce(
+      mockQueryResult([{ credit_sats: "50000" }])
+    );
+
+    // query 5: UPDATE users SET status = 'active'
+    vi.mocked(query).mockResolvedValueOnce(mockQueryResult([]));
+
+    // notifyOrchestrator resolves
+    vi.mocked(notifyOrchestrator).mockResolvedValueOnce(undefined as any);
 
     const req = makeRequest(payload, sign(body));
     const res = await POST(req as any);
     const data = await res.json();
 
     expect(res.status).toBe(200);
-    expect(data.membership).toBe("duo");
-    expect(data.billing_period).toBe("annual");
+    expect(data.credited_sats).toBe(50000);
+
+    // Verify user was activated
+    const updateCall = vi.mocked(query).mock.calls.find(
+      (c) => typeof c[0] === "string" && c[0].includes("UPDATE users SET status")
+    );
+    expect(updateCall).toBeTruthy();
+    expect(updateCall![1]).toContain("user_ar");
+
+    // Verify orchestrator was notified
+    expect(notifyOrchestrator).toHaveBeenCalledWith("user_ar");
   });
 
-  it("already-paid membership → idempotent 200", async () => {
-    const payload = settledPayload("inv_mem_paid");
-    const body = JSON.stringify(payload);
+  it("auto_paused user without onboarding does not activate", async () => {
+    const { payload, body } = setupPrepaymentFlow(50000);
 
-    vi.mocked(query).mockResolvedValueOnce(mockQueryResult([]));
+    // post-transaction query 2: user is auto_paused but NOT onboarded
     vi.mocked(query).mockResolvedValueOnce(
-      mockQueryResult([{
-        id: "mp_3",
-        user_id: "user_1",
-        status: "paid",
-        period_start: "2026-02-15T00:00:00Z",
-        period_end: "2026-03-15T00:00:00Z",
-      }])
+      mockQueryResult([{ status: "auto_paused", onboarded_at: null }])
     );
-
-    const req = makeRequest(payload, sign(body));
-    const res = await POST(req as any);
-
-    expect(res.status).toBe(200);
-    expect(transaction).not.toHaveBeenCalled();
-  });
-
-  it("membership invoice with no Lightning payment → 400", async () => {
-    const payload = settledPayload("inv_mem_empty");
-    const body = JSON.stringify(payload);
-
-    vi.mocked(query).mockResolvedValueOnce(mockQueryResult([]));
-    vi.mocked(query).mockResolvedValueOnce(
-      mockQueryResult([{
-        id: "mp_4",
-        user_id: "user_1",
-        status: "pending",
-        period_start: "2026-02-15T00:00:00Z",
-        period_end: "2026-03-15T00:00:00Z",
-      }])
-    );
-
-    // payment-methods returns no Lightning entry
-    vi.spyOn(global, "fetch").mockResolvedValueOnce(
-      new Response(JSON.stringify([]), { status: 200 })
-    );
-
-    const req = makeRequest(payload, sign(body));
-    const res = await POST(req as any);
-
-    expect(res.status).toBe(400);
-    expect(transaction).not.toHaveBeenCalled();
-  });
-
-  it("membership invoice metadata fetch failure → 502", async () => {
-    const payload = settledPayload("inv_mem_fail");
-    const body = JSON.stringify(payload);
-
-    vi.mocked(query).mockResolvedValueOnce(mockQueryResult([]));
-    vi.mocked(query).mockResolvedValueOnce(
-      mockQueryResult([{
-        id: "mp_5",
-        user_id: "user_1",
-        status: "pending",
-        period_start: "2026-02-15T00:00:00Z",
-        period_end: "2026-03-15T00:00:00Z",
-      }])
-    );
-
-    const fetchSpy = vi.spyOn(global, "fetch");
-    // payment-methods succeeds
-    fetchSpy.mockResolvedValueOnce(
-      new Response(
-        JSON.stringify([
-          { paymentMethodId: "BTC-LightningNetwork", totalPaid: "0.00044" },
-        ]),
-        { status: 200 }
-      )
-    );
-    // invoice metadata fetch fails
-    fetchSpy.mockResolvedValueOnce(
-      new Response("Internal Server Error", { status: 500 })
-    );
-
-    const req = makeRequest(payload, sign(body));
-    const res = await POST(req as any);
-
-    expect(res.status).toBe(502);
-    expect(transaction).not.toHaveBeenCalled();
-  });
-
-  it("membership invoice with service_credit_sats → credits service balance", async () => {
-    const payload = settledPayload("inv_mem_svc");
-    const body = JSON.stringify(payload);
-
-    vi.mocked(query).mockResolvedValueOnce(mockQueryResult([]));
-    vi.mocked(query).mockResolvedValueOnce(
-      mockQueryResult([{
-        id: "mp_svc",
-        user_id: "user_1",
-        status: "pending",
-        period_start: "2026-02-16T00:00:00Z",
-        period_end: "2026-03-16T00:00:00Z",
-      }])
-    );
-
-    mockBtcpayFetch("0.00060", {
-      userId: "user_1",
-      type: "membership",
-      membership_plan: "solo",
-      billing_period: "monthly",
-      service_credit_sats: 15000,
-      service_credit_usd_cents: 1099,
-    });
-
-    vi.mocked(satsToUsdCents).mockResolvedValueOnce(500);
-
-    const txQuery = vi.fn().mockResolvedValue(
-      mockQueryResult([{ credit_sats: 15000 }])
-    );
-    vi.mocked(transaction).mockImplementationOnce(async (cb) => cb(txQuery as any));
 
     const req = makeRequest(payload, sign(body));
     const res = await POST(req as any);
     const data = await res.json();
 
     expect(res.status).toBe(200);
-    expect(data.service_credit_sats).toBe(15000);
+    expect(data.credited_sats).toBe(50000);
 
-    // Should have 5 calls: UPDATE users, UPDATE membership_payments,
-    // INSERT service_credits, UPDATE service_credits, INSERT credit_transactions
-    expect(txQuery).toHaveBeenCalledTimes(5);
-
-    // INSERT service_credits (upsert)
-    expect(txQuery.mock.calls[2][0]).toContain("INSERT INTO service_credits");
-
-    // UPDATE service_credits
-    expect(txQuery.mock.calls[3][0]).toContain("UPDATE service_credits");
-    expect(txQuery.mock.calls[3][1]).toEqual(["user_1", 15000]);
-
-    // INSERT credit_transactions
-    expect(txQuery.mock.calls[4][0]).toContain("INSERT INTO credit_transactions");
-    expect(txQuery.mock.calls[4][1][1]).toBe(15000); // amount_sats
+    // Should NOT have queried rotation_queue or updated status
+    const updateCall = vi.mocked(query).mock.calls.find(
+      (c) => typeof c[0] === "string" && c[0].includes("UPDATE users SET status")
+    );
+    expect(updateCall).toBeUndefined();
+    expect(notifyOrchestrator).not.toHaveBeenCalled();
   });
 
-  it("membership invoice without service_credit_sats → no service credit", async () => {
-    const payload = settledPayload("inv_mem_nosvc");
-    const body = JSON.stringify(payload);
+  it("active user does not change status", async () => {
+    const { payload, body } = setupPrepaymentFlow(30000);
 
-    vi.mocked(query).mockResolvedValueOnce(mockQueryResult([]));
+    // post-transaction query 2: user is already active
     vi.mocked(query).mockResolvedValueOnce(
-      mockQueryResult([{
-        id: "mp_nosvc",
-        user_id: "user_1",
-        status: "pending",
-        period_start: "2026-02-16T00:00:00Z",
-        period_end: "2026-03-16T00:00:00Z",
-      }])
+      mockQueryResult([{ status: "active", onboarded_at: "2026-01-10T00:00:00Z" }])
     );
-
-    mockBtcpayFetch("0.00044", {
-      userId: "user_1",
-      type: "membership",
-      membership_plan: "solo",
-      billing_period: "monthly",
-    });
-
-    vi.mocked(satsToUsdCents).mockResolvedValueOnce(299);
-
-    const txQuery = vi.fn().mockResolvedValue(mockQueryResult([]));
-    vi.mocked(transaction).mockImplementationOnce(async (cb) => cb(txQuery as any));
 
     const req = makeRequest(payload, sign(body));
     const res = await POST(req as any);
     const data = await res.json();
 
     expect(res.status).toBe(200);
-    expect(data.service_credit_sats).toBe(0);
-    // Only 2 calls: UPDATE users, UPDATE membership_payments (no service credit)
-    expect(txQuery).toHaveBeenCalledTimes(2);
-  });
+    expect(data.credited_sats).toBe(30000);
 
-  it("membership invoice with missing plan metadata → 400", async () => {
-    const payload = settledPayload("inv_mem_noplan");
-    const body = JSON.stringify(payload);
-
-    vi.mocked(query).mockResolvedValueOnce(mockQueryResult([]));
-    vi.mocked(query).mockResolvedValueOnce(
-      mockQueryResult([{
-        id: "mp_6",
-        user_id: "user_1",
-        status: "pending",
-        period_start: "2026-02-15T00:00:00Z",
-        period_end: "2026-03-15T00:00:00Z",
-      }])
+    // Should NOT have queried rotation_queue or updated status
+    const updateCall = vi.mocked(query).mock.calls.find(
+      (c) => typeof c[0] === "string" && c[0].includes("UPDATE users SET status")
     );
-
-    // payment-methods + invoice metadata (missing membership_plan)
-    const fetchSpy = vi.spyOn(global, "fetch");
-    fetchSpy.mockResolvedValueOnce(
-      new Response(
-        JSON.stringify([
-          { paymentMethodId: "BTC-LightningNetwork", totalPaid: "0.00044" },
-        ]),
-        { status: 200 }
-      )
-    );
-    fetchSpy.mockResolvedValueOnce(
-      new Response(
-        JSON.stringify({ metadata: { userId: "user_1", type: "membership" } }),
-        { status: 200 }
-      )
-    );
-
-    const req = makeRequest(payload, sign(body));
-    const res = await POST(req as any);
-
-    expect(res.status).toBe(400);
-    expect(transaction).not.toHaveBeenCalled();
+    expect(updateCall).toBeUndefined();
+    expect(notifyOrchestrator).not.toHaveBeenCalled();
   });
 });

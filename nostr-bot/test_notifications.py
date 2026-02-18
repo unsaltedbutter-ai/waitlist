@@ -18,7 +18,7 @@ USER_ID_2 = UUID("bbbbbbbb-cccc-dddd-eeee-ffffffffffff")
 NPUB_HEX = "abcd1234" * 8  # 64 hex chars
 
 
-# ── Helpers ───────────────────────────────────────────────────
+# -- Helpers ---------------------------------------------------------------
 
 
 def _make_pool_mock():
@@ -29,7 +29,7 @@ def _make_pool_mock():
     return pool
 
 
-# ── Message formatting ────────────────────────────────────────
+# -- Message formatting ----------------------------------------------------
 
 
 class TestFormatLockInMessage:
@@ -46,28 +46,6 @@ class TestFormatLockInMessage:
         assert "soon" in msg
 
 
-class TestFormatMembershipDueMessage:
-    def test_monthly(self):
-        msg = notifications.format_membership_due_message(
-            "monthly", 4400, datetime(2026, 2, 28)
-        )
-        assert "monthly" in msg
-        assert "4,400 sats" in msg
-        assert "Feb 28" in msg
-        assert "destroy" in msg
-
-    def test_annual(self):
-        msg = notifications.format_membership_due_message(
-            "annual", 3500, datetime(2026, 12, 1)
-        )
-        assert "annual" in msg
-        assert "3,500 sats" in msg
-
-    def test_without_date(self):
-        msg = notifications.format_membership_due_message("monthly", 4400, None)
-        assert "soon" in msg
-
-
 class TestFormatCreditTopupMessage:
     def test_basic(self):
         msg = notifications.format_credit_topup_message("Netflix", 1799, 5000)
@@ -75,19 +53,37 @@ class TestFormatCreditTopupMessage:
         assert "$18/mo" in msg
         assert "sats" in msg
         assert "dashboard" in msg
+        assert "platform fee" in msg
 
-    def test_needed_sats_calculation(self):
-        # Netflix = 1799 cents, credit = 5000 sats
-        # needed = max(0, (1799 * 10) - 5000) = 12990
+    def test_needed_sats_includes_platform_fee(self):
+        # Netflix = 1799 cents, credit = 5000 sats, platform_fee = 4400
+        # needed = max(0, (1799 * 10) + 4400 - 5000) = 17390
         msg = notifications.format_credit_topup_message("Netflix", 1799, 5000)
-        assert "12,990 sats" in msg
+        assert "17,390 sats" in msg
 
     def test_zero_credits(self):
+        # Hulu = 1899 cents, credit = 0, platform_fee = 4400
+        # needed = (1899 * 10) + 4400 - 0 = 23390
         msg = notifications.format_credit_topup_message("Hulu", 1899, 0)
-        assert "18,990 sats" in msg
+        assert "23,390 sats" in msg
+
+    def test_custom_platform_fee(self):
+        # 1000 cents, credit = 0, platform_fee = 5000
+        # needed = (1000 * 10) + 5000 = 15000
+        msg = notifications.format_credit_topup_message("Test", 1000, 0, platform_fee=5000)
+        assert "15,000 sats" in msg
+        assert "5,000 sats platform fee" in msg
 
 
-# ── Query functions (mocked DB pool) ─────────────────────────
+class TestFormatAutoPausedMessage:
+    def test_message_content(self):
+        msg = notifications.format_auto_paused_message()
+        assert "paused" in msg.lower()
+        assert "low balance" in msg.lower()
+        assert "UNPAUSE" in msg
+
+
+# -- Query functions (mocked DB pool) -------------------------------------
 
 
 class TestGetUsersLockInApproaching:
@@ -135,7 +131,7 @@ class TestGetUsersLockInApproaching:
         assert "7 days" in sql
 
 
-class TestGetUsersMembershipDue:
+class TestGetUsersAutoPaused:
     @pytest.mark.asyncio
     async def test_returns_matching_users(self):
         pool = _make_pool_mock()
@@ -143,34 +139,31 @@ class TestGetUsersMembershipDue:
             {
                 "user_id": USER_ID,
                 "nostr_npub": NPUB_HEX,
-                "membership_plan": "solo",
-                "billing_period": "monthly",
-                "membership_expires_at": datetime(2026, 2, 20, tzinfo=timezone.utc),
-                "price_sats": 4400,
             }
         ]
         with patch("notifications.db._get_pool", return_value=pool):
-            result = await notifications.get_users_membership_due()
+            result = await notifications.get_users_auto_paused()
         assert len(result) == 1
-        assert result[0]["price_sats"] == 4400
+        assert result[0]["user_id"] == USER_ID
 
     @pytest.mark.asyncio
     async def test_returns_empty_when_no_matches(self):
         pool = _make_pool_mock()
         pool.fetch.return_value = []
         with patch("notifications.db._get_pool", return_value=pool):
-            result = await notifications.get_users_membership_due()
+            result = await notifications.get_users_auto_paused()
         assert result == []
 
     @pytest.mark.asyncio
-    async def test_query_joins_membership_pricing(self):
+    async def test_query_filters_auto_paused_status(self):
         pool = _make_pool_mock()
         pool.fetch.return_value = []
         with patch("notifications.db._get_pool", return_value=pool):
-            await notifications.get_users_membership_due()
+            await notifications.get_users_auto_paused()
         sql = pool.fetch.call_args[0][0]
-        assert "membership_pricing" in sql
-        assert "membership_due" in sql
+        assert "auto_paused" in sql
+        assert "nostr_npub IS NOT NULL" in sql
+        assert "7 days" in sql
 
 
 class TestGetUsersCreditTopup:
@@ -221,7 +214,7 @@ class TestGetUsersCreditTopup:
         assert "credit_topup" in sql
 
 
-# ── record_notification ───────────────────────────────────────
+# -- record_notification ---------------------------------------------------
 
 
 class TestRecordNotification:
@@ -246,13 +239,13 @@ class TestRecordNotification:
         assert call_args[3] is None
 
 
-# ── check_and_send_notifications (integration) ───────────────
+# -- check_and_send_notifications (integration) ---------------------------
 
 
 class TestCheckAndSendNotifications:
     @pytest.mark.asyncio
     async def test_sends_all_notification_types(self):
-        """Verify the orchestrator calls all three queries and sends DMs."""
+        """Verify the orchestrator calls all queries and sends DMs."""
         mock_client = AsyncMock()
         mock_signer = AsyncMock()
 
@@ -265,16 +258,6 @@ class TestCheckAndSendNotifications:
                 "next_service_id": "netflix",
             }
         ]
-        membership_data = [
-            {
-                "user_id": USER_ID_2,
-                "nostr_npub": "def0" * 16,
-                "membership_plan": "solo",
-                "billing_period": "monthly",
-                "membership_expires_at": datetime(2026, 2, 20),
-                "price_sats": 4400,
-            }
-        ]
         topup_data = [
             {
                 "user_id": USER_ID,
@@ -284,16 +267,22 @@ class TestCheckAndSendNotifications:
                 "cheapest_service_price_cents": 1099,
             }
         ]
+        auto_paused_data = [
+            {
+                "user_id": USER_ID_2,
+                "nostr_npub": "def0" * 16,
+            }
+        ]
 
         with (
             patch("notifications.get_users_lock_in_approaching", AsyncMock(return_value=lock_in_data)),
-            patch("notifications.get_users_membership_due", AsyncMock(return_value=membership_data)),
             patch("notifications.get_users_credit_topup", AsyncMock(return_value=topup_data)),
+            patch("notifications.get_users_auto_paused", AsyncMock(return_value=auto_paused_data)),
             patch("notifications.record_notification", AsyncMock()) as mock_record,
         ):
             await notifications.check_and_send_notifications(mock_client, mock_signer)
 
-        # 3 DMs sent total (1 lock-in + 1 membership + 1 topup)
+        # 3 DMs sent total (1 lock-in + 1 topup + 1 auto_paused)
         assert mock_client.send_private_msg.call_count == 3
         assert mock_record.call_count == 3
 
@@ -304,8 +293,8 @@ class TestCheckAndSendNotifications:
 
         with (
             patch("notifications.get_users_lock_in_approaching", AsyncMock(return_value=[])),
-            patch("notifications.get_users_membership_due", AsyncMock(return_value=[])),
             patch("notifications.get_users_credit_topup", AsyncMock(return_value=[])),
+            patch("notifications.get_users_auto_paused", AsyncMock(return_value=[])),
             patch("notifications.record_notification", AsyncMock()) as mock_record,
         ):
             await notifications.check_and_send_notifications(mock_client, mock_signer)
@@ -332,8 +321,8 @@ class TestCheckAndSendNotifications:
 
         with (
             patch("notifications.get_users_lock_in_approaching", AsyncMock(return_value=lock_in_data)),
-            patch("notifications.get_users_membership_due", AsyncMock(return_value=[])),
             patch("notifications.get_users_credit_topup", AsyncMock(return_value=[])),
+            patch("notifications.get_users_auto_paused", AsyncMock(return_value=[])),
             patch("notifications.record_notification", AsyncMock()) as mock_record,
         ):
             # Should not raise
@@ -360,8 +349,8 @@ class TestCheckAndSendNotifications:
 
         with (
             patch("notifications.get_users_lock_in_approaching", AsyncMock(side_effect=Exception("db error"))),
-            patch("notifications.get_users_membership_due", AsyncMock(side_effect=Exception("db error"))),
             patch("notifications.get_users_credit_topup", AsyncMock(return_value=topup_data)),
+            patch("notifications.get_users_auto_paused", AsyncMock(side_effect=Exception("db error"))),
             patch("notifications.record_notification", AsyncMock()) as mock_record,
         ):
             await notifications.check_and_send_notifications(mock_client, mock_signer)
@@ -371,7 +360,7 @@ class TestCheckAndSendNotifications:
         mock_record.assert_called_once()
 
 
-# ── Edge case: user without npub ──────────────────────────────
+# -- Edge case: user without npub -----------------------------------------
 # The SQL queries already filter for nostr_npub IS NOT NULL,
 # so users without npub never appear in results. We verify
 # the SQL contains this filter.
@@ -387,14 +376,6 @@ class TestNpubFilterInQueries:
         assert "nostr_npub IS NOT NULL" in sql
 
     @pytest.mark.asyncio
-    async def test_membership_query_requires_npub(self):
-        pool = _make_pool_mock()
-        with patch("notifications.db._get_pool", return_value=pool):
-            await notifications.get_users_membership_due()
-        sql = pool.fetch.call_args[0][0]
-        assert "nostr_npub IS NOT NULL" in sql
-
-    @pytest.mark.asyncio
     async def test_topup_query_requires_npub(self):
         pool = _make_pool_mock()
         with patch("notifications.db._get_pool", return_value=pool):
@@ -402,15 +383,18 @@ class TestNpubFilterInQueries:
         sql = pool.fetch.call_args[0][0]
         assert "nostr_npub IS NOT NULL" in sql
 
+    @pytest.mark.asyncio
+    async def test_auto_paused_query_requires_npub(self):
+        pool = _make_pool_mock()
+        with patch("notifications.db._get_pool", return_value=pool):
+            await notifications.get_users_auto_paused()
+        sql = pool.fetch.call_args[0][0]
+        assert "nostr_npub IS NOT NULL" in sql
 
-# ═══════════════════════════════════════════════════════════════
-# A. FALSE-POSITIVE PREVENTION — SQL filter verification
-# ═══════════════════════════════════════════════════════════════
-#
-# These tests verify that the SQL queries contain the correct WHERE
-# clauses to exclude users who should NOT be notified. Since the DB
-# is mocked, we inspect the SQL text rather than running it against
-# a real database. The SQL is the source of truth for exclusion logic.
+
+# ===========================================================================
+# A. FALSE-POSITIVE PREVENTION: SQL filter verification
+# ===========================================================================
 
 
 class TestLockInFalsePositivePrevention:
@@ -441,15 +425,11 @@ class TestLockInFalsePositivePrevention:
         with patch("notifications.db._get_pool", return_value=pool):
             await notifications.get_users_lock_in_approaching()
         sql = pool.fetch.call_args[0][0]
-        # cancel_scheduled_at <= NOW() + INTERVAL '4 days' filters out far-future cancels
         assert "cancel_scheduled_at" in sql
         assert "4 days" in sql
 
     @pytest.mark.asyncio
     async def test_query_requires_cancel_scheduled_at_not_null(self):
-        """No notification when cancel_scheduled_at is NULL (no cancel scheduled).
-        Also covers the 'already cancelled' case: if cancel is in the past,
-        the subscription row wouldn't match a current_subscription_id join."""
         pool = _make_pool_mock()
         with patch("notifications.db._get_pool", return_value=pool):
             await notifications.get_users_lock_in_approaching()
@@ -458,7 +438,6 @@ class TestLockInFalsePositivePrevention:
 
     @pytest.mark.asyncio
     async def test_query_requires_nostr_npub(self):
-        """No notification for email-only users (no npub)."""
         pool = _make_pool_mock()
         with patch("notifications.db._get_pool", return_value=pool):
             await notifications.get_users_lock_in_approaching()
@@ -467,7 +446,6 @@ class TestLockInFalsePositivePrevention:
 
     @pytest.mark.asyncio
     async def test_query_dedup_by_next_service_id(self):
-        """No notification if same user+type+reference_id notified within 7 days."""
         pool = _make_pool_mock()
         with patch("notifications.db._get_pool", return_value=pool):
             await notifications.get_users_lock_in_approaching()
@@ -478,88 +456,10 @@ class TestLockInFalsePositivePrevention:
 
     @pytest.mark.asyncio
     async def test_not_sent_when_db_returns_empty_for_no_next_service(self):
-        """Functional test: DB returns [] when no user qualifies -> no DMs."""
         pool = _make_pool_mock()
         pool.fetch.return_value = []
         with patch("notifications.db._get_pool", return_value=pool):
             result = await notifications.get_users_lock_in_approaching()
-        assert result == []
-
-
-class TestMembershipDueFalsePositivePrevention:
-    """Membership due should NOT notify when conditions are unmet."""
-
-    @pytest.mark.asyncio
-    async def test_query_requires_expires_within_7_days(self):
-        """No notification when membership_expires_at is more than 7 days out."""
-        pool = _make_pool_mock()
-        with patch("notifications.db._get_pool", return_value=pool):
-            await notifications.get_users_membership_due()
-        sql = pool.fetch.call_args[0][0]
-        assert "membership_expires_at" in sql
-        assert "7 days" in sql
-        # The query uses <= NOW() + INTERVAL '7 days'
-        assert "NOW() + INTERVAL" in sql
-
-    @pytest.mark.asyncio
-    async def test_query_requires_expires_at_not_null(self):
-        """No notification when membership_expires_at is NULL."""
-        pool = _make_pool_mock()
-        with patch("notifications.db._get_pool", return_value=pool):
-            await notifications.get_users_membership_due()
-        sql = pool.fetch.call_args[0][0]
-        assert "u.membership_expires_at IS NOT NULL" in sql
-
-    @pytest.mark.asyncio
-    async def test_query_excludes_users_with_future_payment(self):
-        """No notification if user already has a pending/paid payment for the future."""
-        pool = _make_pool_mock()
-        with patch("notifications.db._get_pool", return_value=pool):
-            await notifications.get_users_membership_due()
-        sql = pool.fetch.call_args[0][0]
-        assert "membership_payments" in sql
-        assert "pending" in sql
-        assert "paid" in sql
-        assert "pay.period_start > NOW()" in sql
-
-    @pytest.mark.asyncio
-    async def test_query_requires_active_status(self):
-        """No notification for churned users."""
-        pool = _make_pool_mock()
-        with patch("notifications.db._get_pool", return_value=pool):
-            await notifications.get_users_membership_due()
-        sql = pool.fetch.call_args[0][0]
-        assert "u.status = 'active'" in sql
-
-    @pytest.mark.asyncio
-    async def test_query_requires_nostr_npub(self):
-        """No notification for email-only users."""
-        pool = _make_pool_mock()
-        with patch("notifications.db._get_pool", return_value=pool):
-            await notifications.get_users_membership_due()
-        sql = pool.fetch.call_args[0][0]
-        assert "u.nostr_npub IS NOT NULL" in sql
-
-    @pytest.mark.asyncio
-    async def test_query_dedup_by_month_reference(self):
-        """No notification if same month reference already sent within 7 days."""
-        pool = _make_pool_mock()
-        with patch("notifications.db._get_pool", return_value=pool):
-            await notifications.get_users_membership_due()
-        sql = pool.fetch.call_args[0][0]
-        assert "NOT EXISTS" in sql
-        assert "membership_due" in sql
-        # Dedup uses TO_CHAR(NOW(), 'YYYY-MM') as the reference
-        assert "YYYY-MM" in sql
-        assert "7 days" in sql
-
-    @pytest.mark.asyncio
-    async def test_not_sent_when_db_returns_empty(self):
-        """Functional: DB returns [] -> no DMs."""
-        pool = _make_pool_mock()
-        pool.fetch.return_value = []
-        with patch("notifications.db._get_pool", return_value=pool):
-            result = await notifications.get_users_membership_due()
         assert result == []
 
 
@@ -568,21 +468,16 @@ class TestCreditTopupFalsePositivePrevention:
 
     @pytest.mark.asyncio
     async def test_query_uses_threshold_to_exclude_sufficient_credits(self):
-        """No notification if user has >= 15,000 sats (sufficient credits)."""
         pool = _make_pool_mock()
         with patch("notifications.db._get_pool", return_value=pool):
             await notifications.get_users_credit_topup()
         sql = pool.fetch.call_args[0][0]
-        # Query uses $1 parameter which is CREDIT_LOW_THRESHOLD_SATS
         assert "< $1" in sql
-        # Verify the threshold value is passed
         threshold_arg = pool.fetch.call_args[0][1]
-        assert threshold_arg == 15_000
+        assert threshold_arg == 20_000
 
     @pytest.mark.asyncio
     async def test_query_requires_services_in_rotation_queue(self):
-        """No notification if user has no services in rotation queue.
-        The LATERAL JOIN ensures at least one rotation_queue entry exists."""
         pool = _make_pool_mock()
         with patch("notifications.db._get_pool", return_value=pool):
             await notifications.get_users_credit_topup()
@@ -592,7 +487,6 @@ class TestCreditTopupFalsePositivePrevention:
 
     @pytest.mark.asyncio
     async def test_query_requires_active_status(self):
-        """No notification for churned users."""
         pool = _make_pool_mock()
         with patch("notifications.db._get_pool", return_value=pool):
             await notifications.get_users_credit_topup()
@@ -601,7 +495,6 @@ class TestCreditTopupFalsePositivePrevention:
 
     @pytest.mark.asyncio
     async def test_query_requires_nostr_npub(self):
-        """No notification for email-only users."""
         pool = _make_pool_mock()
         with patch("notifications.db._get_pool", return_value=pool):
             await notifications.get_users_credit_topup()
@@ -610,7 +503,6 @@ class TestCreditTopupFalsePositivePrevention:
 
     @pytest.mark.asyncio
     async def test_query_dedup_14_day_window(self):
-        """No notification if credit_topup sent within last 14 days."""
         pool = _make_pool_mock()
         with patch("notifications.db._get_pool", return_value=pool):
             await notifications.get_users_credit_topup()
@@ -621,7 +513,6 @@ class TestCreditTopupFalsePositivePrevention:
 
     @pytest.mark.asyncio
     async def test_not_sent_when_db_returns_empty(self):
-        """Functional: DB returns [] -> no DMs."""
         pool = _make_pool_mock()
         pool.fetch.return_value = []
         with patch("notifications.db._get_pool", return_value=pool):
@@ -629,14 +520,9 @@ class TestCreditTopupFalsePositivePrevention:
         assert result == []
 
 
-# ═══════════════════════════════════════════════════════════════
-# B. DEDUPLICATION TIMING — SQL interval verification + orchestrator behavior
-# ═══════════════════════════════════════════════════════════════
-#
-# Since the DB is mocked, we verify dedup at two levels:
-#   1. SQL text contains the correct interval strings
-#   2. Orchestrator behavior: when a query returns users on call 1 and
-#      empty on call 2, only call 1 triggers DMs.
+# ===========================================================================
+# B. DEDUPLICATION TIMING: SQL interval verification + orchestrator behavior
+# ===========================================================================
 
 
 class TestDedupIntervalInSQL:
@@ -651,14 +537,6 @@ class TestDedupIntervalInSQL:
         assert "NOW() - INTERVAL '7 days'" in sql
 
     @pytest.mark.asyncio
-    async def test_membership_uses_7_day_interval(self):
-        pool = _make_pool_mock()
-        with patch("notifications.db._get_pool", return_value=pool):
-            await notifications.get_users_membership_due()
-        sql = pool.fetch.call_args[0][0]
-        assert "NOW() - INTERVAL '7 days'" in sql
-
-    @pytest.mark.asyncio
     async def test_credit_topup_uses_14_day_interval(self):
         pool = _make_pool_mock()
         with patch("notifications.db._get_pool", return_value=pool):
@@ -667,19 +545,18 @@ class TestDedupIntervalInSQL:
         assert "NOW() - INTERVAL '14 days'" in sql
 
     @pytest.mark.asyncio
+    async def test_auto_paused_uses_7_day_interval(self):
+        pool = _make_pool_mock()
+        with patch("notifications.db._get_pool", return_value=pool):
+            await notifications.get_users_auto_paused()
+        sql = pool.fetch.call_args[0][0]
+        assert "NOW() - INTERVAL '7 days'" in sql
+
+    @pytest.mark.asyncio
     async def test_lock_in_dedup_checks_sent_at(self):
-        """Dedup comparison is on sent_at, not created_at or some other field."""
         pool = _make_pool_mock()
         with patch("notifications.db._get_pool", return_value=pool):
             await notifications.get_users_lock_in_approaching()
-        sql = pool.fetch.call_args[0][0]
-        assert "nl.sent_at > NOW() - INTERVAL" in sql
-
-    @pytest.mark.asyncio
-    async def test_membership_dedup_checks_sent_at(self):
-        pool = _make_pool_mock()
-        with patch("notifications.db._get_pool", return_value=pool):
-            await notifications.get_users_membership_due()
         sql = pool.fetch.call_args[0][0]
         assert "nl.sent_at > NOW() - INTERVAL" in sql
 
@@ -691,45 +568,38 @@ class TestDedupIntervalInSQL:
         sql = pool.fetch.call_args[0][0]
         assert "nl.sent_at > NOW() - INTERVAL" in sql
 
+    @pytest.mark.asyncio
+    async def test_auto_paused_dedup_checks_sent_at(self):
+        pool = _make_pool_mock()
+        with patch("notifications.db._get_pool", return_value=pool):
+            await notifications.get_users_auto_paused()
+        sql = pool.fetch.call_args[0][0]
+        assert "nl.sent_at > NOW() - INTERVAL" in sql
+
 
 class TestDedupReferenceIdBehavior:
     """Verify reference_id-based dedup: different references allow re-notification."""
 
     @pytest.mark.asyncio
     async def test_lock_in_dedup_is_per_service(self):
-        """Lock-in dedup uses next_service_id as reference — different service = new notification."""
         pool = _make_pool_mock()
         with patch("notifications.db._get_pool", return_value=pool):
             await notifications.get_users_lock_in_approaching()
         sql = pool.fetch.call_args[0][0]
-        # The NOT EXISTS subquery matches on reference_id = rs.next_service_id
         assert "nl.reference_id = rs.next_service_id" in sql
 
     @pytest.mark.asyncio
-    async def test_membership_dedup_is_per_month(self):
-        """Membership dedup uses YYYY-MM as reference — different month = new notification."""
-        pool = _make_pool_mock()
-        with patch("notifications.db._get_pool", return_value=pool):
-            await notifications.get_users_membership_due()
-        sql = pool.fetch.call_args[0][0]
-        assert "TO_CHAR(NOW(), 'YYYY-MM')" in sql
-
-    @pytest.mark.asyncio
     async def test_credit_topup_has_no_reference_id_filter(self):
-        """Credit topup dedup does NOT filter on reference_id — purely time-based."""
         pool = _make_pool_mock()
         with patch("notifications.db._get_pool", return_value=pool):
             await notifications.get_users_credit_topup()
         sql = pool.fetch.call_args[0][0]
-        # The NOT EXISTS subquery for credit_topup should NOT contain reference_id
-        # Extract just the credit_topup NOT EXISTS block
         topup_not_exists_start = sql.index("NOT EXISTS")
         topup_block = sql[topup_not_exists_start:]
         assert "reference_id" not in topup_block
 
     @pytest.mark.asyncio
     async def test_lock_in_record_uses_next_service_id(self):
-        """Orchestrator records lock-in with next_service_id as reference."""
         mock_client = AsyncMock()
         mock_signer = AsyncMock()
 
@@ -745,8 +615,8 @@ class TestDedupReferenceIdBehavior:
 
         with (
             patch("notifications.get_users_lock_in_approaching", AsyncMock(return_value=lock_in_data)),
-            patch("notifications.get_users_membership_due", AsyncMock(return_value=[])),
             patch("notifications.get_users_credit_topup", AsyncMock(return_value=[])),
+            patch("notifications.get_users_auto_paused", AsyncMock(return_value=[])),
             patch("notifications.record_notification", AsyncMock()) as mock_record,
         ):
             await notifications.check_and_send_notifications(mock_client, mock_signer)
@@ -754,41 +624,7 @@ class TestDedupReferenceIdBehavior:
         mock_record.assert_called_once_with(USER_ID, "lock_in_approaching", "hulu")
 
     @pytest.mark.asyncio
-    async def test_membership_record_uses_year_month_reference(self):
-        """Orchestrator records membership_due with YYYY-MM reference."""
-        mock_client = AsyncMock()
-        mock_signer = AsyncMock()
-
-        membership_data = [
-            {
-                "user_id": USER_ID,
-                "nostr_npub": NPUB_HEX,
-                "membership_plan": "duo",
-                "billing_period": "annual",
-                "membership_expires_at": datetime(2026, 3, 1),
-                "price_sats": 5850,
-            }
-        ]
-
-        with (
-            patch("notifications.get_users_lock_in_approaching", AsyncMock(return_value=[])),
-            patch("notifications.get_users_membership_due", AsyncMock(return_value=membership_data)),
-            patch("notifications.get_users_credit_topup", AsyncMock(return_value=[])),
-            patch("notifications.record_notification", AsyncMock()) as mock_record,
-        ):
-            await notifications.check_and_send_notifications(mock_client, mock_signer)
-
-        call_args = mock_record.call_args[0]
-        assert call_args[0] == USER_ID
-        assert call_args[1] == "membership_due"
-        # Reference should be current YYYY-MM format
-        reference = call_args[2]
-        assert len(reference) == 7  # "YYYY-MM"
-        assert reference[4] == "-"
-
-    @pytest.mark.asyncio
     async def test_credit_topup_record_uses_none_reference(self):
-        """Orchestrator records credit_topup with None reference."""
         mock_client = AsyncMock()
         mock_signer = AsyncMock()
 
@@ -804,22 +640,40 @@ class TestDedupReferenceIdBehavior:
 
         with (
             patch("notifications.get_users_lock_in_approaching", AsyncMock(return_value=[])),
-            patch("notifications.get_users_membership_due", AsyncMock(return_value=[])),
             patch("notifications.get_users_credit_topup", AsyncMock(return_value=topup_data)),
+            patch("notifications.get_users_auto_paused", AsyncMock(return_value=[])),
             patch("notifications.record_notification", AsyncMock()) as mock_record,
         ):
             await notifications.check_and_send_notifications(mock_client, mock_signer)
 
         mock_record.assert_called_once_with(USER_ID, "credit_topup", None)
 
+    @pytest.mark.asyncio
+    async def test_auto_paused_record_uses_none_reference(self):
+        mock_client = AsyncMock()
+        mock_signer = AsyncMock()
 
-# ═══════════════════════════════════════════════════════════════
-# C. INTEGRATION-LEVEL DEDUP — orchestrator behavior
-# ═══════════════════════════════════════════════════════════════
-#
-# These test check_and_send_notifications end-to-end by controlling
-# what the query mocks return on successive calls to simulate the
-# dedup log existing after the first send.
+        auto_paused_data = [
+            {
+                "user_id": USER_ID,
+                "nostr_npub": NPUB_HEX,
+            }
+        ]
+
+        with (
+            patch("notifications.get_users_lock_in_approaching", AsyncMock(return_value=[])),
+            patch("notifications.get_users_credit_topup", AsyncMock(return_value=[])),
+            patch("notifications.get_users_auto_paused", AsyncMock(return_value=auto_paused_data)),
+            patch("notifications.record_notification", AsyncMock()) as mock_record,
+        ):
+            await notifications.check_and_send_notifications(mock_client, mock_signer)
+
+        mock_record.assert_called_once_with(USER_ID, "auto_paused", None)
+
+
+# ===========================================================================
+# C. INTEGRATION-LEVEL DEDUP: orchestrator behavior
+# ===========================================================================
 
 
 class TestOrchestratorDedup:
@@ -827,8 +681,6 @@ class TestOrchestratorDedup:
 
     @pytest.mark.asyncio
     async def test_first_run_sends_second_run_skips(self):
-        """First call returns users -> sends DMs + records. Second call returns
-        empty (simulating log entries now existing) -> no DMs."""
         mock_client = AsyncMock()
         mock_signer = AsyncMock()
 
@@ -846,8 +698,8 @@ class TestOrchestratorDedup:
         lock_in_mock = AsyncMock(return_value=user_data)
         with (
             patch("notifications.get_users_lock_in_approaching", lock_in_mock),
-            patch("notifications.get_users_membership_due", AsyncMock(return_value=[])),
             patch("notifications.get_users_credit_topup", AsyncMock(return_value=[])),
+            patch("notifications.get_users_auto_paused", AsyncMock(return_value=[])),
             patch("notifications.record_notification", AsyncMock()) as mock_record,
         ):
             await notifications.check_and_send_notifications(mock_client, mock_signer)
@@ -862,8 +714,8 @@ class TestOrchestratorDedup:
         lock_in_mock_empty = AsyncMock(return_value=[])
         with (
             patch("notifications.get_users_lock_in_approaching", lock_in_mock_empty),
-            patch("notifications.get_users_membership_due", AsyncMock(return_value=[])),
             patch("notifications.get_users_credit_topup", AsyncMock(return_value=[])),
+            patch("notifications.get_users_auto_paused", AsyncMock(return_value=[])),
             patch("notifications.record_notification", AsyncMock()) as mock_record_2,
         ):
             await notifications.check_and_send_notifications(mock_client, mock_signer)
@@ -873,12 +725,9 @@ class TestOrchestratorDedup:
 
     @pytest.mark.asyncio
     async def test_mixed_batch_only_notifies_eligible_users(self):
-        """Two users in lock-in query results: one was recently notified (filtered
-        by SQL), so only one appears. Verify exactly 1 DM sent."""
         mock_client = AsyncMock()
         mock_signer = AsyncMock()
 
-        # Only the eligible user appears (the other was filtered by NOT EXISTS)
         eligible_only = [
             {
                 "user_id": USER_ID,
@@ -891,13 +740,12 @@ class TestOrchestratorDedup:
 
         with (
             patch("notifications.get_users_lock_in_approaching", AsyncMock(return_value=eligible_only)),
-            patch("notifications.get_users_membership_due", AsyncMock(return_value=[])),
             patch("notifications.get_users_credit_topup", AsyncMock(return_value=[])),
+            patch("notifications.get_users_auto_paused", AsyncMock(return_value=[])),
             patch("notifications.record_notification", AsyncMock()) as mock_record,
         ):
             await notifications.check_and_send_notifications(mock_client, mock_signer)
 
-        # Only 1 user should receive a DM
         assert mock_client.send_private_msg.call_count == 1
         mock_record.assert_called_once()
 
@@ -917,16 +765,6 @@ class TestOrchestratorDedup:
                 "next_service_id": "netflix",
             }
         ]
-        membership_data = [
-            {
-                "user_id": USER_ID,
-                "nostr_npub": NPUB_HEX,
-                "membership_plan": "solo",
-                "billing_period": "monthly",
-                "membership_expires_at": datetime(2026, 2, 20),
-                "price_sats": 4400,
-            }
-        ]
         topup_data = [
             {
                 "user_id": USER_ID,
@@ -936,11 +774,17 @@ class TestOrchestratorDedup:
                 "cheapest_service_price_cents": 1099,
             }
         ]
+        auto_paused_data = [
+            {
+                "user_id": USER_ID,
+                "nostr_npub": NPUB_HEX,
+            }
+        ]
 
         with (
             patch("notifications.get_users_lock_in_approaching", AsyncMock(return_value=lock_in_data)),
-            patch("notifications.get_users_membership_due", AsyncMock(return_value=membership_data)),
             patch("notifications.get_users_credit_topup", AsyncMock(return_value=topup_data)),
+            patch("notifications.get_users_auto_paused", AsyncMock(return_value=auto_paused_data)),
             patch("notifications.record_notification", AsyncMock()) as mock_record,
         ):
             await notifications.check_and_send_notifications(mock_client, mock_signer)
@@ -951,18 +795,13 @@ class TestOrchestratorDedup:
 
         # Verify all three notification types were recorded
         recorded_types = {call[0][1] for call in mock_record.call_args_list}
-        assert recorded_types == {"lock_in_approaching", "membership_due", "credit_topup"}
+        assert recorded_types == {"lock_in_approaching", "credit_topup", "auto_paused"}
 
     @pytest.mark.asyncio
     async def test_different_service_allows_new_lock_in_notification(self):
-        """User was notified about service A (via SQL dedup), but now next_service_id
-        changed to service B. The query would return them again because the
-        reference_id is different. Verify a DM is sent."""
         mock_client = AsyncMock()
         mock_signer = AsyncMock()
 
-        # Service B is now the next service (service A notification in log
-        # doesn't block this because reference_id differs)
         service_b_data = [
             {
                 "user_id": USER_ID,
@@ -975,8 +814,8 @@ class TestOrchestratorDedup:
 
         with (
             patch("notifications.get_users_lock_in_approaching", AsyncMock(return_value=service_b_data)),
-            patch("notifications.get_users_membership_due", AsyncMock(return_value=[])),
             patch("notifications.get_users_credit_topup", AsyncMock(return_value=[])),
+            patch("notifications.get_users_auto_paused", AsyncMock(return_value=[])),
             patch("notifications.record_notification", AsyncMock()) as mock_record,
         ):
             await notifications.check_and_send_notifications(mock_client, mock_signer)
@@ -986,12 +825,9 @@ class TestOrchestratorDedup:
 
     @pytest.mark.asyncio
     async def test_different_notification_type_sends_independently(self):
-        """User was recently notified for membership_due (dedup blocks it), but
-        credit_topup was never sent. Credit topup should still send."""
         mock_client = AsyncMock()
         mock_signer = AsyncMock()
 
-        # membership_due blocked by dedup (returns empty), credit_topup eligible
         topup_data = [
             {
                 "user_id": USER_ID,
@@ -1004,8 +840,8 @@ class TestOrchestratorDedup:
 
         with (
             patch("notifications.get_users_lock_in_approaching", AsyncMock(return_value=[])),
-            patch("notifications.get_users_membership_due", AsyncMock(return_value=[])),
             patch("notifications.get_users_credit_topup", AsyncMock(return_value=topup_data)),
+            patch("notifications.get_users_auto_paused", AsyncMock(return_value=[])),
             patch("notifications.record_notification", AsyncMock()) as mock_record,
         ):
             await notifications.check_and_send_notifications(mock_client, mock_signer)
@@ -1015,7 +851,6 @@ class TestOrchestratorDedup:
 
     @pytest.mark.asyncio
     async def test_multiple_users_each_get_one_notification(self):
-        """Two different users both qualify for lock-in. Both get DMs."""
         mock_client = AsyncMock()
         mock_signer = AsyncMock()
 
@@ -1041,8 +876,8 @@ class TestOrchestratorDedup:
 
         with (
             patch("notifications.get_users_lock_in_approaching", AsyncMock(return_value=two_users)),
-            patch("notifications.get_users_membership_due", AsyncMock(return_value=[])),
             patch("notifications.get_users_credit_topup", AsyncMock(return_value=[])),
+            patch("notifications.get_users_auto_paused", AsyncMock(return_value=[])),
             patch("notifications.record_notification", AsyncMock()) as mock_record,
         ):
             await notifications.check_and_send_notifications(mock_client, mock_signer)
@@ -1050,44 +885,34 @@ class TestOrchestratorDedup:
         assert mock_client.send_private_msg.call_count == 2
         assert mock_record.call_count == 2
 
-        # Verify both users' notifications were recorded
         recorded_user_ids = {call[0][0] for call in mock_record.call_args_list}
         assert recorded_user_ids == {USER_ID, user_id_3}
 
     @pytest.mark.asyncio
     async def test_record_not_called_when_dm_fails(self):
-        """If DM sending fails, record_notification must NOT be called.
-        This ensures the next cycle will retry sending."""
         mock_client = AsyncMock()
         mock_client.send_private_msg.side_effect = Exception("relay timeout")
         mock_signer = AsyncMock()
 
-        membership_data = [
+        auto_paused_data = [
             {
                 "user_id": USER_ID,
                 "nostr_npub": NPUB_HEX,
-                "membership_plan": "solo",
-                "billing_period": "monthly",
-                "membership_expires_at": datetime(2026, 2, 25),
-                "price_sats": 4400,
             }
         ]
 
         with (
             patch("notifications.get_users_lock_in_approaching", AsyncMock(return_value=[])),
-            patch("notifications.get_users_membership_due", AsyncMock(return_value=membership_data)),
             patch("notifications.get_users_credit_topup", AsyncMock(return_value=[])),
+            patch("notifications.get_users_auto_paused", AsyncMock(return_value=auto_paused_data)),
             patch("notifications.record_notification", AsyncMock()) as mock_record,
         ):
             await notifications.check_and_send_notifications(mock_client, mock_signer)
 
-        # DM failed, so notification should NOT be recorded (allows retry)
         mock_record.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_partial_failure_records_only_successful(self):
-        """If DM fails for one user but succeeds for another, only the
-        successful one gets a notification_log record."""
         mock_client = AsyncMock()
         mock_signer = AsyncMock()
 
@@ -1119,8 +944,8 @@ class TestOrchestratorDedup:
 
         with (
             patch("notifications.get_users_lock_in_approaching", AsyncMock(return_value=two_users)),
-            patch("notifications.get_users_membership_due", AsyncMock(return_value=[])),
             patch("notifications.get_users_credit_topup", AsyncMock(return_value=[])),
+            patch("notifications.get_users_auto_paused", AsyncMock(return_value=[])),
             patch("notifications.record_notification", AsyncMock()) as mock_record,
         ):
             await notifications.check_and_send_notifications(mock_client, mock_signer)

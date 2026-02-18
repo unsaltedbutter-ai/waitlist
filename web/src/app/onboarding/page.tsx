@@ -22,11 +22,6 @@ import {
 import { CSS } from "@dnd-kit/utilities";
 import QRCode from "react-qr-code";
 import { getCredsForGroup } from "@/lib/creds-resolver";
-import {
-  getInitialServices,
-  computeServiceCreditCents,
-  formatInitialServicesLabel,
-} from "@/lib/onboarding-pricing";
 
 interface Plan {
   id: string;
@@ -52,23 +47,12 @@ interface QueueItem {
   priceCents: number;
 }
 
-interface MembershipPrice {
-  plan: "solo" | "duo";
-  period: "monthly" | "annual";
-  price_sats: number;
-  approx_usd_cents: number;
-}
-
 const TOTAL_STEPS = 4;
 const BOT_NPUB = process.env.NEXT_PUBLIC_NOSTR_BOT_NPUB ?? "";
 const BOT_NAME = process.env.NEXT_PUBLIC_NOSTR_BOT_NAME ?? "UnsaltedButter Bot";
 
 function formatSats(sats: number): string {
   return sats.toLocaleString();
-}
-
-function formatUsdFromCents(cents: number): string {
-  return `$${(cents / 100).toFixed(2)}`;
 }
 
 function StepIndicator({ current }: { current: number }) {
@@ -185,7 +169,7 @@ export default function OnboardingPage() {
   const [authorized, setAuthorized] = useState(false);
   const [npubCopied, setNpubCopied] = useState(false);
 
-  // Step 3 state (plan selection)
+  // Step 2 state (plan selection)
   const [groups, setGroups] = useState<ServiceGroup[]>([]);
   const [selectedPlans, setSelectedPlans] = useState<Record<string, string>>(
     {}
@@ -219,13 +203,13 @@ export default function OnboardingPage() {
   const [sharedCreds, setSharedCreds] = useState({ email: "", password: "" });
   const [showPasswords, setShowPasswords] = useState(false);
 
-  // Step 4 state (rotation queue)
+  // Step 3 state (rotation queue)
   const [queue, setQueue] = useState<QueueItem[]>([]);
 
-  // Step 5 state (payment)
-  const [membershipPlan, setMembershipPlan] = useState<"solo" | "duo">("solo");
-  const [membership, setMembership] = useState<"monthly" | "annual">("annual");
-  const [pricing, setPricing] = useState<MembershipPrice[]>([]);
+  // Step 4 state (payment)
+  const [platformFeeSats, setPlatformFeeSats] = useState(0);
+  const [creditSats, setCreditSats] = useState(0);
+  const [balanceLoaded, setBalanceLoaded] = useState(false);
   const [invoice, setInvoice] = useState<{
     invoiceId: string;
     checkoutLink: string;
@@ -234,16 +218,13 @@ export default function OnboardingPage() {
   } | null>(null);
   const [copied, setCopied] = useState(false);
   const [paid, setPaid] = useState(false);
+  const [activating, setActivating] = useState(false);
 
-  // Fetch plans + pricing on mount
+  // Fetch plans on mount
   useEffect(() => {
     fetch("/api/service-plans")
       .then((r) => r.json())
       .then((data) => setGroups(data.groups))
-      .catch(() => {});
-    fetch("/api/membership-pricing")
-      .then((r) => r.json())
-      .then((data) => setPricing(data.pricing))
       .catch(() => {});
     fetch("/api/signup-questions")
       .then((r) => r.json())
@@ -258,6 +239,24 @@ export default function OnboardingPage() {
       })
       .catch(() => {});
   }, []);
+
+  // Fetch platform config + balance when reaching step 4
+  useEffect(() => {
+    if (step !== 4) return;
+    setBalanceLoaded(false);
+    Promise.all([
+      fetch("/api/platform-config").then((r) => r.json()),
+      authFetch("/api/credits").then((r) => r.json()),
+    ])
+      .then(([configData, creditsData]) => {
+        setPlatformFeeSats(configData.platform_fee_sats);
+        setCreditSats(creditsData.credit_sats);
+        setBalanceLoaded(true);
+      })
+      .catch(() => {
+        setBalanceLoaded(true);
+      });
+  }, [step]);
 
   // Poll payment status when invoice exists
   useEffect(() => {
@@ -357,40 +356,11 @@ export default function OnboardingPage() {
   const minPrice = selectedPrices.length > 0 ? Math.min(...selectedPrices) : 0;
   const maxPrice = selectedPrices.length > 0 ? Math.max(...selectedPrices) : 0;
 
-  // Initial services based on plan (solo = 1, duo = 2)
-  const initialServices = getInitialServices(queue, membershipPlan);
-  const initialServicesLabel = formatInitialServicesLabel(queue, membershipPlan);
-
-  // Membership pricing (sats, from DB)
-  function getPrice(plan: "solo" | "duo", period: "monthly" | "annual"): MembershipPrice | undefined {
-    return pricing.find((p) => p.plan === plan && p.period === period);
-  }
-
-  const currentPrice = getPrice(membershipPlan, membership);
-  const membershipSats = currentPrice?.price_sats ?? 0;
-  const membershipUsdCents = currentPrice?.approx_usd_cents ?? 0;
-  const membershipTotalSats = membership === "annual" ? membershipSats * 12 : membershipSats;
-  const membershipTotalUsdCents = membership === "annual" ? membershipUsdCents * 12 : membershipUsdCents;
-
-  // Approximate sats-per-USD-cent rate derived from pricing data
-  function approxUsdCentsToSats(cents: number): number {
-    if (pricing.length === 0 || cents === 0) return 0;
-    const p = pricing[0];
-    if (!p.approx_usd_cents || p.approx_usd_cents === 0) return 0;
-    return Math.round(cents * (p.price_sats / p.approx_usd_cents));
-  }
-
-  // Service credit: sum of initial services (1 for solo, 2 for duo)
-  const serviceCreditCents = computeServiceCreditCents(queue, membershipPlan);
-  const serviceCreditApproxSats = approxUsdCentsToSats(serviceCreditCents);
-  const totalApproxSats = membershipTotalSats + serviceCreditApproxSats;
-
-  // Annual savings in sats
-  const monthlyPrice = getPrice(membershipPlan, "monthly");
-  const annualPrice = getPrice(membershipPlan, "annual");
-  const savingsSats = monthlyPrice && annualPrice
-    ? (monthlyPrice.price_sats * 12) - (annualPrice.price_sats * 12)
-    : 0;
+  // Estimate first gift card cost in sats (rough: 1 cent ~ 10 sats)
+  const firstServiceCostSats = queue.length > 0 ? queue[0].priceCents * 10 : 0;
+  const totalNeededSats = platformFeeSats + firstServiceCostSats;
+  const hasSufficientBalance = balanceLoaded && creditSats >= totalNeededSats;
+  const shortfallSats = totalNeededSats > creditSats ? totalNeededSats - creditSats : 0;
 
   // --- Consent capture ---
   async function recordConsent(consentType: "authorization" | "confirmation") {
@@ -449,7 +419,7 @@ export default function OnboardingPage() {
             Gift card denominations don&apos;t always match monthly prices
             exactly, so you may carry a small balance with a service. When
             your balance is enough to cover another month, we just
-            reactivate &mdash; no new gift card needed.
+            reactivate, no new gift card needed.
           </p>
         </div>
 
@@ -457,17 +427,23 @@ export default function OnboardingPage() {
           <li className="flex gap-2">
             <span className="text-muted/60 shrink-0">&bull;</span>
             <span>
-              <span className="text-foreground font-medium">Solo</span> runs
-              one service at a time.{" "}
-              <span className="text-foreground font-medium">Duo</span> runs
-              two simultaneously. You choose at checkout.
+              One streaming service at a time. We rotate to the next one in
+              your queue when the month is up.
             </span>
           </li>
           <li className="flex gap-2">
             <span className="text-muted/60 shrink-0">&bull;</span>
+            <span>Pause anytime you want.</span>
+          </li>
+          <li className="flex gap-2">
+            <span className="text-muted/60 shrink-0">&bull;</span>
+            <span>You prepay in sats. If you leave, we refund in sats.</span>
+          </li>
+          <li className="flex gap-2">
+            <span className="text-muted/60 shrink-0">&bull;</span>
             <span>
-              About two weeks into each cycle, your next service locks in
-              &mdash; we purchase the gift card and commit to the rotation.
+              About two weeks into each cycle, your next service locks in:
+              we purchase the gift card and commit to the rotation.
               Before that, you can reorder your queue freely.
             </span>
           </li>
@@ -506,8 +482,8 @@ export default function OnboardingPage() {
           <p className="text-amber-200/70 text-sm leading-relaxed">
             By authorizing us, you acknowledge this risk and agree that
             UnsaltedButter is not liable for any action a streaming service
-            takes against your account &mdash; including suspension,
-            termination, or loss of content &mdash; as a result of using this
+            takes against your account (including suspension,
+            termination, or loss of content) as a result of using this
             service.
           </p>
         </div>
@@ -520,7 +496,7 @@ export default function OnboardingPage() {
             className="w-4 h-4 mt-0.5 rounded border-border bg-surface text-accent accent-amber-500"
           />
           <span className="text-sm text-foreground leading-relaxed">
-            I authorize UnsaltedButter to act on my behalf &mdash; including
+            I authorize UnsaltedButter to act on my behalf, including
             signing up, cancelling, and managing streaming subscriptions using
             the credentials I provide.
           </span>
@@ -600,7 +576,7 @@ export default function OnboardingPage() {
         }
       }
 
-      // Save signup answers (optional — don't block if empty)
+      // Save signup answers (optional, don't block if empty)
       if (Object.keys(signupAnswers).length > 0) {
         const answersRes = await authFetch("/api/signup-answers", {
           method: "POST",
@@ -680,11 +656,11 @@ export default function OnboardingPage() {
           </p>
         </div>
 
-        {/* Credentials callout — amber left border, top of page */}
+        {/* Credentials callout */}
         <div className="border-l-4 border-amber-500 bg-amber-500/[0.08] rounded-r-lg px-5 py-4">
           <p className="text-amber-200 text-sm font-medium leading-relaxed">
             Fresh credentials are cleanest. Give us an email and password you
-            haven&apos;t used with the service before &mdash; we&apos;ll create
+            haven&apos;t used with the service before: we&apos;ll create
             a new account for you.
           </p>
           <p className="text-muted text-sm mt-3 leading-relaxed">
@@ -777,7 +753,7 @@ export default function OnboardingPage() {
                       {!useSameCreds && (!creds[group.id]?.email || !creds[group.id]?.password) && (
                         <span className="w-2 h-2 rounded-full bg-amber-500 shrink-0" title="Needs credentials" />
                       )}
-                      {selectedPlan.display_name} &mdash; $
+                      {selectedPlan.display_name} - $
                       {(selectedPlan.monthly_price_cents / 100).toFixed(2)}/mo
                     </span>
                   ) : (
@@ -990,7 +966,7 @@ export default function OnboardingPage() {
     );
   }
 
-  // --- Step 4: Set Rotation Order ---
+  // --- Step 3: Set Rotation Order ---
   function handleDragEnd(event: DragEndEvent) {
     const { active, over } = event;
     if (!over || active.id === over.id) return;
@@ -1142,20 +1118,17 @@ export default function OnboardingPage() {
     );
   }
 
-  // --- Step 5: Payment ---
+  // --- Step 4: Payment ---
   async function createInvoice() {
     setError("");
     setSubmitting(true);
 
     try {
+      // Request enough to cover the shortfall (platform fee + first gift card)
+      const amount = shortfallSats > 0 ? shortfallSats : totalNeededSats;
       const res = await authFetch("/api/credits/prepay", {
         method: "POST",
-        body: JSON.stringify({
-          amount_sats: membershipTotalSats,
-          membership_plan: membershipPlan,
-          billing_period: membership,
-          service_credit_usd_cents: serviceCreditCents,
-        }),
+        body: JSON.stringify({ amount_sats: amount }),
       });
 
       if (!res.ok) {
@@ -1185,7 +1158,31 @@ export default function OnboardingPage() {
     }
   }
 
+  async function activateAccount() {
+    setActivating(true);
+    setError("");
+    try {
+      const res = await authFetch("/api/unpause", { method: "POST" });
+      if (res.ok) {
+        router.push("/dashboard");
+      } else if (res.status === 402) {
+        const data = await res.json();
+        setError(
+          `Not enough sats. You need ${formatSats(data.shortfall_sats)} more sats to start.`
+        );
+      } else {
+        const data = await res.json().catch(() => ({}));
+        setError(data.error || "Failed to activate. Try again.");
+      }
+    } catch {
+      setError("Connection failed. Try again.");
+    } finally {
+      setActivating(false);
+    }
+  }
+
   function renderStep4() {
+    // After payment confirmed, activate and show success
     if (paid) {
       return (
         <div className="space-y-8">
@@ -1194,23 +1191,26 @@ export default function OnboardingPage() {
               You&apos;re in.
             </h1>
             <p className="text-muted leading-relaxed">
-              We&apos;re getting your {initialServicesLabel} {initialServices.length === 1 ? "account" : "accounts"} ready now.
-              Expect it to be active within 24 hours. We&apos;ll notify you
-              when it&apos;s live.
+              We&apos;re getting your first service ready now.
+              Expect it to be active within 24 hours.
             </p>
           </div>
 
+          {error && <p className="text-red-400 text-sm">{error}</p>}
+
           <button
             type="button"
-            onClick={() => router.push("/dashboard")}
-            className="w-full py-3 px-4 bg-accent text-background font-semibold rounded hover:bg-accent/90 transition-colors"
+            onClick={activateAccount}
+            disabled={activating}
+            className="w-full py-3 px-4 bg-accent text-background font-semibold rounded hover:bg-accent/90 transition-colors disabled:opacity-50"
           >
-            Go to dashboard
+            {activating ? "Activating..." : "Go to dashboard"}
           </button>
         </div>
       );
     }
 
+    // Show invoice QR code while waiting for payment
     if (invoice) {
       return (
         <div className="space-y-8">
@@ -1219,8 +1219,8 @@ export default function OnboardingPage() {
               Scan to pay
             </h1>
             <p className="text-muted leading-relaxed">
-              Pay from any Lightning wallet. We&apos;ll have{" "}
-              {initialServicesLabel} up within 24 hours.
+              Pay from any Lightning wallet. We&apos;ll have your first
+              service up within 24 hours.
             </p>
           </div>
 
@@ -1264,14 +1264,75 @@ export default function OnboardingPage() {
       );
     }
 
-    const soloPriceMonthly = getPrice("solo", "monthly");
-    const soloPriceAnnual = getPrice("solo", "annual");
-    const duoPriceMonthly = getPrice("duo", "monthly");
-    const duoPriceAnnual = getPrice("duo", "annual");
+    // Loading balance data
+    if (!balanceLoaded) {
+      return (
+        <div className="space-y-8">
+          <p className="text-muted">Loading...</p>
+        </div>
+      );
+    }
 
-    const soloDisplay = membership === "monthly" ? soloPriceMonthly : soloPriceAnnual;
-    const duoDisplay = membership === "monthly" ? duoPriceMonthly : duoPriceAnnual;
+    // User already has enough balance: just activate
+    if (hasSufficientBalance) {
+      return (
+        <div className="space-y-8">
+          <button
+            type="button"
+            onClick={() => setStep(3)}
+            className="text-sm text-muted hover:text-foreground transition-colors"
+          >
+            &larr; Back
+          </button>
+          <div>
+            <h1 className="text-4xl font-bold tracking-tight text-foreground mb-4">
+              Ready to start
+            </h1>
+            <p className="text-muted leading-relaxed">
+              You have enough sats to start. Your first rotation will begin shortly.
+            </p>
+          </div>
 
+          <div className="bg-surface border border-border rounded p-4">
+            <div className="space-y-2 text-sm">
+              <div className="flex justify-between">
+                <span className="text-muted">Your balance</span>
+                <span className="text-foreground font-medium">
+                  {formatSats(creditSats)} sats
+                </span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-muted">Platform fee</span>
+                <span className="text-foreground">
+                  {formatSats(platformFeeSats)} sats/mo
+                </span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-muted">
+                  First gift card ({queue[0]?.groupLabel})
+                </span>
+                <span className="text-foreground">
+                  ~{formatSats(firstServiceCostSats)} sats
+                </span>
+              </div>
+            </div>
+          </div>
+
+          {error && <p className="text-red-400 text-sm">{error}</p>}
+
+          <button
+            type="button"
+            onClick={activateAccount}
+            disabled={activating}
+            className="w-full py-3 px-4 bg-accent text-background font-semibold rounded hover:bg-accent/90 transition-colors disabled:opacity-50"
+          >
+            {activating ? "Activating..." : "Start my rotation"}
+          </button>
+        </div>
+      );
+    }
+
+    // Insufficient balance: show breakdown and payment flow
     return (
       <div className="space-y-8">
         <button
@@ -1283,138 +1344,43 @@ export default function OnboardingPage() {
         </button>
         <div>
           <h1 className="text-4xl font-bold tracking-tight text-foreground mb-4">
-            Activate your membership
+            Add sats to start
           </h1>
           <p className="text-muted leading-relaxed">
-            One Lightning invoice covers your UnsaltedButter membership and{" "}
-            {initialServices.length === 1
-              ? `the ${initialServicesLabel} gift card`
-              : `gift cards for ${initialServicesLabel}`}. We&apos;ll have {initialServicesLabel} up
-            within 24 hours.
+            One Lightning invoice covers your platform fee and the first gift
+            card. We&apos;ll have your first service up within 24 hours.
           </p>
-        </div>
-
-        {/* Plan selection */}
-        <div>
-          <label className="block text-sm font-medium text-muted mb-2">
-            Plan
-          </label>
-          <div className="grid grid-cols-2 gap-3">
-            <button
-              type="button"
-              onClick={() => setMembershipPlan("solo")}
-              className={`p-4 rounded border text-left transition-colors ${
-                membershipPlan === "solo"
-                  ? "border-accent bg-accent/5"
-                  : "border-border bg-surface hover:border-muted"
-              }`}
-            >
-              <p className={`font-semibold ${membershipPlan === "solo" ? "text-accent" : "text-foreground"}`}>
-                Solo
-              </p>
-              <p className="text-sm text-muted mt-1">1 streaming service at a time</p>
-              {soloDisplay && (
-                <p className={`text-sm mt-2 ${membershipPlan === "solo" ? "text-accent" : "text-muted/60"}`}>
-                  {formatSats(soloDisplay.price_sats)} sats/mo
-                </p>
-              )}
-            </button>
-            <button
-              type="button"
-              onClick={() => setMembershipPlan("duo")}
-              className={`p-4 rounded border text-left transition-colors ${
-                membershipPlan === "duo"
-                  ? "border-accent bg-accent/5"
-                  : "border-border bg-surface hover:border-muted"
-              }`}
-            >
-              <p className={`font-semibold ${membershipPlan === "duo" ? "text-accent" : "text-foreground"}`}>
-                Duo
-              </p>
-              <p className="text-sm text-muted mt-1">2 streaming services at once</p>
-              {duoDisplay && (
-                <p className={`text-sm mt-2 ${membershipPlan === "duo" ? "text-accent" : "text-muted/60"}`}>
-                  {formatSats(duoDisplay.price_sats)} sats/mo
-                </p>
-              )}
-            </button>
-          </div>
-        </div>
-
-        {/* Billing period toggle */}
-        <div>
-          <label className="block text-sm font-medium text-muted mb-2">
-            Billing
-          </label>
-          <div className="flex gap-2">
-            <button
-              type="button"
-              onClick={() => setMembership("monthly")}
-              className={`flex-1 py-2 px-4 rounded text-sm font-medium border transition-colors ${
-                membership === "monthly"
-                  ? "bg-accent text-background border-accent"
-                  : "bg-surface text-muted border-border hover:border-muted"
-              }`}
-            >
-              Monthly
-            </button>
-            <button
-              type="button"
-              onClick={() => setMembership("annual")}
-              className={`flex-1 py-2 px-4 rounded text-sm font-medium border transition-colors ${
-                membership === "annual"
-                  ? "bg-accent text-background border-accent"
-                  : "bg-surface text-muted border-border hover:border-muted"
-              }`}
-            >
-              Annual
-            </button>
-          </div>
-          {membership === "annual" && savingsSats > 0 && monthlyPrice && (
-            <p className="text-sm text-accent mt-2">
-              Save {Math.round((savingsSats / (monthlyPrice.price_sats * 12)) * 100)}% &mdash;{" "}
-              {formatSats(Math.round(savingsSats / 12))} sats/mo with annual billing
-            </p>
-          )}
         </div>
 
         {/* Breakdown */}
         <div className="bg-surface border border-border rounded p-4">
           <div className="space-y-2 text-sm">
-            <div className="flex flex-wrap justify-between gap-x-4">
-              <span className="text-muted">
-                Membership ({membershipPlan === "solo" ? "Solo" : "Duo"},{" "}
-                {membership === "monthly" ? "1 mo" : "12 mo"})
-              </span>
+            <div className="flex justify-between">
+              <span className="text-muted">Platform fee</span>
               <span className="text-foreground">
-                {membership === "annual" && (
-                  <span className="text-muted/60 mr-1">
-                    ({formatSats(membershipSats)}/mo)
-                  </span>
-                )}
-                {formatSats(membershipTotalSats)} sats
+                {formatSats(platformFeeSats)} sats
               </span>
             </div>
-            {initialServices.map((svc) => {
-              const svcSats = approxUsdCentsToSats(svc.priceCents);
-              return (
-                <div key={svc.serviceId} className="flex flex-wrap justify-between gap-x-4">
-                  <span className="text-muted">
-                    Service credit ({svc.groupLabel})
-                  </span>
-                  <span className="text-foreground">
-                    <span className="text-muted/60 mr-1">
-                      (${(svc.priceCents / 100).toFixed(2)})
-                    </span>
-                    ~{formatSats(svcSats)} sats
-                  </span>
-                </div>
-              );
-            })}
-            <div className="border-t border-border pt-2 mt-2 flex flex-wrap justify-between gap-x-4 font-medium">
-              <span className="text-foreground">Total due today</span>
+            <div className="flex justify-between">
+              <span className="text-muted">
+                First gift card ({queue[0]?.groupLabel})
+              </span>
               <span className="text-foreground">
-                ~{formatSats(totalApproxSats)} sats
+                ~{formatSats(firstServiceCostSats)} sats
+              </span>
+            </div>
+            {creditSats > 0 && (
+              <div className="flex justify-between">
+                <span className="text-muted">Current balance</span>
+                <span className="text-green-400">
+                  -{formatSats(creditSats)} sats
+                </span>
+              </div>
+            )}
+            <div className="border-t border-border pt-2 mt-2 flex justify-between font-medium">
+              <span className="text-foreground">Amount due</span>
+              <span className="text-foreground">
+                ~{formatSats(shortfallSats)} sats
               </span>
             </div>
           </div>
@@ -1425,7 +1391,7 @@ export default function OnboardingPage() {
         <button
           type="button"
           onClick={createInvoice}
-          disabled={submitting || membershipSats === 0}
+          disabled={submitting}
           className="w-full py-3 px-4 bg-accent text-background font-semibold rounded hover:bg-accent/90 transition-colors disabled:opacity-50"
         >
           {submitting ? "Creating invoice..." : "Pay with Lightning"}

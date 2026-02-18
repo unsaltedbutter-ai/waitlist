@@ -11,22 +11,6 @@ export const GET = withAuth(async (req: NextRequest, { userId }) => {
     );
   }
 
-  // Check membership_payments first
-  const mpResult = await query<{ status: string }>(
-    `SELECT status FROM membership_payments
-     WHERE user_id = $1 AND btcpay_invoice_id = $2
-     LIMIT 1`,
-    [userId, invoiceId]
-  );
-
-  if (mpResult.rows.length > 0) {
-    const dbStatus = mpResult.rows[0].status;
-    return NextResponse.json({
-      status: dbStatus === "paid" ? "paid" : "pending",
-    });
-  }
-
-  // Fall back to btc_prepayments
   const bpResult = await query<{ status: string }>(
     `SELECT status FROM btc_prepayments
      WHERE user_id = $1 AND btcpay_invoice_id = $2

@@ -14,6 +14,7 @@ HELP_TEXT = (
     "  queue  : full rotation order\n"
     "  skip   : move current service to end of queue\n"
     "  stay   : extend current subscription instead of rotating\n"
+    "  pause  : pause your account (no fees while paused)\n"
     "  help   : this message\n"
     "\n"
     "Zap this bot to add sats to your credit balance."
@@ -22,29 +23,34 @@ HELP_TEXT = (
 
 async def handle_dm(user_id: UUID, user_status: str, message: str) -> str:
     """Dispatch a DM command. Returns the reply text."""
-    if user_status == "churned":
-        return "Your membership has ended."
-
     cmd = message.strip().lower()
 
     if cmd == "status":
-        return await _cmd_status(user_id)
+        return await _cmd_status(user_id, user_status)
     elif cmd == "queue":
         return await _cmd_queue(user_id)
     elif cmd == "skip":
         return await _cmd_skip(user_id)
     elif cmd == "stay":
         return await _cmd_stay(user_id)
+    elif cmd == "pause":
+        return await _cmd_pause(user_id)
     elif cmd == "help":
         return HELP_TEXT
     else:
         return HELP_TEXT
 
 
-async def _cmd_status(user_id: UUID) -> str:
+async def _cmd_status(user_id: UUID, user_status: str = "active") -> str:
     info = await db.get_user_status(user_id)
 
     lines = []
+
+    if user_status == "paused":
+        lines.append("Status: Paused")
+    elif user_status == "auto_paused":
+        lines.append("Status: Paused (low balance)")
+
     sub = info["subscription"]
     if sub:
         lapse = sub["estimated_lapse_at"]
@@ -89,7 +95,7 @@ async def _cmd_skip(user_id: UUID) -> str:
 
     ok = await db.skip_service(user_id, service_id)
     if not ok:
-        return "Could not skip — service not in your queue."
+        return "Could not skip, service not in your queue."
     return f"{name} moved to end of queue."
 
 
@@ -106,5 +112,12 @@ async def _cmd_stay(user_id: UUID) -> str:
 
     ok = await db.stay_service(user_id, service_id)
     if not ok:
-        return "Could not stay — no active subscription found."
+        return "Could not stay, no active subscription found."
     return f"Staying on {name}. We'll renew instead of rotating."
+
+
+async def _cmd_pause(user_id: UUID) -> str:
+    ok = await db.pause_user(user_id)
+    if not ok:
+        return "Can only pause from active or auto-paused state."
+    return "Your account is paused. No fees while paused. DM UNPAUSE or unpause from your dashboard to resume."

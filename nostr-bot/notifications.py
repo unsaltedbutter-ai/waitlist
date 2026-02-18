@@ -1,9 +1,9 @@
-"""Proactive outbound notifications — periodic DB checks + DM sending.
+"""Proactive outbound notifications: periodic DB checks + DM sending.
 
 Checks for three scenarios:
   1. Lock-in approaching: user's next service is about to be locked in
-  2. Membership due: user's membership expires soon
-  3. Credit top-up: user doesn't have enough service credits for next rotation
+  2. Credit top-up: user doesn't have enough service credits for next rotation
+  3. Auto-paused: user was paused due to low balance
 """
 
 import logging
@@ -14,9 +14,9 @@ import db
 
 log = logging.getLogger(__name__)
 
-# Minimum sats threshold — if a user has fewer credits than this,
-# they likely can't cover their cheapest queued service.
-CREDIT_LOW_THRESHOLD_SATS = 15_000
+# Minimum sats threshold: if a user has fewer credits than this,
+# they likely can't cover their cheapest queued service + platform fee.
+CREDIT_LOW_THRESHOLD_SATS = 20_000
 
 
 # ── Query functions ───────────────────────────────────────────
@@ -63,44 +63,27 @@ async def get_users_lock_in_approaching() -> list[dict]:
     return [dict(r) for r in rows]
 
 
-async def get_users_membership_due() -> list[dict]:
-    """Find users whose membership expires within 7 days.
+async def get_users_auto_paused() -> list[dict]:
+    """Find users who are auto_paused and haven't been notified in 7 days.
 
     Conditions:
-      - membership_expires_at within 7 days
-      - status = 'active'
-      - No pending/paid membership_payment with period_start after now
-      - No notification_log for this user + 'membership_due' + current month in 7 days
-      - User has nostr_npub
+      - status = 'auto_paused'
+      - Has nostr_npub
+      - No notification_log for this user + 'auto_paused' in 7 days
     """
     pool = db._get_pool()
     rows = await pool.fetch(
         """
         SELECT
             u.id AS user_id,
-            u.nostr_npub,
-            u.membership_plan,
-            u.billing_period,
-            u.membership_expires_at,
-            mp.price_sats
+            u.nostr_npub
         FROM users u
-        JOIN membership_pricing mp
-            ON mp.plan = u.membership_plan AND mp.period = u.billing_period
-        WHERE u.status = 'active'
+        WHERE u.status = 'auto_paused'
           AND u.nostr_npub IS NOT NULL
-          AND u.membership_expires_at IS NOT NULL
-          AND u.membership_expires_at <= NOW() + INTERVAL '7 days'
-          AND NOT EXISTS (
-              SELECT 1 FROM membership_payments pay
-              WHERE pay.user_id = u.id
-                AND pay.status IN ('pending', 'paid')
-                AND pay.period_start > NOW()
-          )
           AND NOT EXISTS (
               SELECT 1 FROM notification_log nl
               WHERE nl.user_id = u.id
-                AND nl.notification_type = 'membership_due'
-                AND nl.reference_id = TO_CHAR(NOW(), 'YYYY-MM')
+                AND nl.notification_type = 'auto_paused'
                 AND nl.sent_at > NOW() - INTERVAL '7 days'
           )
         """
@@ -169,35 +152,31 @@ async def record_notification(user_id: UUID, notification_type: str, reference_i
 def format_lock_in_message(service_name: str, estimated_start_date: datetime | None) -> str:
     date_str = estimated_start_date.strftime("%b %d") if estimated_start_date else "soon"
     return (
-        f"Heads up \u2014 if you do nothing, your {service_name} subscription starts on {date_str}.\n"
+        f"Heads up: if you do nothing, your {service_name} subscription starts on {date_str}.\n"
         "\n"
         "That means we buy the gift card and lock it in. Reply SKIP if you want to change your queue first."
     )
 
 
-def format_membership_due_message(
-    billing_period: str, price_sats: int, expires_at: datetime | None
-) -> str:
-    date_str = expires_at.strftime("%b %d") if expires_at else "soon"
-    return (
-        f"Your {billing_period} UnsaltedButter membership is {price_sats:,} sats. Due by {date_str}.\n"
-        "\n"
-        "Zap this account or pay from your dashboard. "
-        "If we don't get it, we destroy your account and credentials. Nothing personal."
-    )
-
-
 def format_credit_topup_message(
-    service_name: str, price_cents: int, credit_sats: int
+    service_name: str, price_cents: int, credit_sats: int, platform_fee: int = 4400
 ) -> str:
     price_dollars = price_cents / 100
     # Rough conversion: $1 ~ 1000 sats
-    needed_sats = max(0, (price_cents * 10) - credit_sats)
+    svc_sats = price_cents * 10
+    needed_sats = max(0, svc_sats + platform_fee - credit_sats)
     return (
-        f"You're low on service credits. Your next rotation ({service_name}) "
-        f"costs ~${price_dollars:.0f}/mo and you don't have enough.\n"
+        f"You're low on credits. Your next rotation ({service_name}) "
+        f"costs ~${price_dollars:.0f}/mo (~{svc_sats:,} sats) plus {platform_fee:,} sats platform fee.\n"
         "\n"
         f"Zap me {needed_sats:,} sats and we're good. Or top up from your dashboard."
+    )
+
+
+def format_auto_paused_message() -> str:
+    return (
+        "Your account is paused due to low balance. "
+        "Add sats to resume automatically, or DM UNPAUSE after topping up."
     )
 
 
@@ -205,7 +184,7 @@ def format_credit_topup_message(
 
 
 async def check_and_send_notifications(client, signer) -> None:
-    """Check all three notification scenarios and send DMs."""
+    """Check all notification scenarios and send DMs."""
     from nostr_sdk import PublicKey
 
     # 1. Lock-in approaching
@@ -226,28 +205,7 @@ async def check_and_send_notifications(client, signer) -> None:
         except Exception as e:
             log.error("[notifications] Failed to send lock_in_approaching to %s: %s", user["nostr_npub"][:16], e)
 
-    # 2. Membership due
-    try:
-        membership_users = await get_users_membership_due()
-    except Exception as e:
-        log.error("[notifications] Error querying membership_due: %s", e)
-        membership_users = []
-
-    for user in membership_users:
-        msg = format_membership_due_message(
-            user["billing_period"], user["price_sats"], user["membership_expires_at"]
-        )
-        try:
-            pk = PublicKey.parse(user["nostr_npub"])
-            await client.send_private_msg(pk, msg, [])
-            reference = datetime.now(timezone.utc).strftime("%Y-%m")
-            await record_notification(user["user_id"], "membership_due", reference)
-            npub_short = user["nostr_npub"][:16]
-            print(f"[notifications] Sent membership_due to {npub_short}")
-        except Exception as e:
-            log.error("[notifications] Failed to send membership_due to %s: %s", user["nostr_npub"][:16], e)
-
-    # 3. Credit top-up
+    # 2. Credit top-up
     try:
         topup_users = await get_users_credit_topup()
     except Exception as e:
@@ -269,9 +227,27 @@ async def check_and_send_notifications(client, signer) -> None:
         except Exception as e:
             log.error("[notifications] Failed to send credit_topup to %s: %s", user["nostr_npub"][:16], e)
 
-    total = len(lock_in_users) + len(membership_users) + len(topup_users)
+    # 3. Auto-paused
+    try:
+        auto_paused_users = await get_users_auto_paused()
+    except Exception as e:
+        log.error("[notifications] Error querying auto_paused: %s", e)
+        auto_paused_users = []
+
+    for user in auto_paused_users:
+        msg = format_auto_paused_message()
+        try:
+            pk = PublicKey.parse(user["nostr_npub"])
+            await client.send_private_msg(pk, msg, [])
+            await record_notification(user["user_id"], "auto_paused", None)
+            npub_short = user["nostr_npub"][:16]
+            print(f"[notifications] Sent auto_paused to {npub_short}")
+        except Exception as e:
+            log.error("[notifications] Failed to send auto_paused to %s: %s", user["nostr_npub"][:16], e)
+
+    total = len(lock_in_users) + len(topup_users) + len(auto_paused_users)
     if total > 0:
-        log.info("[notifications] Sent %d notifications (%d lock_in, %d membership, %d topup)",
-                 total, len(lock_in_users), len(membership_users), len(topup_users))
+        log.info("[notifications] Sent %d notifications (%d lock_in, %d topup, %d auto_paused)",
+                 total, len(lock_in_users), len(topup_users), len(auto_paused_users))
     else:
         log.debug("[notifications] No notifications to send this cycle")

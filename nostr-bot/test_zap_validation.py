@@ -16,7 +16,7 @@ from nostr_sdk import EventBuilder, Keys, Kind, Tag
 
 import zap_handler
 
-# ── Test keys ────────────────────────────────────────────────
+# -- Test keys -------------------------------------------------------------
 
 BOT_KEYS = Keys.generate()
 PROVIDER_KEYS = Keys.generate()  # simulates LNURL Lightning provider
@@ -30,7 +30,7 @@ SENDER_PK = SENDER_KEYS.public_key().to_hex()
 AMOUNT_MSATS = 21_000  # 21 sats
 
 
-# ── Helpers ──────────────────────────────────────────────────
+# -- Helpers ---------------------------------------------------------------
 
 
 def _make_9734(sender_keys=None, p_hex=None, amount_msats=None, kind_num=9734):
@@ -79,10 +79,12 @@ def _valid_set():
 def mock_db():
     with patch("zap_handler.db") as m:
         m.get_user_by_npub = AsyncMock(
-            return_value={"id": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee", "status": "active"}
+            return_value={"id": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee", "status": "active", "onboarded_at": "2026-01-01"}
         )
-        m.has_paid_membership = AsyncMock(return_value=True)
+        m.has_onboarded = AsyncMock(return_value=True)
         m.credit_zap = AsyncMock(return_value=42_000)
+        m.get_required_balance = AsyncMock(return_value=None)
+        m.activate_user = AsyncMock(return_value=True)
         yield m
 
 
@@ -91,7 +93,7 @@ def send_dm():
     return AsyncMock()
 
 
-# ── Happy path ───────────────────────────────────────────────
+# -- Happy path ------------------------------------------------------------
 
 
 @pytest.mark.asyncio
@@ -103,7 +105,7 @@ async def test_valid_zap_credits_user(mock_db, send_dm):
     send_dm.assert_called_once()  # confirmation DM
 
 
-# ── CHECK 1: 9735 author must be LNURL provider ─────────────
+# -- CHECK 1: 9735 author must be LNURL provider --------------------------
 
 
 @pytest.mark.asyncio
@@ -120,7 +122,7 @@ async def test_reject_wrong_receipt_author(mock_db, send_dm):
     mock_db.credit_zap.assert_not_called()
 
 
-# ── CHECK 2: bolt11 description_hash ─────────────────────────
+# -- CHECK 2: bolt11 description_hash -------------------------------------
 
 
 @pytest.mark.asyncio
@@ -145,18 +147,15 @@ async def test_reject_missing_description_hash(mock_db, send_dm):
     mock_db.credit_zap.assert_not_called()
 
 
-# ── CHECK 3: 9734 signature must be valid ────────────────────
+# -- CHECK 3: 9734 signature must be valid ---------------------------------
 
 
 @pytest.mark.asyncio
 async def test_reject_tampered_9734_pubkey(mock_db, send_dm):
-    """9734 pubkey swapped to attacker's — verify() catches id/sig mismatch."""
+    """9734 pubkey swapped to attacker's: verify() catches id/sig mismatch."""
     zap_req = _make_9734(p_hex=BOT_PK, amount_msats=AMOUNT_MSATS)
     desc_json = zap_req.as_json()
 
-    # Tamper: replace the sender pubkey with attacker's.
-    # The id was computed over the original pubkey and the sig was made
-    # with the original key, so both verify_id() and verify_signature() fail.
     obj = json.loads(desc_json)
     obj["pubkey"] = ATTACKER_KEYS.public_key().to_hex()
     tampered = json.dumps(obj)
@@ -183,7 +182,7 @@ async def test_reject_garbage_description(mock_db, send_dm):
     mock_db.credit_zap.assert_not_called()
 
 
-# ── CHECK 4: Embedded event must be kind 9734 ───────────────
+# -- CHECK 4: Embedded event must be kind 9734 ----------------------------
 
 
 @pytest.mark.asyncio
@@ -200,12 +199,12 @@ async def test_reject_wrong_kind_in_description(mock_db, send_dm):
     mock_db.credit_zap.assert_not_called()
 
 
-# ── CHECK 5: 9734 p-tag must reference bot ───────────────────
+# -- CHECK 5: 9734 p-tag must reference bot --------------------------------
 
 
 @pytest.mark.asyncio
 async def test_reject_wrong_p_tag(mock_db, send_dm):
-    """9734 p-tag references someone else — replayed receipt from another target."""
+    """9734 p-tag references someone else: replayed receipt from another target."""
     other_pk = ATTACKER_KEYS.public_key().to_hex()
     zap_req = _make_9734(p_hex=other_pk, amount_msats=AMOUNT_MSATS)
     desc_json = zap_req.as_json()
@@ -232,7 +231,7 @@ async def test_reject_missing_p_tag(mock_db, send_dm):
     mock_db.credit_zap.assert_not_called()
 
 
-# ── CHECK 6: Amount tag must match bolt11 ────────────────────
+# -- CHECK 6: Amount tag must match bolt11 ---------------------------------
 
 
 @pytest.mark.asyncio
@@ -249,12 +248,12 @@ async def test_reject_amount_inflation(mock_db, send_dm):
     mock_db.credit_zap.assert_not_called()
 
 
-# ── Idempotency ──────────────────────────────────────────────
+# -- Idempotency -----------------------------------------------------------
 
 
 @pytest.mark.asyncio
 async def test_duplicate_zap_not_double_credited(mock_db, send_dm):
-    """Same event_id processed twice — credit_zap returns None, no DM."""
+    """Same event_id processed twice: credit_zap returns None, no DM."""
     receipt, invoice = _valid_set()
     mock_db.credit_zap.return_value = None  # already processed
 
@@ -264,47 +263,122 @@ async def test_duplicate_zap_not_double_credited(mock_db, send_dm):
     send_dm.assert_not_called()  # no confirmation for duplicate
 
 
-# ── Unregistered sender ──────────────────────────────────────
+# -- Unregistered sender ---------------------------------------------------
 
 
 @pytest.mark.asyncio
 async def test_unregistered_sender_not_credited(mock_db, send_dm):
-    """Zap from npub not in DB — no credit, sends join message."""
+    """Zap from npub not in DB: no credit, sends sign-up message."""
     receipt, invoice = _valid_set()
     mock_db.get_user_by_npub.return_value = None
 
     with patch("zap_handler.bolt11_lib.decode", return_value=invoice):
         await zap_handler.handle_zap_receipt(receipt, send_dm, BOT_PK, PROVIDER_PK)
     mock_db.credit_zap.assert_not_called()
-    # Should DM them to join
     send_dm.assert_called_once()
-    assert "Join the waitlist" in send_dm.call_args[0][1]
+    assert "No account found" in send_dm.call_args[0][1]
 
 
-# ── Unpaid member ─────────────────────────────────────────────
+# -- Active user zap (simple credit) --------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_unpaid_member_not_credited(mock_db, send_dm):
-    """Zap from registered user who hasn't paid membership — no credit, told to finish setup."""
+async def test_active_user_credited_with_balance_dm(mock_db, send_dm):
+    """Zap from active user: credited, gets balance confirmation DM."""
     receipt, invoice = _valid_set()
-    mock_db.has_paid_membership.return_value = False
-
-    with patch("zap_handler.bolt11_lib.decode", return_value=invoice):
-        await zap_handler.handle_zap_receipt(receipt, send_dm, BOT_PK, PROVIDER_PK)
-    mock_db.credit_zap.assert_not_called()
-    send_dm.assert_called_once()
-    assert "finish" in send_dm.call_args[0][1].lower()
-
-
-@pytest.mark.asyncio
-async def test_paid_member_credited(mock_db, send_dm):
-    """Zap from registered user with paid membership — credited normally."""
-    receipt, invoice = _valid_set()
-    mock_db.has_paid_membership.return_value = True
+    mock_db.get_user_by_npub.return_value = {
+        "id": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+        "status": "active",
+        "onboarded_at": "2026-01-01",
+    }
 
     with patch("zap_handler.bolt11_lib.decode", return_value=invoice):
         await zap_handler.handle_zap_receipt(receipt, send_dm, BOT_PK, PROVIDER_PK)
     mock_db.credit_zap.assert_called_once()
     send_dm.assert_called_once()
     assert "sats" in send_dm.call_args[0][1].lower()
+    assert "New balance" in send_dm.call_args[0][1]
+
+
+# -- Auto-resume on zap (auto_paused + onboarded + sufficient balance) -----
+
+
+@pytest.mark.asyncio
+async def test_auto_paused_onboarded_sufficient_balance_activates(mock_db, send_dm):
+    """auto_paused + onboarded + sufficient balance: activates and DMs resume message."""
+    receipt, invoice = _valid_set()
+    mock_db.get_user_by_npub.return_value = {
+        "id": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+        "status": "auto_paused",
+        "onboarded_at": "2026-01-01",
+    }
+    mock_db.credit_zap.return_value = 50_000
+    mock_db.has_onboarded.return_value = True
+    mock_db.get_required_balance.return_value = {
+        "platform_fee_sats": 4400,
+        "gift_card_cost_sats": 18000,
+        "total_sats": 22400,
+    }
+
+    with patch("zap_handler.bolt11_lib.decode", return_value=invoice):
+        await zap_handler.handle_zap_receipt(receipt, send_dm, BOT_PK, PROVIDER_PK)
+
+    mock_db.activate_user.assert_called_once()
+    send_dm.assert_called_once()
+    msg = send_dm.call_args[0][1]
+    assert "back to active" in msg.lower()
+
+
+# -- Auto-paused but insufficient balance ----------------------------------
+
+
+@pytest.mark.asyncio
+async def test_auto_paused_insufficient_balance_dm(mock_db, send_dm):
+    """auto_paused + onboarded but not enough sats: DM with shortfall."""
+    receipt, invoice = _valid_set()
+    mock_db.get_user_by_npub.return_value = {
+        "id": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+        "status": "auto_paused",
+        "onboarded_at": "2026-01-01",
+    }
+    mock_db.credit_zap.return_value = 10_000
+    mock_db.has_onboarded.return_value = True
+    mock_db.get_required_balance.return_value = {
+        "platform_fee_sats": 4400,
+        "gift_card_cost_sats": 18000,
+        "total_sats": 22400,
+    }
+
+    with patch("zap_handler.bolt11_lib.decode", return_value=invoice):
+        await zap_handler.handle_zap_receipt(receipt, send_dm, BOT_PK, PROVIDER_PK)
+
+    mock_db.activate_user.assert_not_called()
+    send_dm.assert_called_once()
+    msg = send_dm.call_args[0][1]
+    assert "Need" in msg
+    assert "more sats" in msg
+
+
+# -- Auto-paused but not onboarded ----------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_auto_paused_not_onboarded_dm(mock_db, send_dm):
+    """auto_paused but not onboarded: DM to complete setup."""
+    receipt, invoice = _valid_set()
+    mock_db.get_user_by_npub.return_value = {
+        "id": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+        "status": "auto_paused",
+        "onboarded_at": None,
+    }
+    mock_db.credit_zap.return_value = 50_000
+    mock_db.has_onboarded.return_value = False
+
+    with patch("zap_handler.bolt11_lib.decode", return_value=invoice):
+        await zap_handler.handle_zap_receipt(receipt, send_dm, BOT_PK, PROVIDER_PK)
+
+    mock_db.activate_user.assert_not_called()
+    send_dm.assert_called_once()
+    msg = send_dm.call_args[0][1]
+    assert "Complete your setup" in msg
+    assert "unsaltedbutter.ai" in msg

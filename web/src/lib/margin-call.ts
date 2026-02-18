@@ -4,6 +4,12 @@ import { usdCentsToSats, satsToUsdCents } from "@/lib/btc-price";
 
 type AlertLevel = "warning" | "email" | "critical" | "paused";
 
+interface RequiredBalance {
+  platformFeeSats: number;
+  giftCardCostSats: number;
+  totalSats: number;
+}
+
 interface MarginCallUser {
   userId: string;
   email: string | null;
@@ -12,19 +18,68 @@ interface MarginCallUser {
   subscriptionEndDate: Date;
   giftCardCostCents: number;
   giftCardCostSats: number;
+  platformFeeSats: number;
+  totalRequiredSats: number;
   creditSats: number;
+  shortfallSats: number;
   daysUntilEnd: number;
   alertLevel: AlertLevel;
+}
+
+interface UserMarginStatus {
+  needsTopUp: boolean;
+  shortfallSats: number;
+  shortfallUsdCents: number;
+  platformFeeSats: number;
+  giftCardCostSats: number;
+  totalRequiredSats: number;
+}
+
+/**
+ * Read the platform fee from platform_config and compute the total required
+ * balance for the next service (gift card cost + platform fee).
+ */
+export async function getRequiredBalance(
+  nextServiceId: string
+): Promise<RequiredBalance> {
+  const feeResult = await query(
+    `SELECT value FROM platform_config WHERE key = 'platform_fee_sats'`,
+    []
+  );
+  const platformFeeSats =
+    feeResult.rows.length > 0 ? Number(feeResult.rows[0].value) : 0;
+
+  const giftCardCostCents = await selectDenomination(nextServiceId);
+  const giftCardCostSats = await usdCentsToSats(giftCardCostCents);
+
+  return {
+    platformFeeSats,
+    giftCardCostSats,
+    totalSats: giftCardCostSats + platformFeeSats,
+  };
+}
+
+/**
+ * Read platform_fee_sats once from platform_config.
+ */
+async function getPlatformFeeSats(): Promise<number> {
+  const result = await query(
+    `SELECT value FROM platform_config WHERE key = 'platform_fee_sats'`,
+    []
+  );
+  return result.rows.length > 0 ? Number(result.rows[0].value) : 0;
 }
 
 /**
  * Daily margin call check. For each user with a rotation slot approaching
  * lock-in, compare service credit balance against the cost of the next
- * gift card in their queue.
+ * gift card in their queue plus the platform fee.
  *
  * Returns users who need alerts, grouped by severity.
  */
 export async function checkMarginCalls(): Promise<MarginCallUser[]> {
+  const platformFeeSats = await getPlatformFeeSats();
+
   // Find users with active/cancel_scheduled subscriptions ending in the next 10 days
   // where the next service in their rotation slot needs a gift card
   const result = await query(
@@ -66,14 +121,17 @@ export async function checkMarginCalls(): Promise<MarginCallUser[]> {
     try {
       giftCardCostCents = await selectDenomination(nextServiceId);
     } catch {
-      continue; // No denominations configured — skip
+      continue; // No denominations configured, skip
     }
 
     const giftCardCostSats = await usdCentsToSats(giftCardCostCents);
+    const totalRequiredSats = giftCardCostSats + platformFeeSats;
 
-    if (creditSats >= giftCardCostSats) {
-      continue; // User can cover it — no alert needed
+    if (creditSats >= totalRequiredSats) {
+      continue; // User can cover it, no alert needed
     }
+
+    const shortfallSats = totalRequiredSats - creditSats;
 
     let alertLevel: AlertLevel;
     if (daysUntilEnd <= 0) {
@@ -94,7 +152,10 @@ export async function checkMarginCalls(): Promise<MarginCallUser[]> {
       subscriptionEndDate: endDate,
       giftCardCostCents,
       giftCardCostSats,
+      platformFeeSats,
+      totalRequiredSats,
       creditSats,
+      shortfallSats,
       daysUntilEnd,
       alertLevel,
     });
@@ -108,7 +169,7 @@ export async function checkMarginCalls(): Promise<MarginCallUser[]> {
  */
 export async function getUserMarginStatus(
   userId: string
-): Promise<{ needsTopUp: boolean; shortfallSats: number; shortfallUsdCents: number } | null> {
+): Promise<UserMarginStatus | null> {
   // Find the user's rotation slots that need gift cards
   const slot = await query(
     `SELECT rs.next_service_id, s.subscription_end_date
@@ -134,7 +195,9 @@ export async function getUserMarginStatus(
     return null;
   }
 
-  const costSats = await usdCentsToSats(costCents);
+  const giftCardCostSats = await usdCentsToSats(costCents);
+  const platformFeeSats = await getPlatformFeeSats();
+  const totalRequiredSats = giftCardCostSats + platformFeeSats;
 
   const credits = await query(
     "SELECT COALESCE(credit_sats, 0) AS credit_sats FROM service_credits WHERE user_id = $1",
@@ -142,12 +205,26 @@ export async function getUserMarginStatus(
   );
   const creditSats = credits.rows.length > 0 ? Number(credits.rows[0].credit_sats) : 0;
 
-  if (creditSats >= costSats) {
-    return { needsTopUp: false, shortfallSats: 0, shortfallUsdCents: 0 };
+  if (creditSats >= totalRequiredSats) {
+    return {
+      needsTopUp: false,
+      shortfallSats: 0,
+      shortfallUsdCents: 0,
+      platformFeeSats,
+      giftCardCostSats,
+      totalRequiredSats,
+    };
   }
 
-  const shortfallSats = costSats - creditSats;
+  const shortfallSats = totalRequiredSats - creditSats;
   const shortfallUsdCents = await satsToUsdCents(shortfallSats);
 
-  return { needsTopUp: true, shortfallSats, shortfallUsdCents };
+  return {
+    needsTopUp: true,
+    shortfallSats,
+    shortfallUsdCents,
+    platformFeeSats,
+    giftCardCostSats,
+    totalRequiredSats,
+  };
 }

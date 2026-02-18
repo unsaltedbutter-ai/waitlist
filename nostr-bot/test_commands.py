@@ -24,10 +24,11 @@ def mock_db():
         m.get_active_service_id = AsyncMock()
         m.skip_service = AsyncMock()
         m.stay_service = AsyncMock()
+        m.pause_user = AsyncMock()
         yield m
 
 
-# ── status ───────────────────────────────────────────────────
+# -- status ---------------------------------------------------------------
 
 
 @pytest.mark.asyncio
@@ -84,7 +85,29 @@ async def test_status_credit_formatting(mock_db):
     assert "1,234,567 sats" in result
 
 
-# ── queue ────────────────────────────────────────────────────
+@pytest.mark.asyncio
+async def test_status_paused_shows_status_line(mock_db):
+    mock_db.get_user_status.return_value = {
+        "subscription": None,
+        "credit_sats": 5000,
+        "next_service": None,
+    }
+    result = await commands.handle_dm(USER_ID, "paused", "status")
+    assert "Status: Paused" in result
+
+
+@pytest.mark.asyncio
+async def test_status_auto_paused_shows_status_line(mock_db):
+    mock_db.get_user_status.return_value = {
+        "subscription": None,
+        "credit_sats": 1000,
+        "next_service": "Netflix",
+    }
+    result = await commands.handle_dm(USER_ID, "auto_paused", "status")
+    assert "Status: Paused (low balance)" in result
+
+
+# -- queue ----------------------------------------------------------------
 
 
 @pytest.mark.asyncio
@@ -106,7 +129,7 @@ async def test_queue_empty(mock_db):
     assert "empty" in result.lower()
 
 
-# ── skip ─────────────────────────────────────────────────────
+# -- skip -----------------------------------------------------------------
 
 
 @pytest.mark.asyncio
@@ -137,7 +160,7 @@ async def test_skip_not_in_queue(mock_db):
     assert "Could not skip" in result
 
 
-# ── stay ─────────────────────────────────────────────────────
+# -- stay -----------------------------------------------------------------
 
 
 @pytest.mark.asyncio
@@ -158,7 +181,34 @@ async def test_stay_no_active_sub(mock_db):
     assert "No active subscription to stay on" in result
 
 
-# ── help / unknown ───────────────────────────────────────────
+# -- pause ----------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_pause_from_active(mock_db):
+    mock_db.pause_user.return_value = True
+    result = await commands.handle_dm(USER_ID, "active", "pause")
+    assert "paused" in result.lower()
+    assert "no fees" in result.lower()
+    mock_db.pause_user.assert_awaited_once_with(USER_ID)
+
+
+@pytest.mark.asyncio
+async def test_pause_from_auto_paused(mock_db):
+    mock_db.pause_user.return_value = True
+    result = await commands.handle_dm(USER_ID, "auto_paused", "pause")
+    assert "paused" in result.lower()
+    assert "no fees" in result.lower()
+
+
+@pytest.mark.asyncio
+async def test_pause_already_paused(mock_db):
+    mock_db.pause_user.return_value = False
+    result = await commands.handle_dm(USER_ID, "paused", "pause")
+    assert "can only pause" in result.lower()
+
+
+# -- help / unknown -------------------------------------------------------
 
 
 @pytest.mark.asyncio
@@ -173,10 +223,6 @@ async def test_unknown_command(mock_db):
     assert result == commands.HELP_TEXT
 
 
-# ── churned user ─────────────────────────────────────────────
-
-
 @pytest.mark.asyncio
-async def test_churned_user(mock_db):
-    result = await commands.handle_dm(USER_ID, "churned", "status")
-    assert "membership has ended" in result.lower()
+async def test_help_includes_pause(mock_db):
+    assert "pause" in commands.HELP_TEXT

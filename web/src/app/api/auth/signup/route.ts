@@ -100,8 +100,8 @@ export async function POST(req: NextRequest) {
   // Create user and redeem invite code in a single transaction
   const userId = await transaction(async (txQuery) => {
     const result = await txQuery<{ id: string }>(
-      `INSERT INTO users (email, password_hash, status, membership_plan, billing_period)
-       VALUES ($1, $2, 'active', 'solo', 'monthly')
+      `INSERT INTO users (email, password_hash, status)
+       VALUES ($1, $2, 'auto_paused')
        RETURNING id`,
       [email.toLowerCase(), passwordHash]
     );

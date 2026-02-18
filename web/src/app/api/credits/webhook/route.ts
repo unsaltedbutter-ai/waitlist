@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
 import { query, transaction } from "@/lib/db";
-import { satsToUsdCents } from "@/lib/btc-price";
 import crypto, { timingSafeEqual } from "crypto";
 
 /**
@@ -71,7 +70,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Missing invoiceId" }, { status: 400 });
   }
 
-  // BTCPay config — needed for both paths
+  // BTCPay config
   const btcpayUrl = process.env.BTCPAY_URL;
   const btcpayApiKey = process.env.BTCPAY_API_KEY;
   const btcpayStoreId = process.env.BTCPAY_STORE_ID;
@@ -80,7 +79,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "BTCPay not configured" }, { status: 503 });
   }
 
-  // --- Check if this is a prepayment invoice ---
+  // Check if this is a prepayment invoice
   const prepayment = await query<{ id: string; user_id: string; status: string }>(
     `SELECT id, user_id, status FROM btc_prepayments WHERE btcpay_invoice_id = $1`,
     [invoiceId]
@@ -90,23 +89,7 @@ export async function POST(req: NextRequest) {
     return handlePrepayment(prepayment.rows[0], invoiceId, btcpayUrl, btcpayApiKey, btcpayStoreId);
   }
 
-  // --- Check if this is a membership payment invoice ---
-  const membership = await query<{
-    id: string; user_id: string; status: string;
-    period_start: string; period_end: string;
-  }>(
-    `SELECT id, user_id, status, period_start, period_end
-     FROM membership_payments WHERE btcpay_invoice_id = $1`,
-    [invoiceId]
-  );
-
-  if (membership.rows.length > 0) {
-    return handleMembershipPayment(
-      membership.rows[0], invoiceId, btcpayUrl, btcpayApiKey, btcpayStoreId
-    );
-  }
-
-  // Unknown invoice — ignore
+  // Unknown invoice, ignore
   return NextResponse.json({ ok: true });
 }
 
@@ -164,110 +147,45 @@ async function handlePrepayment(
     );
   });
 
-  return NextResponse.json({ ok: true, credited_sats: receivedSats });
-}
-
-/** Handle a membership payment webhook. */
-async function handleMembershipPayment(
-  row: { id: string; user_id: string; status: string; period_start: string; period_end: string },
-  invoiceId: string,
-  btcpayUrl: string,
-  btcpayApiKey: string,
-  btcpayStoreId: string
-): Promise<NextResponse> {
-  if (row.status === "paid") {
-    return NextResponse.json({ ok: true });
-  }
-
-  const result = await fetchReceivedSats(invoiceId, btcpayUrl, btcpayApiKey, btcpayStoreId);
-  if ("error" in result) {
-    return NextResponse.json({ error: result.error }, { status: result.status });
-  }
-
-  const receivedSats = result.sats;
-  if (receivedSats <= 0) {
-    return NextResponse.json({ error: "No payment received" }, { status: 400 });
-  }
-
-  // Fetch the invoice metadata to determine plan and billing period
-  const invoiceRes = await fetch(
-    `${btcpayUrl}/api/v1/stores/${btcpayStoreId}/invoices/${invoiceId}`,
-    {
-      headers: { Authorization: `token ${btcpayApiKey}` },
-    }
+  // Auto-resume: if user is auto_paused + onboarded + sufficient balance, activate
+  const userResult = await query<{ status: string; onboarded_at: string | null }>(
+    "SELECT status, onboarded_at FROM users WHERE id = $1",
+    [row.user_id]
   );
-  if (!invoiceRes.ok) {
-    return NextResponse.json({ error: "Failed to fetch invoice metadata" }, { status: 502 });
-  }
-  const invoiceData = await invoiceRes.json();
-  const meta = invoiceData.metadata ?? {};
+  const user = userResult.rows[0];
+  if (user && user.status === "auto_paused" && user.onboarded_at !== null) {
+    // Check if balance covers requirements
+    const { getRequiredBalance } = await import("@/lib/margin-call");
+    const { notifyOrchestrator } = await import("@/lib/orchestrator-notify");
 
-  const membershipPlan: string = meta.membership_plan;
-  const billingPeriod: string = meta.billing_period;
-
-  if (!membershipPlan || !billingPeriod) {
-    console.error("Membership invoice missing plan metadata:", invoiceId);
-    return NextResponse.json({ error: "Missing membership metadata" }, { status: 400 });
-  }
-
-  const amountUsdCents = await satsToUsdCents(receivedSats);
-
-  // Extract service credit portion from invoice metadata
-  const serviceCreditSats: number = meta.service_credit_sats ?? 0;
-
-  await transaction(async (txQuery) => {
-    // Update user membership info
-    await txQuery(
-      `UPDATE users
-       SET membership_plan = $2,
-           billing_period = $3,
-           membership_expires_at = $4,
-           status = 'active',
-           updated_at = NOW()
-       WHERE id = $1`,
-      [row.user_id, membershipPlan, billingPeriod, row.period_end]
+    // Get next service from rotation queue
+    const nextService = await query<{ service_id: string }>(
+      "SELECT service_id FROM rotation_queue WHERE user_id = $1 ORDER BY position LIMIT 1",
+      [row.user_id]
     );
 
-    // Mark membership payment as paid
-    await txQuery(
-      `UPDATE membership_payments
-       SET status = 'paid', amount_sats = $2, amount_usd_cents = $3
-       WHERE btcpay_invoice_id = $1`,
-      [invoiceId, receivedSats, amountUsdCents]
-    );
+    if (nextService.rows.length > 0) {
+      try {
+        const required = await getRequiredBalance(nextService.rows[0].service_id);
+        // Get current balance after the transaction committed
+        const balanceResult = await query<{ credit_sats: string }>(
+          "SELECT credit_sats FROM service_credits WHERE user_id = $1",
+          [row.user_id]
+        );
+        const currentBalance = balanceResult.rows.length > 0 ? Number(balanceResult.rows[0].credit_sats) : 0;
 
-    // Credit the service portion to service_credits
-    if (serviceCreditSats > 0) {
-      await txQuery(
-        `INSERT INTO service_credits (user_id) VALUES ($1)
-         ON CONFLICT (user_id) DO NOTHING`,
-        [row.user_id]
-      );
-
-      const creditUpdate = await txQuery(
-        `UPDATE service_credits
-         SET credit_sats = credit_sats + $2, updated_at = NOW()
-         WHERE user_id = $1
-         RETURNING credit_sats`,
-        [row.user_id, serviceCreditSats]
-      );
-
-      const newBalance = creditUpdate.rows[0].credit_sats;
-
-      await txQuery(
-        `INSERT INTO credit_transactions
-           (user_id, type, amount_sats, balance_after_sats, reference_id, description)
-         VALUES ($1, 'prepayment', $2, $3, $4, $5)`,
-        [row.user_id, serviceCreditSats, newBalance, row.id,
-         `Service credit from membership signup: ${serviceCreditSats} sats`]
-      );
+        if (currentBalance >= required.totalSats) {
+          await query(
+            "UPDATE users SET status = 'active', paused_at = NULL, updated_at = NOW() WHERE id = $1",
+            [row.user_id]
+          );
+          await notifyOrchestrator(row.user_id);
+        }
+      } catch {
+        // Non-fatal: if margin check fails, user stays auto_paused
+      }
     }
-  });
+  }
 
-  return NextResponse.json({
-    ok: true,
-    membership: membershipPlan,
-    billing_period: billingPeriod,
-    service_credit_sats: serviceCreditSats,
-  });
+  return NextResponse.json({ ok: true, credited_sats: receivedSats });
 }

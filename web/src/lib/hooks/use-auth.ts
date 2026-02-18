@@ -9,10 +9,9 @@ interface User {
   id: string;
   email: string | null;
   nostr_npub: string | null;
-  status: string;
-  membership_plan: "solo" | "duo";
-  billing_period: "monthly" | "annual";
-  membership_expires_at: string | null;
+  status: "active" | "paused" | "auto_paused";
+  paused_at: string | null;
+  onboarded_at: string | null;
   created_at: string;
 }
 

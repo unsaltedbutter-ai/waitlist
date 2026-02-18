@@ -144,20 +144,11 @@ async def handle_zap_receipt(
 
     user = await db.get_user_by_npub(sender_hex)
     if user is None:
-        log.info("Zap from unregistered npub %s (%d sats) — ignoring", sender_hex[:16], amount_sats)
+        log.info("Zap from unregistered npub %s (%d sats), ignoring", sender_hex[:16], amount_sats)
         try:
-            await send_dm(sender_hex, "Join the waitlist")
+            await send_dm(sender_hex, "No account found. Sign up at unsaltedbutter.ai")
         except Exception:
             log.debug("Could not DM unregistered zapper %s", sender_hex[:16])
-        return
-
-    # Reject zaps from users who haven't paid membership yet
-    if not await db.has_paid_membership(user["id"]):
-        log.info("Zap from unpaid member %s (%d sats) — rejecting", sender_hex[:16], amount_sats)
-        try:
-            await send_dm(sender_hex, "Finish setting up your account first.")
-        except Exception:
-            log.debug("Could not DM unpaid member %s", sender_hex[:16])
         return
 
     # Credit the account (idempotent)
@@ -169,10 +160,33 @@ async def handle_zap_receipt(
 
     log.info("Credited %d sats to user %s (new balance: %d)", amount_sats, str(user["id"])[:8], new_balance)
 
+    user_status = user["status"]
     try:
-        await send_dm(
-            sender_hex,
-            f"Received {amount_sats:,} sats. New balance: {new_balance:,} sats.",
-        )
+        if user_status == "auto_paused":
+            onboarded = await db.has_onboarded(user["id"])
+            if onboarded:
+                required = await db.get_required_balance(user["id"])
+                if required and new_balance >= required["total_sats"]:
+                    await db.activate_user(user["id"])
+                    await send_dm(
+                        sender_hex,
+                        f"Received {amount_sats:,} sats. You're back to active. Setting up your next service now.",
+                    )
+                else:
+                    needed = (required["total_sats"] - new_balance) if required else 0
+                    await send_dm(
+                        sender_hex,
+                        f"Received {amount_sats:,} sats (balance: {new_balance:,}). Need {needed:,} more sats to resume.",
+                    )
+            else:
+                await send_dm(
+                    sender_hex,
+                    f"Received {amount_sats:,} sats (balance: {new_balance:,}). Complete your setup at unsaltedbutter.ai to get started.",
+                )
+        else:
+            await send_dm(
+                sender_hex,
+                f"Received {amount_sats:,} sats. New balance: {new_balance:,} sats.",
+            )
     except Exception:
         log.warning("Failed to send zap confirmation DM to %s", sender_hex[:16])
