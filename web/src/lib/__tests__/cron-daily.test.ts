@@ -9,8 +9,18 @@ vi.mock("@/lib/nostr-push", () => ({
   pushJobsReady: vi.fn().mockResolvedValue(undefined),
 }));
 
+vi.mock("@/lib/job-history", () => ({
+  recordStatusChange: vi.fn().mockResolvedValue(undefined),
+}));
+
+vi.mock("@/lib/alert-generator", () => ({
+  generateAlerts: vi.fn().mockResolvedValue({ created: 0, stuck_jobs: 0, capacity_warning: false, debt_warning: false }),
+}));
+
 import { query } from "@/lib/db";
 import { pushJobsReady } from "@/lib/nostr-push";
+import { recordStatusChange } from "@/lib/job-history";
+import { generateAlerts } from "@/lib/alert-generator";
 import { runDailyCron } from "@/lib/cron-daily";
 
 const mockQuery = vi.mocked(query);
@@ -93,6 +103,7 @@ describe("runDailyCron", () => {
       jobs_created: 0,
       nudged: 0,
       skipped_debt: 0,
+      alerts_created: 0,
     });
   });
 

@@ -4,6 +4,7 @@ import { query, transaction } from "@/lib/db";
 import { UUID_REGEX } from "@/lib/constants";
 import { parseJsonBody } from "@/lib/parse-json-body";
 import { decrypt, hashEmail } from "@/lib/crypto";
+import { recordStatusChange } from "@/lib/job-history";
 
 export const POST = withAgentAuth(async (_req: NextRequest, { body }) => {
   const { data: parsed, error } = parseJsonBody<{ job_ids: string[] }>(body);
@@ -96,6 +97,12 @@ export const POST = withAgentAuth(async (_req: NextRequest, { body }) => {
              (SELECT nostr_npub FROM users WHERE users.id = jobs.user_id) AS nostr_npub`,
           [cleanIds]
         );
+
+        // Record status history for each claimed job
+        for (const job of updateResult.rows) {
+          await recordStatusChange(job.id, "pending", "dispatched", "agent", txQuery);
+        }
+
         return updateResult.rows;
       });
       claimed = result;

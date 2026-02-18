@@ -1,11 +1,14 @@
 import { query } from "@/lib/db";
 import { pushJobsReady } from "@/lib/nostr-push";
 import { TERMINAL_STATUSES } from "@/lib/constants";
+import { recordStatusChange } from "@/lib/job-history";
+import { generateAlerts } from "@/lib/alert-generator";
 
 export interface CronResult {
   jobs_created: number;
   nudged: number;
   skipped_debt: number;
+  alerts_created: number;
 }
 
 /**
@@ -156,7 +159,12 @@ async function createJob(
     [userId, serviceId, action, billingDate ?? null]
   );
 
-  return result.rows[0]?.id ?? null;
+  const jobId = result.rows[0]?.id ?? null;
+  if (jobId) {
+    await recordStatusChange(jobId, null, "pending", "cron");
+  }
+
+  return jobId;
 }
 
 /**
@@ -208,9 +216,13 @@ export async function runDailyCron(): Promise<CronResult> {
   // 5. Count users skipped due to debt (for reporting)
   const skippedDebt = await countDebtUsers();
 
+  // 6. Generate operator alerts (stuck jobs, capacity, debt)
+  const alertsResult = await generateAlerts();
+
   return {
     jobs_created: createdJobIds.length,
     nudged: staleJobIds.length,
     skipped_debt: skippedDebt,
+    alerts_created: alertsResult.created,
   };
 }

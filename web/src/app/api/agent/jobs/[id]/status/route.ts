@@ -4,6 +4,7 @@ import { query, transaction } from "@/lib/db";
 import { UUID_REGEX } from "@/lib/constants";
 import { parseJsonBody } from "@/lib/parse-json-body";
 import { decrypt, hashEmail } from "@/lib/crypto";
+import { recordStatusChange } from "@/lib/job-history";
 
 // Valid status transitions: from -> [allowed targets]
 const VALID_TRANSITIONS: Record<string, string[]> = {
@@ -139,6 +140,9 @@ export const PATCH = withAgentAuth(async (_req: NextRequest, { body, params }) =
     }
 
     const updatedJob = updateResult.rows[0];
+
+    // Record the status transition in the history table
+    await recordStatusChange(jobId, currentStatus, newStatus, "agent");
 
     if (newStatus === "completed_reneged" && updatedJob.amount_sats) {
       await transaction(async (txQuery) => {
