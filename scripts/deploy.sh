@@ -483,6 +483,8 @@ REMOTE_VERIFY
 echo ""
 echo "================================================"
 echo "  Deploy Complete"
+echo "         $(date '+%Y-%m-%d %H:%M:%S')"
+echo "         ${GIT_HASH}"
 echo "================================================"
 echo ""
 echo "  App:     https://unsaltedbutter.ai"
