@@ -16,7 +16,7 @@
 #   2. rsync scripts/ (for schema + nginx config)
 #   3. [--init] scp SCHEMA.sql to VPS
 #   4. [--init] Generate .env.production with real secrets
-#   5. [--init] Apply database schema (v4) + migrations
+#   5. [--init] Apply database schema (v4, complete)
 #   6. [--setup-bots] Install update-checker (cron) + daily cron timer (systemd)
 #   7. npm ci && npm run build
 #   8. Install/configure nginx
@@ -183,7 +183,7 @@ REMOTE_ENV
 fi
 
 # =============================================================================
-# 5. [init] Apply database schema + migrations
+# 5. [init] Apply database schema (SCHEMA.sql is the complete v4 schema)
 # =============================================================================
 if $INIT_MODE; then
     log "Copying SCHEMA.sql to VPS..."
@@ -202,15 +202,6 @@ export PGPASSWORD="${DB_PASS}"
 
 echo "Applying SCHEMA.sql (v4 pay-per-action)..."
 psql -h localhost -U butter -d unsaltedbutter -f "${REMOTE_DIR}/scripts/SCHEMA.sql"
-
-# Apply incremental migrations in sorted order. On a fresh DB these may
-# already be included in SCHEMA.sql, so failures are non-fatal.
-if ls "${REMOTE_DIR}/scripts/migrations/"*.sql 1>/dev/null 2>&1; then
-    for migration in "${REMOTE_DIR}/scripts/migrations/"*.sql; do
-        echo "Applying migration: $(basename "$migration")..."
-        psql -h localhost -U butter -d unsaltedbutter -f "$migration" || true
-    done
-fi
 
 echo "Schema applied successfully"
 REMOTE_SCHEMA
@@ -395,17 +386,22 @@ echo "nginx configured"
 REMOTE_NGINX
 
 # =============================================================================
-# 9. [init] SSL with certbot
+# 9. [init] SSL with certbot (skipped if certs already exist)
 # =============================================================================
 if $INIT_MODE; then
-    log "Setting up SSL certificates..."
-    warn "Certbot will prompt you for email + agreement. Answer the prompts."
+    CERT_EXISTS=$(${SSH_CMD} "test -f /etc/letsencrypt/live/unsaltedbutter.ai/fullchain.pem && echo yes || echo no")
+    if [[ "${CERT_EXISTS}" == "yes" ]]; then
+        log "SSL certificates already exist, skipping certbot"
+    else
+        log "Setting up SSL certificates..."
+        warn "Certbot will prompt you for email + agreement. Answer the prompts."
 
-    ${SSH_CMD} -t bash << 'REMOTE_SSL'
+        ${SSH_CMD} -t bash << 'REMOTE_SSL'
 sudo certbot --nginx -d unsaltedbutter.ai -d pay.unsaltedbutter.ai
 REMOTE_SSL
 
-    log "SSL configured"
+        log "SSL configured"
+    fi
 fi
 
 # =============================================================================
