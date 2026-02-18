@@ -16,7 +16,7 @@ vi.mock("@/lib/auth", () => ({
   }),
 }));
 import { query, transaction } from "@/lib/db";
-import { PUT } from "../route";
+import { GET, PUT } from "../route";
 
 function makeRequest(body: object): Request {
   return new Request("http://localhost/api/queue", {
@@ -353,5 +353,38 @@ describe("PUT /api/queue", () => {
     const req = makeRequest({ order: ["netflix"] });
     const res = await PUT(req as any, { params: Promise.resolve({}) });
     expect(res.status).toBe(200);
+  });
+});
+
+// Finding 4.1: database connection failure on GET (no try/catch in route)
+describe("GET /api/queue", () => {
+  it("crashes when database query throws (documents missing error handling)", async () => {
+    vi.mocked(query).mockRejectedValueOnce(new Error("Connection refused"));
+
+    const req = new Request("http://localhost/api/queue");
+    await expect(
+      GET(req as any, { params: Promise.resolve({}) })
+    ).rejects.toThrow("Connection refused");
+  });
+
+  it("returns queue rows on success", async () => {
+    vi.mocked(query).mockResolvedValueOnce(
+      mockQueryResult([
+        {
+          service_id: "netflix",
+          service_name: "Netflix",
+          position: 1,
+          plan_name: "Standard",
+          plan_price_cents: 1549,
+        },
+      ])
+    );
+
+    const req = new Request("http://localhost/api/queue");
+    const res = await GET(req as any, { params: Promise.resolve({}) });
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data.queue).toHaveLength(1);
+    expect(data.queue[0].service_id).toBe("netflix");
   });
 });

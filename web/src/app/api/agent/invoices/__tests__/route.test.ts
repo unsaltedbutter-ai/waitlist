@@ -70,15 +70,29 @@ describe("POST /api/agent/invoices", () => {
     expect(data.bolt11).toBe("lnbc3000sat1...");
     expect(data.amount_sats).toBe(3000);
 
+    // Finding 2.4: Verify createLightningInvoice was called with the exact request amount
+    expect(createLightningInvoice).toHaveBeenCalledWith({
+      amountSats: 3000,
+      metadata: { job_id: jobId, user_npub: "npub1abc" },
+    });
+
     // Verify job was updated with invoice_id
     const updateCall = vi.mocked(query).mock.calls[2];
     expect(updateCall[0]).toContain("UPDATE jobs SET invoice_id");
     expect(updateCall[1]).toEqual(["btcpay-inv-1", 3000, jobId]);
 
+    // Finding 2.4: Verify the UPDATE query sets the correct amount_sats value (3000)
+    const updateParams = updateCall[1] as unknown[];
+    expect(updateParams[1]).toBe(3000);
+
     // Verify transaction was created
     const txCall = vi.mocked(query).mock.calls[3];
     expect(txCall[0]).toContain("INSERT INTO transactions");
     expect(txCall[1]).toEqual([jobId, userId, "netflix", "cancel", 3000]);
+
+    // Finding 2.4: Verify the transaction row also has the correct amount_sats
+    const txParams = txCall[1] as unknown[];
+    expect(txParams[4]).toBe(3000);
   });
 
   it("missing fields: returns 400", async () => {

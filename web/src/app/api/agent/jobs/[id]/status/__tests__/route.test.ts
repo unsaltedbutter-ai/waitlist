@@ -197,6 +197,12 @@ describe("PATCH /api/agent/jobs/[id]/status", () => {
     expect(res.status).toBe(200);
     const data = await res.json();
     expect(data.job.status).toBe("active");
+
+    // Finding 2.3: verify atomic WHERE clause includes current status
+    const updateCall = vi.mocked(query).mock.calls[1];
+    const sql = updateCall[0] as string;
+    expect(sql).toContain("AND status =");
+    expect(updateCall[1]).toContain("dispatched");
   });
 
   it("dispatched -> implied_skip", async () => {
@@ -210,6 +216,12 @@ describe("PATCH /api/agent/jobs/[id]/status", () => {
     expect(res.status).toBe(200);
     const data = await res.json();
     expect(data.job.status).toBe("implied_skip");
+
+    // Finding 2.3: verify atomic WHERE clause includes current status
+    const updateCall = vi.mocked(query).mock.calls[1];
+    const sql = updateCall[0] as string;
+    expect(sql).toContain("AND status =");
+    expect(updateCall[1]).toContain("dispatched");
   });
 
   it("outreach_sent -> snoozed", async () => {
@@ -223,6 +235,12 @@ describe("PATCH /api/agent/jobs/[id]/status", () => {
     expect(res.status).toBe(200);
     const data = await res.json();
     expect(data.job.status).toBe("snoozed");
+
+    // Finding 2.3: verify atomic WHERE clause includes current status
+    const updateCall = vi.mocked(query).mock.calls[1];
+    const sql = updateCall[0] as string;
+    expect(sql).toContain("AND status =");
+    expect(updateCall[1]).toContain("outreach_sent");
   });
 
   it("outreach_sent -> active", async () => {
@@ -236,6 +254,12 @@ describe("PATCH /api/agent/jobs/[id]/status", () => {
     expect(res.status).toBe(200);
     const data = await res.json();
     expect(data.job.status).toBe("active");
+
+    // Finding 2.3: verify atomic WHERE clause includes current status
+    const updateCall = vi.mocked(query).mock.calls[1];
+    const sql = updateCall[0] as string;
+    expect(sql).toContain("AND status =");
+    expect(updateCall[1]).toContain("outreach_sent");
   });
 
   it("outreach_sent -> user_skip", async () => {
@@ -249,6 +273,12 @@ describe("PATCH /api/agent/jobs/[id]/status", () => {
     expect(res.status).toBe(200);
     const data = await res.json();
     expect(data.job.status).toBe("user_skip");
+
+    // Finding 2.3: verify atomic WHERE clause includes current status
+    const updateCall = vi.mocked(query).mock.calls[1];
+    const sql = updateCall[0] as string;
+    expect(sql).toContain("AND status =");
+    expect(updateCall[1]).toContain("outreach_sent");
   });
 
   it("snoozed -> dispatched", async () => {
@@ -262,6 +292,12 @@ describe("PATCH /api/agent/jobs/[id]/status", () => {
     expect(res.status).toBe(200);
     const data = await res.json();
     expect(data.job.status).toBe("dispatched");
+
+    // Finding 2.3: verify atomic WHERE clause includes current status
+    const updateCall = vi.mocked(query).mock.calls[1];
+    const sql = updateCall[0] as string;
+    expect(sql).toContain("AND status =");
+    expect(updateCall[1]).toContain("snoozed");
   });
 
   it("active -> awaiting_otp", async () => {
@@ -275,6 +311,12 @@ describe("PATCH /api/agent/jobs/[id]/status", () => {
     expect(res.status).toBe(200);
     const data = await res.json();
     expect(data.job.status).toBe("awaiting_otp");
+
+    // Finding 2.3: verify atomic WHERE clause includes current status
+    const updateCall = vi.mocked(query).mock.calls[1];
+    const sql = updateCall[0] as string;
+    expect(sql).toContain("AND status =");
+    expect(updateCall[1]).toContain("active");
   });
 
   it("active -> completed_paid", async () => {
@@ -288,6 +330,12 @@ describe("PATCH /api/agent/jobs/[id]/status", () => {
     expect(res.status).toBe(200);
     const data = await res.json();
     expect(data.job.status).toBe("completed_paid");
+
+    // Finding 2.3: verify atomic WHERE clause includes current status
+    const updateCall = vi.mocked(query).mock.calls[1];
+    const sql = updateCall[0] as string;
+    expect(sql).toContain("AND status =");
+    expect(updateCall[1]).toContain("active");
   });
 
   it("active -> completed_eventual", async () => {
@@ -299,6 +347,12 @@ describe("PATCH /api/agent/jobs/[id]/status", () => {
       { params: Promise.resolve({ id: JOB_ID }) }
     );
     expect(res.status).toBe(200);
+
+    // Finding 2.3: verify atomic WHERE clause includes current status
+    const updateCall = vi.mocked(query).mock.calls[1];
+    const sql = updateCall[0] as string;
+    expect(sql).toContain("AND status =");
+    expect(updateCall[1]).toContain("active");
   });
 
   it("active -> completed_reneged", async () => {
@@ -310,6 +364,12 @@ describe("PATCH /api/agent/jobs/[id]/status", () => {
       { params: Promise.resolve({ id: JOB_ID }) }
     );
     expect(res.status).toBe(200);
+
+    // Finding 2.3: verify atomic WHERE clause includes current status
+    const updateCall = vi.mocked(query).mock.calls[1];
+    const sql = updateCall[0] as string;
+    expect(sql).toContain("AND status =");
+    expect(updateCall[1]).toContain("active");
   });
 
   it("awaiting_otp -> active", async () => {
@@ -323,6 +383,12 @@ describe("PATCH /api/agent/jobs/[id]/status", () => {
     expect(res.status).toBe(200);
     const data = await res.json();
     expect(data.job.status).toBe("active");
+
+    // Finding 2.3: verify atomic WHERE clause includes current status
+    const updateCall = vi.mocked(query).mock.calls[1];
+    const sql = updateCall[0] as string;
+    expect(sql).toContain("AND status =");
+    expect(updateCall[1]).toContain("awaiting_otp");
   });
 
   it("awaiting_otp -> user_abandon", async () => {
@@ -334,6 +400,12 @@ describe("PATCH /api/agent/jobs/[id]/status", () => {
       { params: Promise.resolve({ id: JOB_ID }) }
     );
     expect(res.status).toBe(200);
+
+    // Finding 2.3: verify atomic WHERE clause includes current status
+    const updateCall = vi.mocked(query).mock.calls[1];
+    const sql = updateCall[0] as string;
+    expect(sql).toContain("AND status =");
+    expect(updateCall[1]).toContain("awaiting_otp");
   });
 
   it("awaiting_otp -> completed_paid", async () => {
@@ -345,6 +417,12 @@ describe("PATCH /api/agent/jobs/[id]/status", () => {
       { params: Promise.resolve({ id: JOB_ID }) }
     );
     expect(res.status).toBe(200);
+
+    // Finding 2.3: verify atomic WHERE clause includes current status
+    const updateCall = vi.mocked(query).mock.calls[1];
+    const sql = updateCall[0] as string;
+    expect(sql).toContain("AND status =");
+    expect(updateCall[1]).toContain("awaiting_otp");
   });
 
   it("awaiting_otp -> completed_eventual", async () => {
@@ -356,6 +434,12 @@ describe("PATCH /api/agent/jobs/[id]/status", () => {
       { params: Promise.resolve({ id: JOB_ID }) }
     );
     expect(res.status).toBe(200);
+
+    // Finding 2.3: verify atomic WHERE clause includes current status
+    const updateCall = vi.mocked(query).mock.calls[1];
+    const sql = updateCall[0] as string;
+    expect(sql).toContain("AND status =");
+    expect(updateCall[1]).toContain("awaiting_otp");
   });
 
   it("awaiting_otp -> completed_reneged", async () => {
@@ -367,6 +451,12 @@ describe("PATCH /api/agent/jobs/[id]/status", () => {
       { params: Promise.resolve({ id: JOB_ID }) }
     );
     expect(res.status).toBe(200);
+
+    // Finding 2.3: verify atomic WHERE clause includes current status
+    const updateCall = vi.mocked(query).mock.calls[1];
+    const sql = updateCall[0] as string;
+    expect(sql).toContain("AND status =");
+    expect(updateCall[1]).toContain("awaiting_otp");
   });
 
   // -- Invalid transitions --

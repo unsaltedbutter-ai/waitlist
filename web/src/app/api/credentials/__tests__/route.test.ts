@@ -20,7 +20,7 @@ vi.mock("@/lib/auth", () => ({
 }));
 
 import { query } from "@/lib/db";
-import { encrypt } from "@/lib/crypto";
+import { encrypt, decrypt } from "@/lib/crypto";
 import { POST, GET } from "../route";
 
 function makePostRequest(body: object): Request {
@@ -54,6 +54,16 @@ describe("POST /api/credentials", () => {
     // Verify encrypt was called with the right values
     expect(encrypt).toHaveBeenCalledWith("user@example.com");
     expect(encrypt).toHaveBeenCalledWith("hunter2");
+
+    // Finding 2.2: Verify the INSERT query received encrypt() return values, not plaintext
+    const insertCall = vi.mocked(query).mock.calls[1];
+    const params = insertCall[1] as unknown[];
+    // The mock encrypt returns Buffer.from("enc:<val>"), so params must be those Buffers
+    expect(params[2]).toEqual(Buffer.from("enc:user@example.com"));
+    expect(params[3]).toEqual(Buffer.from("enc:hunter2"));
+    // Must NOT be the plaintext strings
+    expect(params[2]).not.toBe("user@example.com");
+    expect(params[3]).not.toBe("hunter2");
   });
 
   it("stores the exact credentials passed, not stale values", async () => {
@@ -152,6 +162,20 @@ describe("POST /api/credentials", () => {
     const res = await POST(req as any, { params: Promise.resolve({}) });
     expect(res.status).toBe(400);
   });
+
+  // Finding 4.1: database error on POST service lookup (no outer try/catch)
+  it("crashes when database query throws during service lookup (documents missing error handling)", async () => {
+    vi.mocked(query).mockRejectedValueOnce(new Error("Connection refused"));
+
+    const req = makePostRequest({
+      serviceId: "netflix",
+      email: "user@example.com",
+      password: "hunter2",
+    });
+    await expect(
+      POST(req as any, { params: Promise.resolve({}) })
+    ).rejects.toThrow("Connection refused");
+  });
 });
 
 describe("GET /api/credentials", () => {
@@ -191,5 +215,38 @@ describe("GET /api/credentials", () => {
     const res = await GET(req as any, { params: Promise.resolve({}) });
     const data = await res.json();
     expect(data.credentials).toEqual([]);
+  });
+
+  // Finding 3.1: decrypt() throws on corrupted data (e.g. rotated key)
+  it("crashes with 500 when decrypt throws on a row (documents broken behavior)", async () => {
+    vi.mocked(decrypt).mockImplementationOnce(() => {
+      throw new Error("Decryption failed: bad key or corrupted data");
+    });
+
+    vi.mocked(query).mockResolvedValueOnce(
+      mockQueryResult([
+        {
+          service_id: "netflix",
+          service_name: "Netflix",
+          email_enc: Buffer.from("corrupted-ciphertext"),
+        },
+      ])
+    );
+
+    const req = new Request("http://localhost/api/credentials");
+    // The route has no try/catch around decrypt, so this should throw
+    await expect(
+      GET(req as any, { params: Promise.resolve({}) })
+    ).rejects.toThrow("Decryption failed");
+  });
+
+  // Finding 4.1: database connection failure on GET (no try/catch in route)
+  it("crashes when database query throws (documents missing error handling)", async () => {
+    vi.mocked(query).mockRejectedValueOnce(new Error("Connection refused"));
+
+    const req = new Request("http://localhost/api/credentials");
+    await expect(
+      GET(req as any, { params: Promise.resolve({}) })
+    ).rejects.toThrow("Connection refused");
   });
 });

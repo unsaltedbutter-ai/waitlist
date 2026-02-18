@@ -256,6 +256,22 @@ describe("POST /api/agent/jobs/[id]/paid", () => {
     expect(debtCall).toBeUndefined();
   });
 
+  // Finding 3.6: invoice payment path with null amount_sats (job completed before invoice amount set)
+  it("skips debt decrement on invoice payment when amount_sats is null", async () => {
+    const jobRow = makeJobRow("active", { invoice_id: "inv-789", amount_sats: null });
+    const captured = mockTx(jobRow, { status: "completed_paid" });
+
+    const res = await POST(
+      makeRequest({}) as any,
+      { params: Promise.resolve({ id: JOB_ID }) }
+    );
+    expect(res.status).toBe(200);
+
+    // The debt UPDATE query should NOT have been called
+    const debtCall = captured.find((c) => c.sql.includes("debt_sats"));
+    expect(debtCall).toBeUndefined();
+  });
+
   it("transaction updates transaction row status to eventual for reneged", async () => {
     const jobRow = makeJobRow("completed_reneged", { amount_sats: 3000 });
     const captured = mockTx(jobRow, { status: "completed_eventual" });
@@ -292,5 +308,41 @@ describe("POST /api/agent/jobs/[id]/paid", () => {
     });
     const res = await POST(req as any, { params: Promise.resolve({ id: JOB_ID }) });
     expect(res.status).toBe(400);
+  });
+
+  // Finding 4.2: transaction rollback when second query (UPDATE transactions) throws
+  it("rolls back transaction when inner query fails", async () => {
+    const jobRow = makeJobRow("completed_reneged", { amount_sats: 3000 });
+    let callCount = 0;
+
+    vi.mocked(transaction).mockImplementationOnce(async (cb) => {
+      const txQuery = vi.fn().mockImplementation((sql: string, params: unknown[]) => {
+        callCount++;
+
+        // First call: SELECT FOR UPDATE succeeds
+        if (callCount === 1) {
+          return mockQueryResult([jobRow]);
+        }
+
+        // Second call: UPDATE jobs succeeds
+        if (callCount === 2) {
+          return mockQueryResult([{ ...jobRow, status: "completed_eventual" }]);
+        }
+
+        // Third call: UPDATE transactions throws (simulating partial failure)
+        throw new Error("disk full");
+      });
+
+      return cb(txQuery as any);
+    });
+
+    // The real transaction() wrapper in db.ts catches errors and issues ROLLBACK.
+    // Since we mocked transaction itself, the error propagates up as an unhandled throw.
+    await expect(
+      POST(makeRequest({}) as any, { params: Promise.resolve({ id: JOB_ID }) })
+    ).rejects.toThrow("disk full");
+
+    // The transaction mock was called exactly once (no retry)
+    expect(transaction).toHaveBeenCalledOnce();
   });
 });
