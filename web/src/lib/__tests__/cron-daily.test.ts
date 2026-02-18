@@ -345,6 +345,7 @@ describe("runDailyCron", () => {
     expect(cancelParams).toContain("user_skip");
     expect(cancelParams).toContain("user_abandon");
     expect(cancelParams).toContain("implied_skip");
+    expect(cancelParams).toContain("failed");
   });
 
   it("cancel query only considers onboarded users", async () => {

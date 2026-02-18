@@ -89,6 +89,7 @@ function statusColor(status: string): string {
   if (status === "active") return "bg-blue-900/50 text-blue-300 border-blue-700";
   if (status === "dispatched") return "bg-purple-900/50 text-purple-300 border-purple-700";
   if (status === "pending") return "bg-amber-900/50 text-amber-300 border-amber-700";
+  if (status === "failed") return "bg-red-900/50 text-red-300 border-red-700";
   if (status === "user_skip" || status === "user_abandon" || status === "implied_skip")
     return "bg-neutral-800/50 text-neutral-300 border-neutral-600";
   return "bg-neutral-800/50 text-neutral-300 border-neutral-700";
@@ -111,6 +112,7 @@ const FORCE_STATUS_OPTIONS = [
   "user_skip",
   "user_abandon",
   "implied_skip",
+  "failed",
 ] as const;
 
 // ---------------------------------------------------------------------------

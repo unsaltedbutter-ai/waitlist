@@ -9,6 +9,7 @@ export const TERMINAL_STATUSES = [
   "user_skip",
   "user_abandon",
   "implied_skip",
+  "failed",
 ] as const;
 
 export type TerminalStatus = (typeof TERMINAL_STATUSES)[number];

@@ -465,6 +465,55 @@ describe("PATCH /api/agent/jobs/[id]/status", () => {
     expect(updateCall[1]).toContain("awaiting_otp");
   });
 
+  it("dispatched -> failed", async () => {
+    mockJobLookup("dispatched");
+    mockAtomicUpdate("failed");
+
+    const res = await PATCH(
+      makeRequest({ status: "failed" }) as any,
+      { params: Promise.resolve({ id: JOB_ID }) }
+    );
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data.job.status).toBe("failed");
+  });
+
+  it("active -> failed", async () => {
+    mockJobLookup("active");
+    mockAtomicUpdate("failed");
+
+    const res = await PATCH(
+      makeRequest({ status: "failed" }) as any,
+      { params: Promise.resolve({ id: JOB_ID }) }
+    );
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data.job.status).toBe("failed");
+  });
+
+  it("awaiting_otp -> failed", async () => {
+    mockJobLookup("awaiting_otp");
+    mockAtomicUpdate("failed");
+
+    const res = await PATCH(
+      makeRequest({ status: "failed" }) as any,
+      { params: Promise.resolve({ id: JOB_ID }) }
+    );
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data.job.status).toBe("failed");
+  });
+
+  it("failed -> anything returns 400 (terminal state)", async () => {
+    mockJobLookup("failed");
+
+    const res = await PATCH(
+      makeRequest({ status: "active" }) as any,
+      { params: Promise.resolve({ id: JOB_ID }) }
+    );
+    expect(res.status).toBe(400);
+  });
+
   // -- Invalid transitions --
 
   it("pending -> active returns 400", async () => {

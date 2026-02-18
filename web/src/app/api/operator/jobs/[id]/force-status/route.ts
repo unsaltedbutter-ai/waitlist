@@ -9,6 +9,7 @@ const TERMINAL_STATUSES = new Set([
   "user_skip",
   "user_abandon",
   "implied_skip",
+  "failed",
 ]);
 
 export const POST = withOperator(

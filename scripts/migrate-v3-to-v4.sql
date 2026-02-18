@@ -304,12 +304,16 @@ DELETE FROM service_plans WHERE service_id IN ('prime_video', 'espn_plus');
 DELETE FROM service_plans WHERE id = 'disney_hulu_espn';
 
 -- Insert Max plans (the service was just added above)
+-- NOTE: Plan IDs and names updated Feb 2026 to match current Max tiers.
+-- Old IDs (max_with_ads, max_no_ads, max_ultimate) are replaced by
+-- max_basic_ads, max_standard, max_premium. If running against a DB that
+-- already has the old IDs, delete them first (see migrate-plan-refresh.sql).
 INSERT INTO service_plans
     (id, service_id, display_name, monthly_price_cents, has_ads, is_bundle, bundle_services, display_order)
 VALUES
-    ('max_with_ads', 'max', 'With Ads',    999, TRUE,  FALSE, NULL, 80),
-    ('max_no_ads',   'max', 'No Ads',     1699, FALSE, FALSE, NULL, 81),
-    ('max_ultimate', 'max', 'Ultimate',   2099, FALSE, FALSE, NULL, 82)
+    ('max_basic_ads', 'max', 'Basic with Ads', 1099, TRUE,  FALSE, NULL, 80),
+    ('max_standard',  'max', 'Standard',       1849, FALSE, FALSE, NULL, 81),
+    ('max_premium',   'max', 'Premium',        2299, FALSE, FALSE, NULL, 82)
 ON CONFLICT (id) DO UPDATE SET
     service_id = EXCLUDED.service_id,
     display_name = EXCLUDED.display_name,

@@ -26,6 +26,7 @@ const JOB_STATUSES = [
   "user_skip",
   "user_abandon",
   "implied_skip",
+  "failed",
 ] as const;
 
 function formatDateInput(date: Date): string {

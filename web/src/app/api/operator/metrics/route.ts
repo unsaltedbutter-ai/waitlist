@@ -99,7 +99,7 @@ export const GET = withOperator(async (_req: NextRequest) => {
         FROM jobs
         WHERE status NOT IN (
           'completed_paid', 'completed_eventual', 'completed_reneged',
-          'user_skip', 'user_abandon', 'implied_skip'
+          'user_skip', 'user_abandon', 'implied_skip', 'failed'
         )
         GROUP BY status
       `),
@@ -124,7 +124,7 @@ export const GET = withOperator(async (_req: NextRequest) => {
                j.status, j.status_updated_at
         FROM jobs j
         JOIN streaming_services ss ON ss.id = j.service_id
-        WHERE j.status IN ('completed_reneged', 'user_abandon')
+        WHERE j.status IN ('completed_reneged', 'user_abandon', 'failed')
         ORDER BY j.status_updated_at DESC
         LIMIT 20
       `),

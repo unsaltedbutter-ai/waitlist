@@ -31,6 +31,7 @@ const VALID_STATUSES = new Set([
   "user_skip",
   "user_abandon",
   "implied_skip",
+  "failed",
 ]);
 
 function parseDateRange(url: URL): { from: string; to: string } | { error: string } {

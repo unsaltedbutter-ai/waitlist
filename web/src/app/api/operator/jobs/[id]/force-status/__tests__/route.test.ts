@@ -82,6 +82,7 @@ describe("POST /api/operator/jobs/[id]/force-status", () => {
       "user_skip",
       "user_abandon",
       "implied_skip",
+      "failed",
     ];
 
     for (const status of statuses) {
