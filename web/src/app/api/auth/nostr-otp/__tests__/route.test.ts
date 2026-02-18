@@ -8,7 +8,6 @@ vi.mock("@/lib/auth-login", () => ({
   loginExistingUser: vi.fn(),
   createUserWithInvite: vi.fn(),
   lookupInviteByNpub: vi.fn(),
-  validateInviteCode: vi.fn(),
 }));
 
 import { query } from "@/lib/db";
@@ -16,7 +15,6 @@ import {
   loginExistingUser,
   createUserWithInvite,
   lookupInviteByNpub,
-  validateInviteCode,
 } from "@/lib/auth-login";
 import { POST } from "../route";
 
@@ -63,7 +61,6 @@ beforeEach(() => {
   vi.mocked(loginExistingUser).mockReset();
   vi.mocked(createUserWithInvite).mockReset();
   vi.mocked(lookupInviteByNpub).mockReset();
-  vi.mocked(validateInviteCode).mockReset();
 });
 
 describe("POST /api/auth/nostr-otp", () => {
@@ -101,26 +98,7 @@ describe("POST /api/auth/nostr-otp", () => {
     expect(data.isNew).toBe(true);
   });
 
-  it("valid OTP, new user + explicit invite code fallback: 201", async () => {
-    mockOtpLookup("ccdd");
-    vi.mocked(loginExistingUser).mockResolvedValueOnce(null);
-    vi.mocked(lookupInviteByNpub).mockResolvedValueOnce(null);
-    vi.mocked(validateInviteCode).mockResolvedValueOnce("waitlist-2");
-    vi.mocked(createUserWithInvite).mockResolvedValueOnce({
-      status: 201,
-      body: { token: "mock-jwt-token", userId: "new-user-789" },
-    });
-
-    const res = await POST(
-      makeRequest({ code: "111111222222", inviteCode: "ABCDEF" }) as any
-    );
-    expect(res.status).toBe(201);
-    const data = await res.json();
-    expect(data.userId).toBe("new-user-789");
-    expect(data.isNew).toBe(true);
-  });
-
-  it("valid OTP, new user + no invite anywhere: 403", async () => {
+  it("valid OTP, new user + no invite found: 403", async () => {
     mockOtpLookup("eeff");
     vi.mocked(loginExistingUser).mockResolvedValueOnce(null);
     vi.mocked(lookupInviteByNpub).mockResolvedValueOnce(null);
@@ -129,20 +107,6 @@ describe("POST /api/auth/nostr-otp", () => {
     expect(res.status).toBe(403);
     const data = await res.json();
     expect(data.error).toMatch(/no invite/i);
-  });
-
-  it("valid OTP, new user + bad explicit invite: 403", async () => {
-    mockOtpLookup("eeff");
-    vi.mocked(loginExistingUser).mockResolvedValueOnce(null);
-    vi.mocked(lookupInviteByNpub).mockResolvedValueOnce(null);
-    vi.mocked(validateInviteCode).mockResolvedValueOnce(null);
-
-    const res = await POST(
-      makeRequest({ code: "111111-222222", inviteCode: "BADCODE" }) as any
-    );
-    expect(res.status).toBe(403);
-    const data = await res.json();
-    expect(data.error).toMatch(/invalid.*invite/i);
   });
 
   it("expired/wrong OTP: 401", async () => {

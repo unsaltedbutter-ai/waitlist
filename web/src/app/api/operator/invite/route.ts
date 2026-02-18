@@ -3,8 +3,6 @@ import { withOperator } from "@/lib/operator-auth";
 import { query } from "@/lib/db";
 import { generateInviteCode, isAtCapacity } from "@/lib/capacity";
 
-const BASE_URL = process.env.NEXT_PUBLIC_BASE_URL ?? "http://localhost:3000";
-
 export const POST = withOperator(async (req: NextRequest) => {
   let body: { waitlistId: string };
   try {
@@ -59,7 +57,5 @@ export const POST = withOperator(async (req: NextRequest) => {
     [code, waitlistId]
   );
 
-  const inviteLink = `${BASE_URL}/login?code=${code}`;
-
-  return NextResponse.json({ code, inviteLink }, { status: 201 });
+  return NextResponse.json({ code }, { status: 201 });
 });

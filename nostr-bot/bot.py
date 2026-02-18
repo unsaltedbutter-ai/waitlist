@@ -195,14 +195,13 @@ class BotNotificationHandler(HandleNotification):
             if user is None:
                 # Check if they're already invited (e.g. returning after account deletion)
                 result = await api_client.add_to_waitlist(sender_hex)
-                if result["status"] == "already_invited" and result.get("invite_code"):
+                if result["status"] == "already_invited":
                     code = await api_client.create_otp(sender_hex)
                     formatted = f"{code[:6]}-{code[6:]}"
                     base_url = os.getenv("BASE_URL", "https://unsaltedbutter.ai")
-                    link = f"{base_url}/login?code={result['invite_code']}"
                     return [
                         formatted,
-                        f"That's your login code. Enter it within 5 minutes.\n\n{link}",
+                        f"That's your login code. Enter it within 5 minutes.\n\n{base_url}/login",
                     ]
                 # Not invited yet: waitlist message
                 return self._waitlist_message(result)
@@ -253,8 +252,7 @@ class BotNotificationHandler(HandleNotification):
             return "You're on the waitlist. We'll DM you when a spot opens."
         elif result["status"] == "already_invited":
             base_url = os.getenv("BASE_URL", "https://unsaltedbutter.ai")
-            link = f"{base_url}/login?code={result['invite_code']}"
-            return f"You've already been invited:\n\n{link}"
+            return f"You've already been invited. DM me 'login' to get your code.\n\n{base_url}/login"
         else:
             return "You're already on the waitlist. We'll DM you when a spot opens."
 
@@ -267,8 +265,7 @@ class BotNotificationHandler(HandleNotification):
         count = 0
 
         for entry in pending:
-            link = f"{base_url}/login?code={entry['invite_code']}"
-            text = f"You're in. Here's your invite link:\n\n{link}"
+            text = f"You're in. DM me 'login' to get your code.\n\n{base_url}/login"
             try:
                 pk = PublicKey.parse(entry["nostr_npub"])
                 # Use NIP-04 (kind 4) for broad client compatibility

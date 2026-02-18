@@ -5,7 +5,6 @@ import {
   loginExistingUser,
   createUserWithInvite,
   lookupInviteByNpub,
-  validateInviteCode,
 } from "@/lib/auth-login";
 
 const limiter = createRateLimiter(5, 15 * 60 * 1000); // 5 attempts per 15 minutes
@@ -22,14 +21,14 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  let body: { code?: string; inviteCode?: string };
+  let body: { code?: string };
   try {
     body = await req.json();
   } catch {
     return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
   }
 
-  const { code, inviteCode } = body;
+  const { code } = body;
 
   // Validate code format: 6 digits, optional hyphen, 6 digits
   if (!code || !/^\d{6}-?\d{6}$/.test(code)) {
@@ -66,23 +65,14 @@ export async function POST(req: NextRequest) {
     return NextResponse.json(loginResult.body, { status: loginResult.status });
   }
 
-  // New user: auto-lookup invite by npub, fallback to explicit code
-  let waitlistId = await lookupInviteByNpub(npubHex);
+  // New user: lookup invite by npub (waitlist row must exist with matching hex)
+  const waitlistId = await lookupInviteByNpub(npubHex);
 
   if (!waitlistId) {
-    if (!inviteCode) {
-      return NextResponse.json(
-        { error: "No invite found for this npub" },
-        { status: 403 }
-      );
-    }
-    waitlistId = await validateInviteCode(inviteCode);
-    if (!waitlistId) {
-      return NextResponse.json(
-        { error: "Invalid or expired invite code" },
-        { status: 403 }
-      );
-    }
+    return NextResponse.json(
+      { error: "No invite found for this npub" },
+      { status: 403 }
+    );
   }
 
   const result = await createUserWithInvite(npubHex, waitlistId);

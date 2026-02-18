@@ -68,19 +68,6 @@ export async function createUserWithInvite(
 }
 
 /**
- * Validate an explicit invite code. Returns the waitlist row ID if valid, null otherwise.
- */
-export async function validateInviteCode(
-  inviteCode: string
-): Promise<string | null> {
-  const codeCheck = await query<{ id: string }>(
-    "SELECT id FROM waitlist WHERE invite_code = $1 AND invited = TRUE AND redeemed_at IS NULL",
-    [inviteCode]
-  );
-  return codeCheck.rows.length > 0 ? codeCheck.rows[0].id : null;
-}
-
-/**
  * Auto-lookup a waitlist entry by npub hex. Returns the waitlist row ID if found, null otherwise.
  */
 export async function lookupInviteByNpub(

@@ -53,7 +53,6 @@ describe("POST /api/operator/invite", () => {
     expect(res.status).toBe(201);
     const data = await res.json();
     expect(data.code).toBe("TESTCODE1234");
-    expect(data.inviteLink).toContain("TESTCODE1234");
   });
 
   it("waitlist entry already invited -> 409", async () => {

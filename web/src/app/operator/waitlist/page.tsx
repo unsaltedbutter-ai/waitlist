@@ -48,7 +48,6 @@ export default function WaitlistPage() {
   const [generatingInvite, setGeneratingInvite] = useState<Set<string>>(
     new Set()
   );
-  const [inviteLinks, setInviteLinks] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
@@ -88,11 +87,6 @@ export default function WaitlistPage() {
           body: JSON.stringify({ waitlistId }),
         });
         if (res.ok) {
-          const data = await res.json();
-          setInviteLinks((prev) => ({
-            ...prev,
-            [waitlistId]: data.inviteLink,
-          }));
           setWaitlist((prev) =>
             prev.map((e) =>
               e.id === waitlistId
@@ -192,22 +186,7 @@ export default function WaitlistPage() {
                     </td>
                     <td className="px-3 py-2">
                       {entry.invited ? (
-                        inviteLinks[entry.id] ? (
-                          <input
-                            readOnly
-                            value={inviteLinks[entry.id]}
-                            onClick={(e) => {
-                              (e.target as HTMLInputElement).select();
-                              navigator.clipboard.writeText(
-                                inviteLinks[entry.id]
-                              );
-                            }}
-                            className="text-xs bg-surface border border-border rounded px-2 py-1 text-foreground w-48 cursor-pointer"
-                            title="Click to copy"
-                          />
-                        ) : (
-                          <span className="text-xs text-muted">--</span>
-                        )
+                        <span className="text-xs text-muted">--</span>
                       ) : (
                         <button
                           type="button"

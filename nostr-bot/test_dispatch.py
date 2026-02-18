@@ -94,7 +94,7 @@ async def test_login_unregistered_user_gets_waitlisted(handler, mock_api):
 
 @pytest.mark.asyncio
 async def test_login_invited_but_no_account_sends_otp(handler, mock_api):
-    """Returning user (deleted account): invited, no user row. Should get OTP + invite link."""
+    """Returning user (deleted account): invited, no user row. Should get OTP + login link."""
     mock_api.get_user.return_value = None
     mock_api.add_to_waitlist.return_value = {"status": "already_invited", "invite_code": "ABC123XYZ"}
     mock_api.create_otp.return_value = "999888777666"
@@ -103,7 +103,8 @@ async def test_login_invited_but_no_account_sends_otp(handler, mock_api):
 
     assert isinstance(result, list)
     assert result[0] == "999888-777666"
-    assert "ABC123XYZ" in result[1]
+    assert "/login" in result[1]
+    assert "?code=" not in result[1]
     mock_api.create_otp.assert_awaited_once_with(UNREGISTERED_NPUB_HEX)
 
 
@@ -150,7 +151,8 @@ async def test_waitlist_unregistered_already_invited(handler, mock_api):
     result = await handler._dispatch_command(UNREGISTERED_NPUB_HEX, "waitlist")
 
     assert "already been invited" in result.lower()
-    assert "/login?code=ABC123XYZ" in result
+    assert "/login" in result
+    assert "?code=" not in result
 
 
 @pytest.mark.asyncio

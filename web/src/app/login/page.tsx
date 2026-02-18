@@ -1,64 +1,20 @@
 "use client";
 
-import { useState, useEffect, Suspense } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useState } from "react";
+import { useRouter } from "next/navigation";
 
 const TOKEN_KEY = "ub_token";
 const BOT_NPUB = process.env.NEXT_PUBLIC_NOSTR_BOT_NPUB ?? "";
 const BOT_NAME = process.env.NEXT_PUBLIC_NOSTR_BOT_NAME ?? "UnsaltedButter Bot";
 
 export default function LoginPage() {
-  return (
-    <Suspense>
-      <LoginContent />
-    </Suspense>
-  );
-}
-
-function LoginContent() {
   const router = useRouter();
-  const searchParams = useSearchParams();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-
-  // Invite code state
-  const [inviteCode, setInviteCode] = useState<string | null>(null);
-  const [codeValid, setCodeValid] = useState<boolean | null>(null);
-  const [codeChecking, setCodeChecking] = useState(false);
 
   // OTP state
   const [otpCode, setOtpCode] = useState("");
   const [npubCopied, setNpubCopied] = useState(false);
-
-  // Validate invite code from URL on mount
-  useEffect(() => {
-    const code = searchParams.get("code");
-    if (!code) {
-      setCodeValid(false);
-      return;
-    }
-
-    setInviteCode(code);
-    setCodeChecking(true);
-
-    fetch("/api/invite/validate", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ code }),
-    })
-      .then((res) => res.json())
-      .then((data) => {
-        setCodeValid(data.valid === true);
-      })
-      .catch(() => {
-        setCodeValid(false);
-      })
-      .finally(() => {
-        setCodeChecking(false);
-      });
-  }, [searchParams]);
-
-  const canSignup = codeValid === true;
 
   // Format OTP input as XXXXXX-XXXXXX
   function handleOtpChange(value: string) {
@@ -80,10 +36,7 @@ function LoginContent() {
       const res = await fetch("/api/auth/nostr-otp", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          code: otpCode,
-          ...(canSignup && inviteCode ? { inviteCode } : {}),
-        }),
+        body: JSON.stringify({ code: otpCode }),
       });
 
       const data = await res.json();
@@ -127,10 +80,7 @@ function LoginContent() {
       const res = await fetch("/api/auth/nostr", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          event,
-          ...(canSignup && inviteCode ? { inviteCode } : {}),
-        }),
+        body: JSON.stringify({ event }),
       });
 
       const data = await res.json();
@@ -156,9 +106,7 @@ function LoginContent() {
             Sign in
           </h1>
           <p className="text-muted">
-            {canSignup
-              ? "You've been invited. Create your account."
-              : "Welcome back."}
+            Welcome back.
           </p>
         </div>
 
@@ -180,14 +128,10 @@ function LoginContent() {
 
             <button
               type="submit"
-              disabled={loading || codeChecking || otpCode.replace("-", "").length !== 12}
+              disabled={loading || otpCode.replace("-", "").length !== 12}
               className="w-full py-3 px-4 bg-accent text-background font-semibold rounded hover:bg-accent/90 transition-colors disabled:opacity-50"
             >
-              {loading
-                ? "Verifying..."
-                : canSignup
-                  ? "Create account"
-                  : "Sign in"}
+              {loading ? "Verifying..." : "Sign in"}
             </button>
           </form>
 
@@ -202,7 +146,7 @@ function LoginContent() {
             <button
               type="button"
               onClick={handleNostrLogin}
-              disabled={loading || codeChecking}
+              disabled={loading}
               className="text-accent hover:underline"
             >
               Sign in with NIP-07

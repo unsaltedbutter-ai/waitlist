@@ -3,7 +3,7 @@ import { verifyEvent, type Event } from "nostr-tools";
 import {
   loginExistingUser,
   createUserWithInvite,
-  validateInviteCode,
+  lookupInviteByNpub,
 } from "@/lib/auth-login";
 
 // Replay protection: track consumed event IDs with 5-minute TTL
@@ -18,14 +18,14 @@ function cleanupConsumedEvents() {
 
 export async function POST(req: NextRequest) {
   cleanupConsumedEvents();
-  let body: { event: Event; inviteCode?: string };
+  let body: { event: Event };
   try {
     body = await req.json();
   } catch {
     return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
   }
 
-  const { event, inviteCode } = body;
+  const { event } = body;
   if (!event) {
     return NextResponse.json(
       { error: "Missing signed event" },
@@ -67,18 +67,11 @@ export async function POST(req: NextRequest) {
     return NextResponse.json(loginResult.body, { status: loginResult.status });
   }
 
-  // New user: require invite code
-  if (!inviteCode) {
-    return NextResponse.json(
-      { error: "Invite code required" },
-      { status: 403 }
-    );
-  }
-
-  const waitlistId = await validateInviteCode(inviteCode);
+  // New user: lookup invite by npub (waitlist row must exist with matching hex)
+  const waitlistId = await lookupInviteByNpub(npub);
   if (!waitlistId) {
     return NextResponse.json(
-      { error: "Invalid or expired invite code" },
+      { error: "No invite found for this npub" },
       { status: 403 }
     );
   }
