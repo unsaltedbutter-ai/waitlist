@@ -15,8 +15,16 @@ vi.mock("@/lib/auth", () => ({
     };
   }),
 }));
+vi.mock("@/lib/margin-call", () => ({
+  getRequiredBalance: vi.fn(),
+}));
+vi.mock("@/lib/orchestrator-notify", () => ({
+  notifyOrchestrator: vi.fn(),
+}));
 
 import { query, transaction } from "@/lib/db";
+import { getRequiredBalance } from "@/lib/margin-call";
+import { notifyOrchestrator } from "@/lib/orchestrator-notify";
 import { PUT } from "../route";
 
 function makeRequest(body: object): Request {
@@ -54,7 +62,46 @@ function mockTransaction() {
 beforeEach(() => {
   vi.mocked(query).mockReset();
   vi.mocked(transaction).mockReset();
+  vi.mocked(getRequiredBalance).mockReset();
+  vi.mocked(notifyOrchestrator).mockReset();
+  vi.mocked(notifyOrchestrator).mockResolvedValue(undefined);
 });
+
+/** Mock the post-transaction user query (onboarded_at check). Already onboarded by default. */
+function mockUserOnboarded(onboarded: boolean = true, status: string = "active") {
+  vi.mocked(query).mockResolvedValueOnce(
+    mockQueryResult([{
+      onboarded_at: onboarded ? "2026-01-01T00:00:00Z" : null,
+      status,
+    }])
+  );
+}
+
+/** Mock onboarding activation: user query + UPDATE */
+function mockOnboardingActivation(status: string, creditSats: number) {
+  // SELECT user (not onboarded)
+  vi.mocked(query).mockResolvedValueOnce(
+    mockQueryResult([{ onboarded_at: null, status }])
+  );
+  // UPDATE onboarded_at
+  vi.mocked(query).mockResolvedValueOnce(mockQueryResult([]));
+  if (status === "auto_paused") {
+    // getRequiredBalance
+    vi.mocked(getRequiredBalance).mockResolvedValueOnce({
+      platformFeeSats: 4400,
+      giftCardCostSats: 20000,
+      totalSats: 24400,
+    });
+    // SELECT service_credits
+    vi.mocked(query).mockResolvedValueOnce(
+      mockQueryResult([{ credit_sats: String(creditSats) }])
+    );
+    if (creditSats >= 24400) {
+      // UPDATE status to active
+      vi.mocked(query).mockResolvedValueOnce(mockQueryResult([]));
+    }
+  }
+}
 
 describe("PUT /api/queue", () => {
   // --- Input validation ---
@@ -140,6 +187,7 @@ describe("PUT /api/queue", () => {
     mockCreds(["netflix", "hulu"]);
     mockExistingPlanIds();
     mockTransaction();
+    mockUserOnboarded();
 
     const req = makeRequest({ order: ["netflix", "hulu"] });
     const res = await PUT(req as any, { params: Promise.resolve({}) });
@@ -153,6 +201,7 @@ describe("PUT /api/queue", () => {
     mockCreds(["netflix", "hulu", "disney_plus"]);
     mockExistingPlanIds();
     mockTransaction();
+    mockUserOnboarded();
 
     const req = makeRequest({ order: ["disney_plus", "netflix", "hulu"] });
     const res = await PUT(req as any, { params: Promise.resolve({}) });
@@ -165,6 +214,7 @@ describe("PUT /api/queue", () => {
     mockCreds(["netflix", "hulu", "prime_video"]);
     mockExistingPlanIds();
     mockTransaction();
+    mockUserOnboarded();
 
     const req = makeRequest({ order: ["netflix", "prime_video", "hulu"] });
     const res = await PUT(req as any, { params: Promise.resolve({}) });
@@ -177,6 +227,7 @@ describe("PUT /api/queue", () => {
     mockCreds(["netflix", "hulu"]);
     mockExistingPlanIds();
     mockTransaction();
+    mockUserOnboarded();
 
     const req = makeRequest({ order: ["netflix", "hulu"] });
     const res = await PUT(req as any, { params: Promise.resolve({}) });
@@ -188,6 +239,7 @@ describe("PUT /api/queue", () => {
     mockCreds(["netflix"]);
     mockExistingPlanIds();
     mockTransaction();
+    mockUserOnboarded();
 
     const req = makeRequest({ order: ["netflix"] });
     const res = await PUT(req as any, { params: Promise.resolve({}) });
@@ -203,6 +255,7 @@ describe("PUT /api/queue", () => {
     mockCreds(all);
     mockExistingPlanIds();
     mockTransaction();
+    mockUserOnboarded();
 
     const req = makeRequest({ order: all });
     const res = await PUT(req as any, { params: Promise.resolve({}) });
@@ -221,6 +274,7 @@ describe("PUT /api/queue", () => {
 
     const txQuery = vi.fn().mockResolvedValue(mockQueryResult([]));
     vi.mocked(transaction).mockImplementationOnce(async (cb) => cb(txQuery as any));
+    mockUserOnboarded();
 
     const req = makeRequest({ order: ["hulu", "netflix"] });
     await PUT(req as any, { params: Promise.resolve({}) });
@@ -251,6 +305,7 @@ describe("PUT /api/queue", () => {
     mockCreds(["netflix", "new_streaming_service"]);
     mockExistingPlanIds();
     mockTransaction();
+    mockUserOnboarded();
 
     const req = makeRequest({ order: ["netflix", "new_streaming_service"] });
     const res = await PUT(req as any, { params: Promise.resolve({}) });
@@ -263,6 +318,7 @@ describe("PUT /api/queue", () => {
     mockCreds(["netflix", "hulu", "disney_plus", "prime_video", "peacock"]);
     mockExistingPlanIds();
     mockTransaction();
+    mockUserOnboarded();
 
     const req = makeRequest({ order: ["netflix", "hulu"] });
     const res = await PUT(req as any, { params: Promise.resolve({}) });
@@ -276,6 +332,7 @@ describe("PUT /api/queue", () => {
 
     const txQuery = vi.fn().mockResolvedValue(mockQueryResult([]));
     vi.mocked(transaction).mockImplementationOnce(async (cb) => cb(txQuery as any));
+    mockUserOnboarded();
 
     const req = makeRequest({
       order: ["netflix", "hulu"],
@@ -292,5 +349,65 @@ describe("PUT /api/queue", () => {
       "INSERT INTO rotation_queue (user_id, service_id, position, plan_id) VALUES ($1, $2, $3, $4)",
       ["test-user", "hulu", 2, "hulu_ads"]
     );
+  });
+
+  // --- Onboarding activation ---
+
+  it("sets onboarded_at on first queue save", async () => {
+    mockServices(["netflix"]);
+    mockCreds(["netflix"]);
+    mockExistingPlanIds();
+    mockTransaction();
+    mockOnboardingActivation("active", 0); // active user, not onboarded yet
+
+    const req = makeRequest({ order: ["netflix"] });
+    const res = await PUT(req as any, { params: Promise.resolve({}) });
+    expect(res.status).toBe(200);
+
+    // Should have UPDATE onboarded_at call
+    const calls = vi.mocked(query).mock.calls;
+    const onboardCall = calls.find((c) =>
+      typeof c[0] === "string" && c[0].includes("onboarded_at")
+    );
+    expect(onboardCall).toBeTruthy();
+  });
+
+  it("auto-activates auto_paused user with sufficient balance on first queue save", async () => {
+    mockServices(["netflix"]);
+    mockCreds(["netflix"]);
+    mockExistingPlanIds();
+    mockTransaction();
+    mockOnboardingActivation("auto_paused", 50000);
+
+    const req = makeRequest({ order: ["netflix"] });
+    const res = await PUT(req as any, { params: Promise.resolve({}) });
+    expect(res.status).toBe(200);
+    expect(notifyOrchestrator).toHaveBeenCalledWith("test-user");
+  });
+
+  it("does not activate auto_paused user with insufficient balance", async () => {
+    mockServices(["netflix"]);
+    mockCreds(["netflix"]);
+    mockExistingPlanIds();
+    mockTransaction();
+    mockOnboardingActivation("auto_paused", 1000);
+
+    const req = makeRequest({ order: ["netflix"] });
+    const res = await PUT(req as any, { params: Promise.resolve({}) });
+    expect(res.status).toBe(200);
+    expect(notifyOrchestrator).not.toHaveBeenCalled();
+  });
+
+  it("skips onboarding check on subsequent queue saves", async () => {
+    mockServices(["netflix"]);
+    mockCreds(["netflix"]);
+    mockExistingPlanIds();
+    mockTransaction();
+    mockUserOnboarded(); // already onboarded
+
+    const req = makeRequest({ order: ["netflix"] });
+    const res = await PUT(req as any, { params: Promise.resolve({}) });
+    expect(res.status).toBe(200);
+    expect(notifyOrchestrator).not.toHaveBeenCalled();
   });
 });

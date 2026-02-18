@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { withAuth } from "@/lib/auth";
 import { query, transaction } from "@/lib/db";
+import { getRequiredBalance } from "@/lib/margin-call";
+import { notifyOrchestrator } from "@/lib/orchestrator-notify";
 
 export const GET = withAuth(async (_req: NextRequest, { userId }) => {
   const result = await query(
@@ -98,6 +100,39 @@ export const PUT = withAuth(async (req: NextRequest, { userId }) => {
       );
     }
   });
+
+  // Set onboarded_at on first queue save (completes onboarding)
+  const user = await query<{ onboarded_at: string | null; status: string }>(
+    "SELECT onboarded_at, status FROM users WHERE id = $1",
+    [userId]
+  );
+
+  if (user.rows.length > 0 && user.rows[0].onboarded_at === null) {
+    await query(
+      "UPDATE users SET onboarded_at = NOW(), updated_at = NOW() WHERE id = $1",
+      [userId]
+    );
+
+    // If auto_paused + sufficient balance, auto-activate
+    if (user.rows[0].status === "auto_paused") {
+      const required = await getRequiredBalance(order[0]);
+      const balanceResult = await query<{ credit_sats: string }>(
+        "SELECT COALESCE(credit_sats, 0) AS credit_sats FROM service_credits WHERE user_id = $1",
+        [userId]
+      );
+      const creditSats = balanceResult.rows.length > 0
+        ? Number(balanceResult.rows[0].credit_sats)
+        : 0;
+
+      if (creditSats >= required.totalSats) {
+        await query(
+          "UPDATE users SET status = 'active', paused_at = NULL, updated_at = NOW() WHERE id = $1",
+          [userId]
+        );
+        await notifyOrchestrator(userId);
+      }
+    }
+  }
 
   return NextResponse.json({ success: true });
 });
