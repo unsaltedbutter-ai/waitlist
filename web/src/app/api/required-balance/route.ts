@@ -5,8 +5,13 @@ import { getRequiredBalance } from "@/lib/margin-call";
 
 export const GET = withAuth(async (_req: NextRequest, { userId }) => {
   // First service in the user's rotation queue
-  const nextService = await query<{ service_id: string }>(
-    "SELECT service_id FROM rotation_queue WHERE user_id = $1 ORDER BY position LIMIT 1",
+  const nextService = await query<{ service_id: string; display_name: string }>(
+    `SELECT rq.service_id, ss.display_name
+     FROM rotation_queue rq
+     JOIN streaming_services ss ON ss.id = rq.service_id
+     WHERE rq.user_id = $1
+     ORDER BY rq.position
+     LIMIT 1`,
     [userId]
   );
 
@@ -17,10 +22,12 @@ export const GET = withAuth(async (_req: NextRequest, { userId }) => {
       total_sats: 0,
       credit_sats: 0,
       shortfall_sats: 0,
+      next_service_name: null,
     });
   }
 
-  const required = await getRequiredBalance(nextService.rows[0].service_id);
+  const { service_id, display_name } = nextService.rows[0];
+  const required = await getRequiredBalance(service_id);
 
   const balanceResult = await query<{ credit_sats: string }>(
     "SELECT COALESCE(credit_sats, 0) AS credit_sats FROM service_credits WHERE user_id = $1",
@@ -39,5 +46,6 @@ export const GET = withAuth(async (_req: NextRequest, { userId }) => {
     total_sats: required.totalSats,
     credit_sats: creditSats,
     shortfall_sats: shortfall,
+    next_service_name: display_name,
   });
 });

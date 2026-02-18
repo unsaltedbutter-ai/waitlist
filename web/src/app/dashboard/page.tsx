@@ -441,6 +441,7 @@ export default function DashboardPage() {
   const [pauseLoading, setPauseLoading] = useState(false);
   const [unpauseError, setUnpauseError] = useState("");
   const [shortfallSats, setShortfallSats] = useState<number | null>(null);
+  const [nextServiceName, setNextServiceName] = useState<string | null>(null);
 
   // Confirmation dialogs
   const [confirmAction, setConfirmAction] = useState<{
@@ -511,6 +512,7 @@ export default function DashboardPage() {
       if (res.ok) {
         const data = await res.json();
         setShortfallSats(data.shortfall_sats);
+        setNextServiceName(data.next_service_name);
       }
     } catch {
       // Non-critical, leave null
@@ -1026,7 +1028,7 @@ export default function DashboardPage() {
                 {user.status === "auto_paused" && (
                   <p className="text-sm text-amber-400">
                     {shortfallSats !== null && shortfallSats > 0
-                      ? `Paused (low balance). Add at least ${formatSats(shortfallSats)} sats to resume automatically.`
+                      ? `Paused (low balance). Add at least ${formatSats(shortfallSats)} sats to afford the ${nextServiceName ?? "next"} gift card.`
                       : "Paused (low balance). Add sats to resume automatically."}
                   </p>
                 )}

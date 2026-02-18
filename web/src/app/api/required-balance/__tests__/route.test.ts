@@ -42,9 +42,9 @@ beforeEach(() => {
 
 describe("GET /api/required-balance", () => {
   it("returns balance breakdown for user with queued service", async () => {
-    // SELECT rotation_queue
+    // SELECT rotation_queue JOIN streaming_services
     vi.mocked(query).mockResolvedValueOnce(
-      mockQueryResult([{ service_id: "netflix" }])
+      mockQueryResult([{ service_id: "netflix", display_name: "Netflix" }])
     );
     vi.mocked(getRequiredBalance).mockResolvedValueOnce({
       platformFeeSats: 4400,
@@ -68,6 +68,7 @@ describe("GET /api/required-balance", () => {
     expect(data.total_sats).toBe(29400);
     expect(data.credit_sats).toBe(10000);
     expect(data.shortfall_sats).toBe(19400);
+    expect(data.next_service_name).toBe("Netflix");
   });
 
   it("returns zeros when user has no queued services", async () => {
@@ -82,11 +83,12 @@ describe("GET /api/required-balance", () => {
     expect(res.status).toBe(200);
     expect(data.total_sats).toBe(0);
     expect(data.shortfall_sats).toBe(0);
+    expect(data.next_service_name).toBeNull();
   });
 
   it("returns zero shortfall when balance exceeds requirement", async () => {
     vi.mocked(query).mockResolvedValueOnce(
-      mockQueryResult([{ service_id: "hulu" }])
+      mockQueryResult([{ service_id: "hulu", display_name: "Hulu" }])
     );
     vi.mocked(getRequiredBalance).mockResolvedValueOnce({
       platformFeeSats: 4400,
@@ -106,6 +108,7 @@ describe("GET /api/required-balance", () => {
     expect(res.status).toBe(200);
     expect(data.shortfall_sats).toBe(0);
     expect(data.credit_sats).toBe(50000);
+    expect(data.next_service_name).toBe("Hulu");
   });
 
   it("requires auth", async () => {

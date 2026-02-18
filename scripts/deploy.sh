@@ -373,9 +373,10 @@ fi
 # =============================================================================
 # 7. npm ci + build
 # =============================================================================
-log "Installing dependencies and building..."
+GIT_HASH=$(git -C "${PROJECT_ROOT}" rev-parse --short HEAD 2>/dev/null || echo "unknown")
+log "Installing dependencies and building (${GIT_HASH})..."
 
-${SSH_CMD} bash << 'REMOTE_BUILD'
+${SSH_CMD} bash << REMOTE_BUILD
 set -euo pipefail
 
 cd /home/butter/unsaltedbutter/web
@@ -391,6 +392,7 @@ if [[ -f .env.production ]]; then
     source .env.production
     set +a
 fi
+export GIT_HASH="${GIT_HASH}"
 npm run build
 
 echo "Build complete"
@@ -481,7 +483,6 @@ REMOTE_BOT_RESTART
 # =============================================================================
 # 12. Notify operator via Nostr DM
 # =============================================================================
-GIT_HASH=$(git -C "${PROJECT_ROOT}" rev-parse --short HEAD 2>/dev/null || echo "unknown")
 log "Sending deploy notification (${GIT_HASH})..."
 ${SSH_CMD} bash << REMOTE_NOTIFY
 UC_VENV="\$HOME/venvs/update-checker"

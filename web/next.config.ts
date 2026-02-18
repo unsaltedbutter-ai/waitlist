@@ -1,7 +1,7 @@
 import type { NextConfig } from "next";
 import { execSync } from "child_process";
 
-const gitHash = (() => {
+const gitHash = process.env.GIT_HASH || (() => {
   try {
     return execSync("git rev-parse --short HEAD").toString().trim();
   } catch {
