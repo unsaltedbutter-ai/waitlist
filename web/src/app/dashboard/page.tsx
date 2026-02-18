@@ -19,6 +19,7 @@ import {
 } from "@dnd-kit/sortable";
 import { SortableQueueItem } from "@/components/sortable-queue-item";
 import { ServiceCredentialForm } from "@/components/service-credential-form";
+import { DebtBanner } from "@/components/debt-banner";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -59,10 +60,6 @@ function formatDate(iso: string): string {
     day: "numeric",
     year: "numeric",
   });
-}
-
-function formatSats(n: number): string {
-  return n.toLocaleString("en-US");
 }
 
 function statusColor(
@@ -176,7 +173,6 @@ export default function DashboardPage() {
 
   const [queue, setQueue] = useState<QueueItem[]>([]);
   const [jobs, setJobs] = useState<JobRecord[]>([]);
-  const [debtSats, setDebtSats] = useState(0);
   const [loadingData, setLoadingData] = useState(true);
   const [error, setError] = useState("");
 
@@ -219,7 +215,6 @@ export default function DashboardPage() {
 
       if (meRes && meRes.ok) {
         const meData = await meRes.json();
-        setDebtSats(meData.debt_sats ?? 0);
         setJobs(meData.recent_jobs ?? []);
       }
     } catch {
@@ -433,15 +428,8 @@ export default function DashboardPage() {
 
         {error && <p className="text-red-400 text-sm">{error}</p>}
 
-        {/* Outstanding debt warning */}
-        {debtSats > 0 && (
-          <div className="bg-red-900/30 border border-red-700 rounded p-4">
-            <p className="text-red-300 text-sm font-medium">
-              You have an outstanding balance of {formatSats(debtSats)} sats.
-              Pay via the Nostr bot to continue using the service.
-            </p>
-          </div>
-        )}
+        {/* Outstanding debt warning + pay flow */}
+        <DebtBanner />
 
         {loadingData ? (
           <p className="text-muted">Loading your data...</p>
