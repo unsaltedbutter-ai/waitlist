@@ -38,6 +38,13 @@ function TruncatedHash({ hash }: { hash: string }) {
   );
 }
 
+async function hashEmailClient(email: string): Promise<string> {
+  const data = new TextEncoder().encode(email.trim().toLowerCase());
+  const hashBuffer = await crypto.subtle.digest("SHA-256", data);
+  const hashArray = Array.from(new Uint8Array(hashBuffer));
+  return hashArray.map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
 export default function BlocklistPage() {
   const [entries, setEntries] = useState<RenegedEntry[]>([]);
   const [loading, setLoading] = useState(true);
@@ -46,6 +53,28 @@ export default function BlocklistPage() {
   const [clearReason, setClearReason] = useState("");
   const [clearError, setClearError] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [filterEmail, setFilterEmail] = useState("");
+  const [filterHash, setFilterHash] = useState<string | null>(null);
+
+  const applyFilter = async () => {
+    const trimmed = filterEmail.trim();
+    if (!trimmed) {
+      setFilterHash(null);
+      return;
+    }
+    const hash = await hashEmailClient(trimmed);
+    setFilterHash(hash);
+  };
+
+  const clearFilter = () => {
+    setFilterEmail("");
+    setFilterHash(null);
+  };
+
+  const displayedEntries =
+    filterHash !== null
+      ? entries.filter((e) => e.email_hash === filterHash)
+      : entries;
 
   const fetchData = useCallback(async () => {
     setLoading(true);
@@ -135,46 +164,81 @@ export default function BlocklistPage() {
       <section>
         <SectionHeader>Blocklist Management</SectionHeader>
 
+        <div className="flex items-center gap-2 mb-4">
+          <input
+            type="email"
+            value={filterEmail}
+            onChange={(e) => setFilterEmail(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") applyFilter();
+            }}
+            placeholder="Filter by email (hashed client-side, never sent to server)"
+            className="flex-1 bg-background border border-border rounded px-3 py-1.5 text-sm text-foreground placeholder:text-muted/50 focus:outline-none focus:border-accent"
+          />
+          <button
+            type="button"
+            onClick={applyFilter}
+            className="text-xs px-3 py-1.5 rounded border border-border text-muted hover:text-foreground transition-colors"
+          >
+            Filter
+          </button>
+          {filterHash !== null && (
+            <button
+              type="button"
+              onClick={clearFilter}
+              className="text-xs px-3 py-1.5 rounded border border-border text-muted hover:text-foreground transition-colors"
+            >
+              Clear filter
+            </button>
+          )}
+        </div>
+
         {entries.length > 0 ? (
-          <div className="overflow-x-auto">
-            <table className="w-full">
-              <thead>
-                <tr className="border-b border-border">
-                  <th className={thClass}>Email Hash</th>
-                  <th className={thClass}>Debt (sats)</th>
-                  <th className={thClass}>Blocklisted</th>
-                  <th className={thClass}>Action</th>
-                </tr>
-              </thead>
-              <tbody>
-                {entries.map((entry) => (
-                  <tr
-                    key={entry.email_hash}
-                    className="border-b border-border/50"
-                  >
-                    <td className={tdClass}>
-                      <TruncatedHash hash={entry.email_hash} />
-                    </td>
-                    <td className={tdMuted}>
-                      {formatSats(entry.total_debt_sats)}
-                    </td>
-                    <td className={tdMuted}>
-                      {formatDate(entry.created_at)}
-                    </td>
-                    <td className="px-3 py-2">
-                      <button
-                        type="button"
-                        onClick={() => openClearDialog(entry.email_hash)}
-                        className="text-xs px-2 py-1 rounded border border-red-600 text-red-400 hover:bg-red-900/30 transition-colors"
-                      >
-                        Clear
-                      </button>
-                    </td>
+          displayedEntries.length > 0 ? (
+            <div className="overflow-x-auto">
+              <table className="w-full">
+                <thead>
+                  <tr className="border-b border-border">
+                    <th className={thClass}>Email Hash</th>
+                    <th className={thClass}>Debt (sats)</th>
+                    <th className={thClass}>Blocklisted</th>
+                    <th className={thClass}>Action</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                </thead>
+                <tbody>
+                  {displayedEntries.map((entry) => (
+                    <tr
+                      key={entry.email_hash}
+                      className="border-b border-border/50"
+                    >
+                      <td className={tdClass}>
+                        <TruncatedHash hash={entry.email_hash} />
+                      </td>
+                      <td className={tdMuted}>
+                        {formatSats(entry.total_debt_sats)}
+                      </td>
+                      <td className={tdMuted}>
+                        {formatDate(entry.created_at)}
+                      </td>
+                      <td className="px-3 py-2">
+                        <button
+                          type="button"
+                          onClick={() => openClearDialog(entry.email_hash)}
+                          className="text-xs px-2 py-1 rounded border border-red-600 text-red-400 hover:bg-red-900/30 transition-colors"
+                        >
+                          Clear
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <p className="text-muted text-sm">
+              No matching entry found for this email.
+            </p>
+          )
         ) : (
           <p className="text-muted text-sm">No blocklisted emails.</p>
         )}
