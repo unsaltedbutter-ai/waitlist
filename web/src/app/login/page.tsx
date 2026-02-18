@@ -28,7 +28,6 @@ function LoginContent() {
 
   // OTP state
   const [otpCode, setOtpCode] = useState("");
-  const [otpSent, setOtpSent] = useState(false);
   const [npubCopied, setNpubCopied] = useState(false);
 
   // Validate invite code from URL on mount
@@ -164,96 +163,67 @@ function LoginContent() {
         </div>
 
         <div className="space-y-6">
-          {!otpSent ? (
-            <>
+          <form onSubmit={handleOtpSubmit} className="space-y-6">
+            <div>
+              <input
+                type="text"
+                inputMode="numeric"
+                required
+                value={otpCode}
+                onChange={(e) => handleOtpChange(e.target.value)}
+                placeholder="XXXXXX-XXXXXX"
+                maxLength={13}
+                autoFocus
+                className="w-full py-3 px-4 bg-surface border border-border rounded text-foreground text-center text-lg font-mono tracking-widest placeholder:text-muted/50 focus:outline-none focus:border-accent"
+              />
+            </div>
+
+            <button
+              type="submit"
+              disabled={loading || codeChecking || otpCode.replace("-", "").length !== 12}
+              className="w-full py-3 px-4 bg-accent text-background font-semibold rounded hover:bg-accent/90 transition-colors disabled:opacity-50"
+            >
+              {loading
+                ? "Verifying..."
+                : canSignup
+                  ? "Create account"
+                  : "Sign in"}
+            </button>
+          </form>
+
+          <div className="text-sm text-muted leading-relaxed text-center">
+            <p>Just DM <span className="text-foreground font-medium">login</span></p>
+            <p>to your friendly <span className="text-foreground font-medium">{BOT_NAME}</span></p>
+            <p>for your login code.</p>
+          </div>
+
+          <p className="text-center text-xs text-muted">
+            Have a Nostr extension?{" "}
+            <button
+              type="button"
+              onClick={handleNostrLogin}
+              disabled={loading || codeChecking}
+              className="text-accent hover:underline"
+            >
+              Sign in with NIP-07
+            </button>
+          </p>
+
+          {BOT_NPUB && (
+            <p className="text-center text-xs text-muted">
+              {BOT_NAME}:{" "}
               <button
                 type="button"
-                onClick={() => setOtpSent(true)}
-                disabled={codeChecking}
-                className="w-full py-3 px-4 bg-accent text-background font-semibold rounded hover:bg-accent/90 transition-colors disabled:opacity-50"
+                onClick={() => {
+                  navigator.clipboard.writeText(BOT_NPUB);
+                  setNpubCopied(true);
+                  setTimeout(() => setNpubCopied(false), 2000);
+                }}
+                className="font-mono text-muted hover:text-foreground transition-colors break-all"
               >
-                Enter login code
+                {npubCopied ? "Copied!" : BOT_NPUB}
               </button>
-
-              <div className="text-sm text-muted leading-relaxed text-center">
-                <p>Just DM <span className="text-foreground font-medium">login</span></p>
-                <p>to your friendly <span className="text-foreground font-medium">{BOT_NAME}</span></p>
-                <p>for your login code.</p>
-              </div>
-
-              <p className="text-center text-xs text-muted">
-                Have a Nostr extension?{" "}
-                <button
-                  type="button"
-                  onClick={handleNostrLogin}
-                  disabled={loading || codeChecking}
-                  className="text-accent hover:underline"
-                >
-                  Sign in with NIP-07
-                </button>
-              </p>
-
-              {BOT_NPUB && (
-                <p className="text-center text-xs text-muted">
-                  {BOT_NAME}:{" "}
-                  <button
-                    type="button"
-                    onClick={() => {
-                      navigator.clipboard.writeText(BOT_NPUB);
-                      setNpubCopied(true);
-                      setTimeout(() => setNpubCopied(false), 2000);
-                    }}
-                    className="font-mono text-muted hover:text-foreground transition-colors break-all"
-                  >
-                    {npubCopied ? "Copied!" : BOT_NPUB}
-                  </button>
-                </p>
-              )}
-            </>
-          ) : (
-            <form onSubmit={handleOtpSubmit} className="space-y-6">
-              <div>
-                <label className="block text-sm font-medium text-muted mb-2">
-                  Login code
-                </label>
-                <input
-                  type="text"
-                  inputMode="numeric"
-                  required
-                  value={otpCode}
-                  onChange={(e) => handleOtpChange(e.target.value)}
-                  placeholder="XXXXXX-XXXXXX"
-                  maxLength={13}
-                  className="w-full py-3 px-4 bg-surface border border-border rounded text-foreground text-center text-lg font-mono tracking-widest placeholder:text-muted/50 focus:outline-none focus:border-accent"
-                />
-              </div>
-
-              <button
-                type="submit"
-                disabled={loading || otpCode.replace("-", "").length !== 12}
-                className="w-full py-3 px-4 bg-accent text-background font-semibold rounded hover:bg-accent/90 transition-colors disabled:opacity-50"
-              >
-                {loading
-                  ? "Verifying..."
-                  : canSignup
-                    ? "Create account"
-                    : "Sign in"}
-              </button>
-
-              <p className="text-center text-sm text-muted">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setOtpSent(false);
-                    setOtpCode("");
-                    setError("");
-                  }}
-                  className="text-accent hover:underline"
-                >
-                  Back
-                </button>
-              </p>
-            </form>
+            </p>
           )}
         </div>
 
