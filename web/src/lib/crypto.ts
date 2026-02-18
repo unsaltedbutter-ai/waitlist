@@ -48,7 +48,7 @@ export function decrypt(data: Buffer): string {
   const ciphertext = data.subarray(IV_LENGTH, data.length - TAG_LENGTH);
   const decipher = createDecipheriv(ALGORITHM, key, iv);
   decipher.setAuthTag(tag);
-  return decipher.update(ciphertext) + decipher.final("utf8");
+  return decipher.update(ciphertext, undefined, "utf8") + decipher.final("utf8");
 }
 
 /** Clear cached key (for testing or key rotation) */

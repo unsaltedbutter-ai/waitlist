@@ -20,40 +20,18 @@ import {
   verticalListSortingStrategy,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import QRCode from "react-qr-code";
-import { getCredsForGroup } from "@/lib/creds-resolver";
 
-interface Plan {
-  id: string;
+interface ServiceOption {
   service_id: string;
-  display_name: string;
-  monthly_price_cents: number;
-  has_ads: boolean;
-  is_bundle: boolean;
-}
-
-interface ServiceGroup {
-  id: string;
-  label: string;
-  serviceId: string;
-  plans: Plan[];
+  service_name: string;
 }
 
 interface QueueItem {
   serviceId: string;
-  groupLabel: string;
-  planName: string;
-  isBundle: boolean;
-  priceCents: number;
+  serviceName: string;
 }
 
-const TOTAL_STEPS = 4;
-const BOT_NPUB = process.env.NEXT_PUBLIC_NOSTR_BOT_NPUB ?? "";
-const BOT_NAME = process.env.NEXT_PUBLIC_NOSTR_BOT_NAME ?? "UnsaltedButter Bot";
-
-function formatSats(sats: number): string {
-  return sats.toLocaleString();
-}
+const TOTAL_STEPS = 3;
 
 function StepIndicator({ current }: { current: number }) {
   return (
@@ -108,12 +86,6 @@ function SortableItem({
     transition,
   };
 
-  const displayLabel = item.isBundle
-    ? item.planName
-    : item.groupLabel === item.planName
-      ? item.groupLabel
-      : `${item.groupLabel} (${item.planName})`;
-
   return (
     <div
       ref={setNodeRef}
@@ -151,10 +123,7 @@ function SortableItem({
         </button>
       </div>
       <span className="text-sm font-medium text-muted w-6">{position}</span>
-      <span className="text-foreground font-medium flex-1 min-w-0 truncate">{displayLabel}</span>
-      <span className="text-muted/60 text-sm shrink-0">
-        ${(item.priceCents / 100).toFixed(2)}/mo
-      </span>
+      <span className="text-foreground font-medium flex-1 min-w-0 truncate">{item.serviceName}</span>
     </div>
   );
 }
@@ -167,128 +136,35 @@ export default function OnboardingPage() {
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [authorized, setAuthorized] = useState(false);
-  const [npubCopied, setNpubCopied] = useState(false);
 
-  // Step 2 state (plan selection)
-  const [groups, setGroups] = useState<ServiceGroup[]>([]);
-  const [selectedPlans, setSelectedPlans] = useState<Record<string, string>>(
-    {}
-  );
-  const [creds, setCreds] = useState<
-    Record<string, { email: string; password: string }>
-  >({});
-  const [signupQuestions, setSignupQuestions] = useState<
-    {
-      id: string;
-      label: string;
-      field_type: "text" | "date" | "select";
-      options: string[] | null;
-      placeholder: string | null;
-    }[]
-  >([]);
-  const [signupAnswers, setSignupAnswers] = useState<Record<string, string>>(
-    () => {
-      const d = new Date();
-      const minAge = 20;
-      const maxAge = 50;
-      const age = minAge + Math.floor(Math.random() * (maxAge - minAge));
-      d.setFullYear(d.getFullYear() - age);
-      d.setMonth(Math.floor(Math.random() * 12));
-      d.setDate(1 + Math.floor(Math.random() * 28));
-      return { birthdate: d.toISOString().split("T")[0] };
-    }
-  );
-  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
+  // Step 1 state: services + credentials
+  const [services, setServices] = useState<ServiceOption[]>([]);
+  const [selectedServiceIds, setSelectedServiceIds] = useState<Set<string>>(new Set());
+  const [creds, setCreds] = useState<Record<string, { email: string; password: string }>>({});
   const [useSameCreds, setUseSameCreds] = useState(false);
   const [sharedCreds, setSharedCreds] = useState({ email: "", password: "" });
   const [showPasswords, setShowPasswords] = useState(false);
 
-  // Step 3 state (rotation queue)
+  // Step 2 state: queue order
   const [queue, setQueue] = useState<QueueItem[]>([]);
 
-  // Step 4 state (payment)
-  const [platformFeeSats, setPlatformFeeSats] = useState(0);
-  const [giftCardCostSats, setGiftCardCostSats] = useState(0);
-  const [creditSats, setCreditSats] = useState(0);
-  const [totalNeededSats, setTotalNeededSats] = useState(0);
-  const [shortfallSats, setShortfallSats] = useState(0);
-  const [balanceLoaded, setBalanceLoaded] = useState(false);
-  const [invoice, setInvoice] = useState<{
-    invoiceId: string;
-    checkoutLink: string;
-    bolt11: string | null;
-    amount_sats: number | null;
-  } | null>(null);
-  const [copied, setCopied] = useState(false);
-  const [paid, setPaid] = useState(false);
-  const [activating, setActivating] = useState(false);
-
-  // Fetch plans on mount
+  // Fetch available services on mount
   useEffect(() => {
+    // TODO: Fetch from GET /api/services (list of available services).
+    // For now, use the service-plans endpoint and extract unique services.
     fetch("/api/service-plans")
       .then((r) => r.json())
-      .then((data) => setGroups(data.groups))
-      .catch(() => {});
-    fetch("/api/signup-questions")
-      .then((r) => r.json())
       .then((data) => {
-        setSignupQuestions(data.questions);
-        // Prepopulate defaults for select fields
-        const defaults: Record<string, string> = {};
-        for (const q of data.questions) {
-          if (q.id === "gender") defaults[q.id] = "Prefer Not To Say";
+        if (data.groups) {
+          const svcList: ServiceOption[] = data.groups.map((g: { serviceId: string; label: string }) => ({
+            service_id: g.serviceId,
+            service_name: g.label,
+          }));
+          setServices(svcList);
         }
-        setSignupAnswers((prev) => ({ ...defaults, ...prev }));
       })
       .catch(() => {});
   }, []);
-
-  // Fetch required balance breakdown when reaching step 4
-  useEffect(() => {
-    if (step !== 4) return;
-    setBalanceLoaded(false);
-    authFetch("/api/required-balance")
-      .then((r) => r.json())
-      .then((data) => {
-        setPlatformFeeSats(data.platform_fee_sats);
-        setGiftCardCostSats(data.gift_card_cost_sats);
-        setCreditSats(data.credit_sats);
-        setTotalNeededSats(data.total_sats);
-        setShortfallSats(data.shortfall_sats);
-        setBalanceLoaded(true);
-      })
-      .catch(() => {
-        setBalanceLoaded(true);
-      });
-  }, [step]);
-
-  // Poll payment status when invoice exists
-  useEffect(() => {
-    if (!invoice || paid) return;
-    let cancelled = false;
-    const poll = async () => {
-      while (!cancelled) {
-        await new Promise((r) => setTimeout(r, 5000));
-        if (cancelled) break;
-        try {
-          const res = await authFetch(
-            `/api/credits/prepay/status?invoiceId=${invoice.invoiceId}`
-          );
-          if (res.ok) {
-            const data = await res.json();
-            if (data.status === "paid") {
-              setPaid(true);
-              break;
-            }
-          }
-        } catch {
-          // Network error, keep polling
-        }
-      }
-    };
-    poll();
-    return () => { cancelled = true; };
-  }, [invoice, paid]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // DnD sensors
   const sensors = useSensors(
@@ -307,88 +183,120 @@ export default function OnboardingPage() {
   }
 
   // --- Helpers ---
-  function togglePlan(groupId: string, planId: string) {
-    setSelectedPlans((prev) => {
-      if (prev[groupId] === planId) {
-        const next = { ...prev };
-        delete next[groupId];
+
+  function toggleService(serviceId: string) {
+    setSelectedServiceIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(serviceId)) {
+        next.delete(serviceId);
         setCreds((c) => {
           const n = { ...c };
-          delete n[groupId];
+          delete n[serviceId];
           return n;
         });
-        return next;
+      } else {
+        next.add(serviceId);
       }
-      return { ...prev, [groupId]: planId };
+      return next;
     });
   }
 
-  function updateCred(
-    groupId: string,
-    field: "email" | "password",
-    value: string
-  ) {
+  function updateCred(serviceId: string, field: "email" | "password", value: string) {
     setCreds((prev) => ({
       ...prev,
-      [groupId]: {
-        email: prev[groupId]?.email ?? "",
-        password: prev[groupId]?.password ?? "",
+      [serviceId]: {
+        email: prev[serviceId]?.email ?? "",
+        password: prev[serviceId]?.password ?? "",
         [field]: value,
       },
     }));
   }
 
-  function getSelectedPlan(groupId: string): Plan | undefined {
-    const planId = selectedPlans[groupId];
-    if (!planId) return undefined;
-    for (const g of groups) {
-      const plan = g.plans.find((p) => p.id === planId);
-      if (plan) return plan;
+  function getCredsFor(serviceId: string): { email: string; password: string } {
+    if (useSameCreds) return sharedCreds;
+    return creds[serviceId] ?? { email: "", password: "" };
+  }
+
+  const selectedIds = Array.from(selectedServiceIds);
+
+  const canSaveStep1 = (() => {
+    if (selectedIds.length < 2) return false;
+    if (useSameCreds) {
+      return !!sharedCreds.email && !!sharedCreds.password;
     }
-    return undefined;
-  }
-
-  function getSelectedPlanPrice(groupId: string): number {
-    return getSelectedPlan(groupId)?.monthly_price_cents ?? 0;
-  }
-
-  const selectedGroupIds = Object.keys(selectedPlans);
-  const selectedPrices = selectedGroupIds.map((gid) =>
-    getSelectedPlanPrice(gid)
-  );
-  const monthlyTotal = selectedPrices.reduce((s, p) => s + p, 0);
-  const minPrice = selectedPrices.length > 0 ? Math.min(...selectedPrices) : 0;
-  const maxPrice = selectedPrices.length > 0 ? Math.max(...selectedPrices) : 0;
-
-  const hasSufficientBalance = balanceLoaded && creditSats >= totalNeededSats;
-
-  // --- Consent capture ---
-  async function recordConsent(consentType: "authorization" | "confirmation") {
-    const res = await authFetch("/api/consent", {
-      method: "POST",
-      body: JSON.stringify({ consentType }),
+    const complete = selectedIds.filter((sid) => {
+      const c = creds[sid];
+      return c?.email && c?.password;
     });
-    return res.ok;
-  }
+    return complete.length >= 2;
+  })();
 
-  // --- Step 1: How it works + Authorization ---
-  async function handleLetsGo() {
+  // --- Step 1: Add Services + Credentials ---
+
+  async function saveCredentials() {
     setError("");
+
+    if (useSameCreds) {
+      if (!sharedCreds.email || !sharedCreds.password) {
+        setError("Enter the shared email and password.");
+        return;
+      }
+      if (selectedIds.length < 2) {
+        setError("Select at least two services.");
+        return;
+      }
+    } else {
+      const complete = selectedIds.filter((sid) => {
+        const c = creds[sid];
+        return c?.email && c?.password;
+      });
+      if (complete.length < 2) {
+        setError("Select and provide credentials for at least two services.");
+        return;
+      }
+
+      for (const sid of selectedIds) {
+        const c = creds[sid];
+        if (!c?.email || !c?.password) {
+          const svc = services.find((s) => s.service_id === sid);
+          setError(`Enter credentials for ${svc?.service_name ?? sid}.`);
+          return;
+        }
+      }
+    }
+
     setSubmitting(true);
     try {
-      // Record both consent types
-      const authOk = await recordConsent("authorization");
-      if (!authOk) {
-        setError("Failed to record authorization. Try again.");
-        setSubmitting(false);
-        return;
+      for (const sid of selectedIds) {
+        const c = getCredsFor(sid);
+
+        const res = await authFetch("/api/credentials", {
+          method: "POST",
+          body: JSON.stringify({
+            serviceId: sid,
+            email: c.email,
+            password: c.password,
+          }),
+        });
+
+        if (!res.ok) {
+          const data = await res.json();
+          const svc = services.find((s) => s.service_id === sid);
+          setError(data.error || `Failed to save credentials for ${svc?.service_name ?? sid}.`);
+          setSubmitting(false);
+          return;
+        }
       }
-      const confirmOk = await recordConsent("confirmation");
-      if (!confirmOk) {
-        setError("Failed to record confirmation. Try again.");
-        setSubmitting(false);
-        return;
-      }
+
+      // Build queue from selected services
+      const savedQueue: QueueItem[] = selectedIds.map((sid) => {
+        const svc = services.find((s) => s.service_id === sid)!;
+        return {
+          serviceId: sid,
+          serviceName: svc.service_name,
+        };
+      });
+      setQueue(savedQueue);
       setSubmitting(false);
       setStep(2);
     } catch {
@@ -399,274 +307,22 @@ export default function OnboardingPage() {
 
   function renderStep1() {
     return (
-      <div className="space-y-8">
-        <div>
-          <h1 className="text-4xl font-bold tracking-tight text-foreground mb-6">
-            How it works
-          </h1>
-          <p className="text-muted leading-relaxed">
-            We handle starting and cancelling your streaming subscriptions.
-            One month per service, in the order you choose.
-          </p>
-        </div>
-
-        <div className="bg-surface border border-border rounded p-6 space-y-3">
-          <p className="text-foreground font-bold leading-relaxed">
-            Gift cards mean no recurring charges, no stored credit cards, and
-            no surprise bills.
-          </p>
-          <p className="text-muted text-sm leading-relaxed">
-            Gift card denominations don&apos;t always match monthly prices
-            exactly, so you may carry a small balance with a service. When
-            your balance is enough to cover another month, we just
-            reactivate, no new gift card needed.
-          </p>
-        </div>
-
-        <ul className="space-y-3 text-sm text-muted leading-relaxed">
-          <li className="flex gap-2">
-            <span className="text-muted/60 shrink-0">&bull;</span>
-            <span>
-              One streaming service at a time. We rotate to the next one in
-              your queue when the month is up.
-            </span>
-          </li>
-          <li className="flex gap-2">
-            <span className="text-muted/60 shrink-0">&bull;</span>
-            <span>Pause anytime you want.</span>
-          </li>
-          <li className="flex gap-2">
-            <span className="text-muted/60 shrink-0">&bull;</span>
-            <span>You prepay in sats. If you leave, we refund in sats.</span>
-          </li>
-          <li className="flex gap-2">
-            <span className="text-muted/60 shrink-0">&bull;</span>
-            <span>
-              About two weeks into each cycle, your next service locks in:
-              we purchase the gift card and commit to the rotation.
-              Before that, you can reorder your queue freely.
-            </span>
-          </li>
-          <li className="flex gap-2">
-            <span className="text-muted/60 shrink-0">&bull;</span>
-            <span>
-              Your credentials are destroyed immediately if you delete your
-              account.
-            </span>
-          </li>
-          <li className="flex gap-2">
-            <span className="text-muted/60 shrink-0">&bull;</span>
-            <span>
-              We do not share your data with anyone.
-            </span>
-          </li>
-        </ul>
-
-        <div className="border-l-4 border-amber-500 bg-amber-500/[0.08] rounded-r-lg px-5 py-4">
-          <p className="text-amber-200 text-sm font-medium leading-relaxed">
-            If you&apos;re going to have us rotate your existing accounts,
-            cancel them before we start. Anything you leave running means
-            you&apos;re paying them twice.
-          </p>
-        </div>
-
-        <div className="bg-amber-950/40 border border-amber-700/50 rounded p-5 space-y-3">
-          <p className="text-amber-400 font-semibold text-sm">
-            Understand the risks
-          </p>
-          <p className="text-amber-200/70 text-sm leading-relaxed">
-            Using UnsaltedButter to manage your streaming accounts may violate
-            those services&apos; Terms of Service. Streaming providers could
-            suspend or terminate your account at their discretion.
-          </p>
-          <p className="text-amber-200/70 text-sm leading-relaxed">
-            By authorizing us, you acknowledge this risk and agree that
-            UnsaltedButter is not liable for any action a streaming service
-            takes against your account (including suspension,
-            termination, or loss of content) as a result of using this
-            service.
-          </p>
-        </div>
-
-        <label className="flex items-start gap-3 cursor-pointer">
-          <input
-            type="checkbox"
-            checked={authorized}
-            onChange={(e) => setAuthorized(e.target.checked)}
-            className="w-4 h-4 mt-0.5 rounded border-border bg-surface text-accent accent-amber-500"
-          />
-          <span className="text-sm text-foreground leading-relaxed">
-            I authorize UnsaltedButter to act on my behalf, including
-            signing up, cancelling, and managing streaming subscriptions using
-            the credentials I provide.
-          </span>
-        </label>
-
-        {error && <p className="text-red-400 text-sm">{error}</p>}
-
-        <button
-          type="button"
-          onClick={handleLetsGo}
-          disabled={submitting || !authorized}
-          className="w-full py-3 px-4 bg-accent text-background font-semibold rounded hover:bg-accent/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-        >
-          {submitting ? "Recording..." : "Let\u2019s go"}
-        </button>
-      </div>
-    );
-  }
-
-  // --- Step 2: Select Plans & Add Credentials ---
-
-  async function saveCredentials() {
-    setError("");
-
-    if (useSameCreds) {
-      if (!sharedCreds.email || !sharedCreds.password) {
-        setError("Enter the shared email and password.");
-        return;
-      }
-      if (selectedGroupIds.length < 2) {
-        setError("Select at least two services.");
-        return;
-      }
-    } else {
-      const complete = selectedGroupIds.filter((gid) => {
-        const c = creds[gid];
-        return c?.email && c?.password;
-      });
-      if (complete.length < 2) {
-        setError("Select and provide credentials for at least two services.");
-        return;
-      }
-
-      for (const gid of selectedGroupIds) {
-        const c = creds[gid];
-        if (!c?.email || !c?.password) {
-          const group = groups.find((g) => g.id === gid);
-          setError(`Enter credentials for ${group?.label ?? gid}.`);
-          return;
-        }
-      }
-    }
-
-    setSubmitting(true);
-    try {
-      for (const gid of selectedGroupIds) {
-        const group = groups.find((g) => g.id === gid);
-        if (!group) continue;
-        const c = getCredsForGroup(gid, useSameCreds, sharedCreds, creds);
-
-        const res = await authFetch("/api/credentials", {
-          method: "POST",
-          body: JSON.stringify({
-            serviceId: group.serviceId,
-            email: c.email,
-            password: c.password,
-          }),
-        });
-
-        if (!res.ok) {
-          const data = await res.json();
-          setError(
-            data.error || `Failed to save credentials for ${group.label}.`
-          );
-          setSubmitting(false);
-          return;
-        }
-      }
-
-      // Save signup answers (optional, don't block if empty)
-      if (Object.keys(signupAnswers).length > 0) {
-        const answersRes = await authFetch("/api/signup-answers", {
-          method: "POST",
-          body: JSON.stringify({ answers: signupAnswers }),
-        });
-        if (!answersRes.ok) {
-          const data = await answersRes.json();
-          setError(data.error || "Failed to save account details.");
-          setSubmitting(false);
-          return;
-        }
-      }
-
-      // Build queue from selected groups with full plan info
-      const savedQueue: QueueItem[] = selectedGroupIds.map((gid) => {
-        const group = groups.find((g) => g.id === gid)!;
-        const plan = getSelectedPlan(gid)!;
-        return {
-          serviceId: group.serviceId,
-          groupLabel: group.label,
-          planName: plan.display_name,
-          isBundle: plan.is_bundle,
-          priceCents: plan.monthly_price_cents,
-        };
-      });
-      setQueue(savedQueue);
-      setSubmitting(false);
-      setStep(3);
-    } catch {
-      setError("Connection failed. Try again.");
-      setSubmitting(false);
-    }
-  }
-
-  function toggleAccordion(groupId: string) {
-    setExpandedGroups((prev) => {
-      const next = new Set(prev);
-      if (next.has(groupId)) {
-        next.delete(groupId);
-      } else {
-        next.add(groupId);
-      }
-      return next;
-    });
-  }
-
-  function getCheapestPrice(group: ServiceGroup): number {
-    return Math.min(...group.plans.map((p) => p.monthly_price_cents));
-  }
-
-  function renderStep2() {
-    const hasEnoughServices = selectedGroupIds.length >= 2;
-    const canSave = useSameCreds
-      ? hasEnoughServices && !!sharedCreds.email && !!sharedCreds.password
-      : selectedGroupIds.filter((gid) => {
-          const c = creds[gid];
-          return c?.email && c?.password;
-        }).length >= 2;
-
-    return (
       <div className="space-y-6">
-        <button
-          type="button"
-          onClick={() => setStep(1)}
-          className="text-sm text-muted hover:text-foreground transition-colors"
-        >
-          &larr; Back
-        </button>
         <div>
           <h1 className="text-4xl font-bold tracking-tight text-foreground mb-3">
-            Your streaming plans
+            Add your services
           </h1>
           <p className="text-muted leading-relaxed text-sm">
-            Select the plans you want us to rotate. If you get a service bundled
-            with something else (phone plan, internet, etc.), skip it. Add at
-            least two for rotation to work.
+            Select the streaming services you want us to manage. Provide the
+            login credentials for each. We need at least two for rotation.
           </p>
         </div>
 
         {/* Credentials callout */}
         <div className="border-l-4 border-amber-500 bg-amber-500/[0.08] rounded-r-lg px-5 py-4">
           <p className="text-amber-200 text-sm font-medium leading-relaxed">
-            Fresh credentials are cleanest. Give us an email and password you
-            haven&apos;t used with the service before: we&apos;ll create
-            a new account for you.
-          </p>
-          <p className="text-muted text-sm mt-3 leading-relaxed">
-            Using existing accounts? Cancel all of them first. Remove your
-            credit card where you can. When your first queued service expires,
-            we&apos;ll add another month. After that the rotation begins.
+            These are your accounts. Provide the email and password you use
+            to log in to each service.
           </p>
         </div>
 
@@ -725,20 +381,16 @@ export default function OnboardingPage() {
           )}
         </div>
 
-        {/* Service accordion */}
+        {/* Service list */}
         <div className="space-y-2">
-          {groups.map((group) => {
-            const selectedPlanId = selectedPlans[group.id];
-            const isSelected = !!selectedPlanId;
-            const isExpanded = expandedGroups.has(group.id);
-            const selectedPlan = getSelectedPlan(group.id);
+          {services.map((svc) => {
+            const isSelected = selectedServiceIds.has(svc.service_id);
 
             return (
-              <div key={group.id}>
-                {/* Collapsed header */}
+              <div key={svc.service_id}>
                 <button
                   type="button"
-                  onClick={() => toggleAccordion(group.id)}
+                  onClick={() => toggleService(svc.service_id)}
                   className={`flex items-center justify-between w-full px-4 py-3 rounded-lg border text-sm transition-colors ${
                     isSelected
                       ? "bg-surface border-accent/60"
@@ -746,87 +398,52 @@ export default function OnboardingPage() {
                   }`}
                 >
                   <span className="font-medium text-foreground">
-                    {group.label}
+                    {svc.service_name}
                   </span>
-                  {isSelected && selectedPlan ? (
+                  {isSelected && (
                     <span className="flex items-center gap-2 text-accent text-xs">
-                      {!useSameCreds && (!creds[group.id]?.email || !creds[group.id]?.password) && (
+                      {!useSameCreds && (!creds[svc.service_id]?.email || !creds[svc.service_id]?.password) && (
                         <span className="w-2 h-2 rounded-full bg-amber-500 shrink-0" title="Needs credentials" />
                       )}
-                      {selectedPlan.display_name} - $
-                      {(selectedPlan.monthly_price_cents / 100).toFixed(2)}/mo
-                    </span>
-                  ) : (
-                    <span className="text-muted/60 text-xs">
-                      from ${(getCheapestPrice(group) / 100).toFixed(2)}/mo
+                      Selected
                     </span>
                   )}
                 </button>
 
-                {/* Expanded: plan options + credentials */}
-                {isExpanded && (
-                  <div className="mt-1 ml-8 space-y-1">
-                    {group.plans.map((plan) => {
-                      const selected = selectedPlanId === plan.id;
-                      return (
-                        <button
-                          key={plan.id}
-                          type="button"
-                          onClick={() => togglePlan(group.id, plan.id)}
-                          className={`w-full flex items-center justify-between py-2 px-3 rounded text-sm border transition-colors ${
-                            selected
-                              ? "bg-accent/10 text-accent border-accent/40"
-                              : "bg-surface text-muted border-border hover:border-muted"
-                          }`}
-                        >
-                          <span>{plan.display_name}</span>
-                          <span
-                            className={
-                              selected ? "text-accent" : "text-muted/60"
-                            }
-                          >
-                            ${(plan.monthly_price_cents / 100).toFixed(2)}/mo
-                          </span>
-                        </button>
-                      );
-                    })}
-
-                    {isSelected && !useSameCreds && (
-                      <div className="grid grid-cols-2 gap-3 pt-1 pb-2">
-                        <input
-                          type="email"
-                          value={creds[group.id]?.email ?? ""}
-                          onChange={(e) =>
-                            updateCred(group.id, "email", e.target.value)
-                          }
-                          placeholder="Login email"
-                          className="py-2.5 px-3 bg-surface border border-border rounded-lg text-foreground placeholder:text-muted/50 text-sm focus:outline-none focus:border-amber-500/60 focus:ring-1 focus:ring-amber-500/20 transition-colors"
-                        />
-                        <div className="relative">
-                          <input
-                            type={showPasswords ? "text" : "password"}
-                            value={creds[group.id]?.password ?? ""}
-                            onChange={(e) =>
-                              updateCred(group.id, "password", e.target.value)
-                            }
-                            placeholder="Password"
-                            className="w-full py-2.5 px-3 pr-10 bg-surface border border-border rounded-lg text-foreground placeholder:text-muted/50 text-sm focus:outline-none focus:border-amber-500/60 focus:ring-1 focus:ring-amber-500/20 transition-colors"
-                          />
-                          <button
-                            type="button"
-                            onClick={() => setShowPasswords((p) => !p)}
-                            className="absolute right-3 top-1/2 -translate-y-1/2 text-muted/50 hover:text-muted transition-colors"
-                            tabIndex={-1}
-                          >
-                            {showPasswords ? (
-                              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"/><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
-                            ) : (
-                              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
-                            )}
-                          </button>
-                        </div>
-                      </div>
-                    )}
+                {isSelected && !useSameCreds && (
+                  <div className="grid grid-cols-2 gap-3 mt-1 ml-8 pb-2">
+                    <input
+                      type="email"
+                      value={creds[svc.service_id]?.email ?? ""}
+                      onChange={(e) =>
+                        updateCred(svc.service_id, "email", e.target.value)
+                      }
+                      placeholder="Login email"
+                      className="py-2.5 px-3 bg-surface border border-border rounded-lg text-foreground placeholder:text-muted/50 text-sm focus:outline-none focus:border-amber-500/60 focus:ring-1 focus:ring-amber-500/20 transition-colors"
+                    />
+                    <div className="relative">
+                      <input
+                        type={showPasswords ? "text" : "password"}
+                        value={creds[svc.service_id]?.password ?? ""}
+                        onChange={(e) =>
+                          updateCred(svc.service_id, "password", e.target.value)
+                        }
+                        placeholder="Password"
+                        className="w-full py-2.5 px-3 pr-10 bg-surface border border-border rounded-lg text-foreground placeholder:text-muted/50 text-sm focus:outline-none focus:border-amber-500/60 focus:ring-1 focus:ring-amber-500/20 transition-colors"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowPasswords((p) => !p)}
+                        className="absolute right-3 top-1/2 -translate-y-1/2 text-muted/50 hover:text-muted transition-colors"
+                        tabIndex={-1}
+                      >
+                        {showPasswords ? (
+                          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"/><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
+                        ) : (
+                          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+                        )}
+                      </button>
+                    </div>
                   </div>
                 )}
               </div>
@@ -834,130 +451,18 @@ export default function OnboardingPage() {
           })}
         </div>
 
-        {/* Cost summary */}
-        {monthlyTotal > 0 && (
-          <div className="space-y-1">
-            <p className="text-sm text-muted">
-              This would cost you{" "}
-              <span className="text-foreground font-medium">
-                ${(monthlyTotal / 100).toFixed(2)}/month
-              </span>
-              .
-            </p>
-            {selectedGroupIds.length >= 2 && (
-              <p className="text-sm text-muted">
-                You will need between{" "}
-                <span className="text-foreground font-medium">
-                  ${(minPrice / 100).toFixed(2)}
-                </span>{" "}
-                and{" "}
-                <span className="text-foreground font-medium">
-                  ${(maxPrice / 100).toFixed(2)}
-                </span>{" "}
-                worth of service credits every month.
-              </p>
-            )}
-          </div>
-        )}
-
-        {/* Divider between sections */}
-        <hr className="border-border my-4" />
-
-        {/* Section 2: Account details */}
-        {signupQuestions.length > 0 && (
-          <div className="space-y-4">
-            <div>
-              <h3 className="text-lg font-semibold text-foreground mb-1">
-                Account details
-              </h3>
-              <p className="text-sm text-muted">
-                Used to create accounts on your behalf. One set of details for
-                all services.
-              </p>
-            </div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              {signupQuestions.map((q) => {
-                const isFullWidth = q.id === "full_name";
-                if (q.field_type === "select" && q.options) {
-                  return (
-                    <div
-                      key={q.id}
-                      className={isFullWidth ? "sm:col-span-2" : ""}
-                    >
-                      <label className="text-xs text-muted/70 mb-1.5 block">
-                        {q.label}
-                      </label>
-                      <select
-                        value={signupAnswers[q.id] ?? ""}
-                        onChange={(e) =>
-                          setSignupAnswers((prev) => ({
-                            ...prev,
-                            [q.id]: e.target.value,
-                          }))
-                        }
-                        className="w-full py-2.5 px-3 bg-surface border border-border rounded-lg text-foreground text-sm focus:outline-none focus:border-amber-500/60 focus:ring-1 focus:ring-amber-500/20 appearance-none transition-colors"
-                      >
-                        <option value="" disabled>
-                          Select
-                        </option>
-                        {q.options.map((opt) => (
-                          <option key={opt} value={opt}>
-                            {opt}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-                  );
-                }
-                const isDate = q.id === "birthdate";
-                const maxDate = isDate
-                  ? (() => {
-                      const d = new Date();
-                      d.setFullYear(d.getFullYear() - 18);
-                      return d.toISOString().split("T")[0];
-                    })()
-                  : undefined;
-
-                return (
-                  <div
-                    key={q.id}
-                    className={isFullWidth ? "sm:col-span-2" : ""}
-                  >
-                    <label className="text-xs text-muted/70 mb-1.5 block">
-                      {q.label}
-                    </label>
-                    <input
-                      type={isDate ? "date" : "text"}
-                      max={maxDate}
-                      value={signupAnswers[q.id] ?? ""}
-                      onChange={(e) =>
-                        setSignupAnswers((prev) => ({
-                          ...prev,
-                          [q.id]: e.target.value,
-                        }))
-                      }
-                      placeholder={q.placeholder ?? q.label}
-                      className="w-full py-2.5 px-3 bg-surface border border-border rounded-lg text-foreground placeholder:text-muted/50 text-sm focus:outline-none focus:border-amber-500/60 focus:ring-1 focus:ring-amber-500/20 transition-colors"
-                    />
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        )}
-
         {error && <p className="text-red-400 text-sm">{error}</p>}
 
         <button
           type="button"
           onClick={saveCredentials}
-          disabled={submitting || !canSave}
+          disabled={submitting || !canSaveStep1}
           className="w-full py-3 px-4 rounded-lg font-medium text-sm transition-colors bg-accent text-background hover:bg-accent/90 disabled:bg-accent/20 disabled:text-accent/40 disabled:cursor-not-allowed"
         >
           {submitting ? "Saving..." : "Save credentials"}
         </button>
 
-        {!canSave && (
+        {!canSaveStep1 && (
           <p className="text-xs text-muted/60 text-center -mt-3">
             Select at least two services and provide credentials for each.
           </p>
@@ -966,7 +471,8 @@ export default function OnboardingPage() {
     );
   }
 
-  // --- Step 3: Set Rotation Order ---
+  // --- Step 2: Arrange Queue ---
+
   function handleDragEnd(event: DragEndEvent) {
     const { active, over } = event;
     if (!over || active.id === over.id) return;
@@ -978,70 +484,50 @@ export default function OnboardingPage() {
     });
   }
 
-  async function confirmRotationOrder() {
+  async function confirmQueueOrder() {
     setError("");
     setSubmitting(true);
 
     try {
-      // Build serviceId -> planId map from group selections
-      const plansByServiceId: Record<string, string> = {};
-      for (const [groupId, planId] of Object.entries(selectedPlans)) {
-        const group = groups.find((g) => g.id === groupId);
-        if (group) {
-          plansByServiceId[group.serviceId] = planId;
-        }
-      }
-
       const res = await authFetch("/api/queue", {
         method: "PUT",
         body: JSON.stringify({
           order: queue.map((q) => q.serviceId),
-          plans: plansByServiceId,
         }),
       });
 
       if (!res.ok) {
         const data = await res.json();
-        setError(data.error || "Failed to save rotation order.");
+        setError(data.error || "Failed to save queue order.");
         setSubmitting(false);
         return;
       }
 
       setSubmitting(false);
-      setStep(4);
+      setStep(3);
     } catch {
       setError("Connection failed. Try again.");
       setSubmitting(false);
     }
   }
 
-  function renderStep3() {
+  function renderStep2() {
     return (
       <div className="space-y-8">
         <button
           type="button"
-          onClick={() => setStep(2)}
+          onClick={() => setStep(1)}
           className="text-sm text-muted hover:text-foreground transition-colors"
         >
           &larr; Back
         </button>
         <div>
           <h1 className="text-4xl font-bold tracking-tight text-foreground mb-4">
-            Your rotation queue
+            Arrange your queue
           </h1>
           <p className="text-muted leading-relaxed">
-            Reorder your services. Top of the list goes first. Each service runs
-            one month, then the next one kicks in. The queue loops.
-          </p>
-        </div>
-
-        <div className="border-l-4 border-amber-500 bg-amber-500/[0.08] rounded-r-lg px-5 py-4">
-          <p className="text-amber-200 text-sm font-medium leading-relaxed">
-            Cancel your existing streaming subscriptions before we start.
-          </p>
-          <p className="text-muted text-sm mt-2 leading-relaxed">
-            We handle everything from here. Anything you leave running means
-            you&apos;re paying twice.
+            Drag to reorder. Top of the list is where we start. When you ask
+            us to cancel one service and resume the next, we follow this order.
           </p>
         </div>
 
@@ -1077,324 +563,160 @@ export default function OnboardingPage() {
         </DndContext>
 
         <p className="text-xs text-muted/60">
-          About two weeks into each cycle, the next service locks in. Reorder
-          anytime before that.
+          You can reorder this anytime from the dashboard.
         </p>
 
         {error && <p className="text-red-400 text-sm">{error}</p>}
 
         <button
           type="button"
-          onClick={confirmRotationOrder}
+          onClick={confirmQueueOrder}
           disabled={submitting}
           className="w-full py-3 px-4 bg-accent text-background font-semibold rounded hover:bg-accent/90 transition-colors disabled:opacity-50"
         >
-          {submitting ? "Saving..." : "Confirm rotation order"}
+          {submitting ? "Saving..." : "Confirm queue order"}
         </button>
-
-        <div className="text-sm text-muted leading-relaxed text-center">
-          <p>Just DM <span className="text-foreground font-medium">status</span></p>
-          <p>to your friendly <span className="text-foreground font-medium">{BOT_NAME}</span></p>
-          <p>as services rotate.</p>
-        </div>
-
-        {BOT_NPUB && (
-          <p className="text-center text-xs text-muted">
-            {BOT_NAME}:{" "}
-            <button
-              type="button"
-              onClick={() => {
-                navigator.clipboard.writeText(BOT_NPUB);
-                setNpubCopied(true);
-                setTimeout(() => setNpubCopied(false), 2000);
-              }}
-              className="font-mono text-muted hover:text-foreground transition-colors"
-            >
-              {npubCopied ? "Copied!" : BOT_NPUB}
-            </button>
-          </p>
-        )}
       </div>
     );
   }
 
-  // --- Step 4: Payment ---
-  async function createInvoice() {
+  // --- Step 3: Consent ---
+
+  async function handleConsent() {
     setError("");
     setSubmitting(true);
-
     try {
-      // Request enough to cover the shortfall (platform fee + first gift card)
-      const amount = shortfallSats > 0 ? shortfallSats : totalNeededSats;
-      const res = await authFetch("/api/credits/prepay", {
+      const authOk = await authFetch("/api/consent", {
         method: "POST",
-        body: JSON.stringify({ amount_sats: amount }),
+        body: JSON.stringify({ consentType: "authorization" }),
       });
-
-      if (!res.ok) {
-        const data = await res.json();
-        setError(data.error || "Failed to create invoice.");
+      if (!authOk.ok) {
+        setError("Failed to record authorization. Try again.");
         setSubmitting(false);
         return;
       }
 
-      const data = await res.json();
-      setInvoice(data);
-      setSubmitting(false);
-    } catch {
-      setError("Connection failed. Try again.");
-      setSubmitting(false);
-    }
-  }
-
-  async function copyInvoice() {
-    if (!invoice) return;
-    try {
-      await navigator.clipboard.writeText(invoice.bolt11 ?? invoice.checkoutLink);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    } catch {
-      // Clipboard API not available
-    }
-  }
-
-  async function activateAccount() {
-    setActivating(true);
-    setError("");
-    try {
-      const res = await authFetch("/api/unpause", { method: "POST" });
-      if (res.ok) {
-        router.push("/dashboard");
-      } else if (res.status === 402) {
-        const data = await res.json();
-        setError(
-          `Not enough sats. You need ${formatSats(data.shortfall_sats)} more sats to start.`
-        );
-      } else {
-        const data = await res.json().catch(() => ({}));
-        setError(data.error || "Failed to activate. Try again.");
+      const confirmOk = await authFetch("/api/consent", {
+        method: "POST",
+        body: JSON.stringify({ consentType: "confirmation" }),
+      });
+      if (!confirmOk.ok) {
+        setError("Failed to record confirmation. Try again.");
+        setSubmitting(false);
+        return;
       }
+
+      router.push("/dashboard");
     } catch {
       setError("Connection failed. Try again.");
-    } finally {
-      setActivating(false);
+      setSubmitting(false);
     }
   }
 
-  function renderStep4() {
-    // After payment confirmed, activate and show success
-    if (paid) {
-      return (
-        <div className="space-y-8">
-          <div>
-            <h1 className="text-4xl font-bold tracking-tight text-foreground mb-4">
-              You&apos;re in.
-            </h1>
-            <p className="text-muted leading-relaxed">
-              We&apos;re getting your first service ready now.
-              Expect it to be active within 24 hours.
-            </p>
-          </div>
-
-          {error && <p className="text-red-400 text-sm">{error}</p>}
-
-          <button
-            type="button"
-            onClick={activateAccount}
-            disabled={activating}
-            className="w-full py-3 px-4 bg-accent text-background font-semibold rounded hover:bg-accent/90 transition-colors disabled:opacity-50"
-          >
-            {activating ? "Activating..." : "Go to dashboard"}
-          </button>
-        </div>
-      );
-    }
-
-    // Show invoice QR code while waiting for payment
-    if (invoice) {
-      return (
-        <div className="space-y-8">
-          <div>
-            <h1 className="text-4xl font-bold tracking-tight text-foreground mb-4">
-              Scan to pay
-            </h1>
-            <p className="text-muted leading-relaxed">
-              Pay from any Lightning wallet. We&apos;ll have your first
-              service up within 24 hours.
-            </p>
-          </div>
-
-          {invoice.amount_sats && (
-            <p className="text-center text-2xl font-bold text-foreground">
-              {invoice.amount_sats.toLocaleString()} sats
-            </p>
-          )}
-
-          <div className="flex justify-center">
-            <div className="bg-white p-4 rounded">
-              <QRCode value={invoice.bolt11 ?? invoice.checkoutLink} size={200} />
-            </div>
-          </div>
-
-          <button
-            type="button"
-            onClick={copyInvoice}
-            className="w-full py-2 px-4 text-muted border border-border rounded hover:border-muted transition-colors text-sm"
-          >
-            {copied ? "Copied" : "Copy invoice"}
-          </button>
-
-          <div className="flex items-center justify-center gap-2 text-muted text-sm py-3">
-            <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24" fill="none">
-              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-            </svg>
-            Waiting for payment...
-          </div>
-
-          <a
-            href={invoice.checkoutLink}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="block text-center text-xs text-muted/50 hover:text-muted transition-colors"
-          >
-            Open checkout page instead
-          </a>
-        </div>
-      );
-    }
-
-    // Loading balance data
-    if (!balanceLoaded) {
-      return (
-        <div className="space-y-8">
-          <p className="text-muted">Loading...</p>
-        </div>
-      );
-    }
-
-    // User already has enough balance: just activate
-    if (hasSufficientBalance) {
-      return (
-        <div className="space-y-8">
-          <button
-            type="button"
-            onClick={() => setStep(3)}
-            className="text-sm text-muted hover:text-foreground transition-colors"
-          >
-            &larr; Back
-          </button>
-          <div>
-            <h1 className="text-4xl font-bold tracking-tight text-foreground mb-4">
-              Ready to start
-            </h1>
-            <p className="text-muted leading-relaxed">
-              You have enough sats to start. Your first rotation will begin shortly.
-            </p>
-          </div>
-
-          <div className="bg-surface border border-border rounded p-4">
-            <div className="space-y-2 text-sm">
-              <div className="flex justify-between">
-                <span className="text-muted">Your balance</span>
-                <span className="text-foreground font-medium">
-                  {formatSats(creditSats)} sats
-                </span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-muted">Platform fee</span>
-                <span className="text-foreground">
-                  {formatSats(platformFeeSats)} sats/mo
-                </span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-muted">
-                  First gift card ({queue[0]?.groupLabel})
-                </span>
-                <span className="text-foreground">
-                  ~{formatSats(giftCardCostSats)} sats
-                </span>
-              </div>
-            </div>
-          </div>
-
-          {error && <p className="text-red-400 text-sm">{error}</p>}
-
-          <button
-            type="button"
-            onClick={activateAccount}
-            disabled={activating}
-            className="w-full py-3 px-4 bg-accent text-background font-semibold rounded hover:bg-accent/90 transition-colors disabled:opacity-50"
-          >
-            {activating ? "Activating..." : "Start my rotation"}
-          </button>
-        </div>
-      );
-    }
-
-    // Insufficient balance: show breakdown and payment flow
+  function renderStep3() {
     return (
       <div className="space-y-8">
         <button
           type="button"
-          onClick={() => setStep(3)}
+          onClick={() => setStep(2)}
           className="text-sm text-muted hover:text-foreground transition-colors"
         >
           &larr; Back
         </button>
         <div>
           <h1 className="text-4xl font-bold tracking-tight text-foreground mb-4">
-            Add sats to start
+            Almost there
           </h1>
           <p className="text-muted leading-relaxed">
-            One Lightning invoice covers your platform fee and the first gift
-            card. We&apos;ll have your first service up within 24 hours.
+            Read and accept the terms below to finish setup.
           </p>
         </div>
 
-        {/* Breakdown */}
-        <div className="bg-surface border border-border rounded p-4">
-          <div className="space-y-2 text-sm">
-            <div className="flex justify-between">
-              <span className="text-muted">Platform fee</span>
-              <span className="text-foreground">
-                {formatSats(platformFeeSats)} sats
+        <div className="bg-surface border border-border rounded p-6 space-y-4">
+          <h3 className="text-lg font-semibold text-foreground">
+            How it works
+          </h3>
+          <ul className="space-y-3 text-sm text-muted leading-relaxed">
+            <li className="flex gap-2">
+              <span className="text-muted/60 shrink-0">&bull;</span>
+              <span>
+                You keep your own streaming accounts. We cancel and resume
+                subscriptions on your behalf when you ask, for 3,000 sats each.
               </span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-muted">
-                First gift card ({queue[0]?.groupLabel})
+            </li>
+            <li className="flex gap-2">
+              <span className="text-muted/60 shrink-0">&bull;</span>
+              <span>
+                You are charged after each action completes (not before).
               </span>
-              <span className="text-foreground">
-                ~{formatSats(giftCardCostSats)} sats
+            </li>
+            <li className="flex gap-2">
+              <span className="text-muted/60 shrink-0">&bull;</span>
+              <span>
+                Your credentials are encrypted and destroyed immediately if you
+                delete your account.
               </span>
-            </div>
-            {creditSats > 0 && (
-              <div className="flex justify-between">
-                <span className="text-muted">Current balance</span>
-                <span className="text-green-400">
-                  -{formatSats(creditSats)} sats
-                </span>
-              </div>
-            )}
-            <div className="border-t border-border pt-2 mt-2 flex justify-between font-medium">
-              <span className="text-foreground">Amount due</span>
-              <span className="text-foreground">
-                ~{formatSats(shortfallSats)} sats
+            </li>
+            <li className="flex gap-2">
+              <span className="text-muted/60 shrink-0">&bull;</span>
+              <span>
+                We do not share your data with anyone.
               </span>
-            </div>
-          </div>
+            </li>
+          </ul>
         </div>
+
+        <div className="bg-amber-950/40 border border-amber-700/50 rounded p-5 space-y-3">
+          <p className="text-amber-400 font-semibold text-sm">
+            Understand the risks
+          </p>
+          <p className="text-amber-200/70 text-sm leading-relaxed">
+            Using UnsaltedButter to manage your streaming accounts may violate
+            those services&apos; Terms of Service. Streaming providers could
+            suspend or terminate your account at their discretion.
+          </p>
+          <p className="text-amber-200/70 text-sm leading-relaxed">
+            By authorizing us, you acknowledge this risk and agree that
+            UnsaltedButter is not liable for any action a streaming service
+            takes against your account (including suspension,
+            termination, or loss of content) as a result of using this service.
+          </p>
+        </div>
+
+        <div className="bg-surface border-2 border-amber-500 rounded p-5">
+          <p className="text-foreground text-sm leading-relaxed font-bold">
+            You remain responsible for your own subscriptions.
+          </p>
+          <p className="text-muted text-sm mt-2 leading-relaxed">
+            UnsaltedButter acts on your instructions but does not guarantee that
+            every cancel or resume will succeed. Check your streaming accounts
+            periodically to verify.
+          </p>
+        </div>
+
+        <label className="flex items-start gap-3 cursor-pointer">
+          <input
+            type="checkbox"
+            checked={authorized}
+            onChange={(e) => setAuthorized(e.target.checked)}
+            className="w-4 h-4 mt-0.5 rounded border-border bg-surface text-accent accent-amber-500"
+          />
+          <span className="text-sm text-foreground leading-relaxed">
+            I authorize UnsaltedButter to act on my behalf, including
+            cancelling and resuming streaming subscriptions using
+            the credentials I provided.
+          </span>
+        </label>
 
         {error && <p className="text-red-400 text-sm">{error}</p>}
 
         <button
           type="button"
-          onClick={createInvoice}
-          disabled={submitting}
-          className="w-full py-3 px-4 bg-accent text-background font-semibold rounded hover:bg-accent/90 transition-colors disabled:opacity-50"
+          onClick={handleConsent}
+          disabled={submitting || !authorized}
+          className="w-full py-3 px-4 bg-accent text-background font-semibold rounded hover:bg-accent/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
         >
-          {submitting ? "Creating invoice..." : "Pay with Lightning"}
+          {submitting ? "Finishing..." : "Accept and finish"}
         </button>
       </div>
     );
@@ -1407,7 +729,6 @@ export default function OnboardingPage() {
         {step === 1 && renderStep1()}
         {step === 2 && renderStep2()}
         {step === 3 && renderStep3()}
-        {step === 4 && renderStep4()}
       </div>
     </main>
   );

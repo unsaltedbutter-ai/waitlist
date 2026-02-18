@@ -31,102 +31,74 @@ beforeEach(() => {
 });
 
 describe("POST /api/waitlist", () => {
-  it("valid email → 201", async () => {
+  it("valid npub -> 201", async () => {
     // Duplicate check: none found
     vi.mocked(query).mockResolvedValueOnce(mockQueryResult([]));
     // Insert
     vi.mocked(query).mockResolvedValueOnce(mockQueryResult([]));
 
     const res = await POST(
-      makeRequest({
-        contactType: "email",
-        contactValue: "new@example.com",
-        currentServices: ["netflix"],
-      }) as any
+      makeRequest({ nostrNpub: "npub1abc123def456" }) as any
     );
     expect(res.status).toBe(201);
+    const data = await res.json();
+    expect(data.message).toMatch(/in/i);
   });
 
-  it("valid npub → 201", async () => {
-    vi.mocked(query).mockResolvedValueOnce(mockQueryResult([]));
-    vi.mocked(query).mockResolvedValueOnce(mockQueryResult([]));
-
+  it("missing nostrNpub -> 400", async () => {
     const res = await POST(
-      makeRequest({
-        contactType: "npub",
-        contactValue: "npub1abc123def456",
-        currentServices: [],
-      }) as any
-    );
-    expect(res.status).toBe(201);
-  });
-
-  it("invalid contactType → 400", async () => {
-    const res = await POST(
-      makeRequest({
-        contactType: "phone",
-        contactValue: "555-1234",
-        currentServices: [],
-      }) as any
+      makeRequest({}) as any
     );
     expect(res.status).toBe(400);
     const data = await res.json();
-    expect(data.error).toMatch(/email or npub/);
+    expect(data.error).toMatch(/nostrNpub/);
   });
 
-  it("invalid email format → 400", async () => {
+  it("invalid npub format -> 400", async () => {
     const res = await POST(
-      makeRequest({
-        contactType: "email",
-        contactValue: "not-an-email",
-        currentServices: [],
-      }) as any
-    );
-    expect(res.status).toBe(400);
-    const data = await res.json();
-    expect(data.error).toMatch(/email/i);
-  });
-
-  it("invalid npub format → 400", async () => {
-    const res = await POST(
-      makeRequest({
-        contactType: "npub",
-        contactValue: "not-an-npub",
-        currentServices: [],
-      }) as any
+      makeRequest({ nostrNpub: "not-an-npub" }) as any
     );
     expect(res.status).toBe(400);
     const data = await res.json();
     expect(data.error).toMatch(/npub/i);
   });
 
-  it("duplicate email → 409", async () => {
+  it("duplicate npub -> 409", async () => {
     vi.mocked(query).mockResolvedValueOnce(
       mockQueryResult([{ id: "existing" }])
     );
 
     const res = await POST(
-      makeRequest({
-        contactType: "email",
-        contactValue: "taken@example.com",
-        currentServices: [],
-      }) as any
+      makeRequest({ nostrNpub: "npub1already_here" }) as any
     );
     expect(res.status).toBe(409);
+    const data = await res.json();
+    expect(data.error).toMatch(/already/i);
   });
 
-  it("duplicate npub → 409", async () => {
-    vi.mocked(query).mockResolvedValueOnce(
-      mockQueryResult([{ id: "existing" }])
+  it("invalid JSON -> 400", async () => {
+    const req = new Request("http://localhost/api/waitlist", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-forwarded-for": uniqueIp(),
+      },
+      body: "not json",
+    });
+    const res = await POST(req as any);
+    expect(res.status).toBe(400);
+  });
+
+  it("INSERT query receives correct npub", async () => {
+    vi.mocked(query).mockResolvedValueOnce(mockQueryResult([]));
+    vi.mocked(query).mockResolvedValueOnce(mockQueryResult([]));
+
+    await POST(
+      makeRequest({ nostrNpub: "npub1testvalue" }) as any
     );
 
-    const res = await POST(
-      makeRequest({
-        contactType: "npub",
-        contactValue: "npub1already_here",
-        currentServices: [],
-      }) as any
-    );
-    expect(res.status).toBe(409);
+    const insertCall = vi.mocked(query).mock.calls[1];
+    expect(insertCall[0]).toContain("INSERT INTO waitlist");
+    expect(insertCall[1]).toEqual(["npub1testvalue"]);
   });
 });

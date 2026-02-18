@@ -1,9 +1,6 @@
 import { SignJWT, jwtVerify } from "jose";
-import { hash, compare } from "bcryptjs";
 import { NextRequest, NextResponse } from "next/server";
 import { query } from "@/lib/db";
-
-const BCRYPT_COST = 12;
 
 function getJwtSecret(): Uint8Array {
   const secret = process.env.JWT_SECRET;
@@ -29,17 +26,6 @@ export async function verifyToken(
   } catch {
     return null;
   }
-}
-
-export async function hashPassword(password: string): Promise<string> {
-  return hash(password, BCRYPT_COST);
-}
-
-export async function verifyPassword(
-  password: string,
-  hashed: string
-): Promise<boolean> {
-  return compare(password, hashed);
 }
 
 /** True if user has not completed onboarding (onboarded_at is NULL). */

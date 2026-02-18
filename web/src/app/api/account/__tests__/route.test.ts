@@ -7,7 +7,6 @@ const { mockAuthenticateRequest } = vi.hoisted(() => ({
 
 vi.mock("@/lib/db", () => ({
   query: vi.fn(),
-  transaction: vi.fn(),
 }));
 vi.mock("@/lib/auth", () => {
   return {
@@ -37,118 +36,134 @@ vi.mock("@/lib/auth", () => {
   };
 });
 
-import { query, transaction } from "@/lib/db";
-import { DELETE } from "../route";
+import { query } from "@/lib/db";
+import { DELETE, GET } from "../route";
 
-function makeRequest(): Request {
+function makeDeleteRequest(): Request {
   return new Request("http://localhost/api/account", { method: "DELETE" });
+}
+
+function makeGetRequest(): Request {
+  return new Request("http://localhost/api/account", { method: "GET" });
 }
 
 beforeEach(() => {
   vi.mocked(query).mockReset();
-  vi.mocked(transaction).mockReset();
   mockAuthenticateRequest.mockReset();
 });
 
-describe("DELETE /api/account", () => {
-  it("successful delete with credit balance -> 200", async () => {
+describe("GET /api/account", () => {
+  it("returns user info -> 200", async () => {
     mockAuthenticateRequest.mockResolvedValueOnce("user-123");
-    vi.mocked(transaction).mockImplementation(async (cb) => {
-      return cb(vi.mocked(query) as any);
-    });
+    vi.mocked(query).mockResolvedValueOnce(
+      mockQueryResult([{
+        nostr_npub: "npub1abc123",
+        debt_sats: 0,
+        onboarded_at: "2026-01-01T00:00:00Z",
+        created_at: "2025-12-01T00:00:00Z",
+      }])
+    );
 
-    // SELECT user
-    vi.mocked(query).mockResolvedValueOnce(
-      mockQueryResult([{ email: "user@test.com", nostr_npub: null }])
+    const res = await GET(
+      makeGetRequest() as any,
+      { params: Promise.resolve({}) }
     );
-    // SELECT credits
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data.nostrNpub).toBe("npub1abc123");
+    expect(data.debtSats).toBe(0);
+    expect(data.onboardedAt).toBe("2026-01-01T00:00:00Z");
+    expect(data.createdAt).toBe("2025-12-01T00:00:00Z");
+  });
+
+  it("user with debt -> 200 with debtSats", async () => {
+    mockAuthenticateRequest.mockResolvedValueOnce("user-123");
     vi.mocked(query).mockResolvedValueOnce(
-      mockQueryResult([{ credit_sats: "50000" }])
+      mockQueryResult([{
+        nostr_npub: "npub1abc123",
+        debt_sats: 3000,
+        onboarded_at: null,
+        created_at: "2025-12-01T00:00:00Z",
+      }])
     );
-    // INSERT pending_refunds
+
+    const res = await GET(
+      makeGetRequest() as any,
+      { params: Promise.resolve({}) }
+    );
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data.debtSats).toBe(3000);
+    expect(data.onboardedAt).toBeNull();
+  });
+
+  it("user not found -> 404", async () => {
+    mockAuthenticateRequest.mockResolvedValueOnce("user-123");
     vi.mocked(query).mockResolvedValueOnce(mockQueryResult([]));
-    // DELETE users
+
+    const res = await GET(
+      makeGetRequest() as any,
+      { params: Promise.resolve({}) }
+    );
+    expect(res.status).toBe(404);
+  });
+
+  it("unauthenticated -> 401", async () => {
+    mockAuthenticateRequest.mockResolvedValueOnce(null as any);
+
+    const res = await GET(
+      makeGetRequest() as any,
+      { params: Promise.resolve({}) }
+    );
+    expect(res.status).toBe(401);
+    const data = await res.json();
+    expect(data.error).toMatch(/[Uu]nauthorized/);
+  });
+});
+
+describe("DELETE /api/account", () => {
+  it("successful delete -> 200", async () => {
+    mockAuthenticateRequest.mockResolvedValueOnce("user-123");
+
+    // SELECT user exists
+    vi.mocked(query).mockResolvedValueOnce(
+      mockQueryResult([{ id: "user-123" }])
+    );
+    // DELETE users (CASCADE)
     vi.mocked(query).mockResolvedValueOnce(mockQueryResult([]));
 
     const res = await DELETE(
-      makeRequest() as any,
+      makeDeleteRequest() as any,
       { params: Promise.resolve({}) }
     );
     expect(res.status).toBe(200);
     const data = await res.json();
     expect(data.ok).toBe(true);
 
-    // Verify pending_refunds insert was called with correct args
-    const insertCall = vi.mocked(query).mock.calls[2];
-    expect(insertCall[0]).toContain("INSERT INTO pending_refunds");
-    expect(insertCall[1]).toEqual(["user@test.com", 50000]);
+    // Verify the DELETE query was called
+    const deleteCall = vi.mocked(query).mock.calls[1];
+    expect(deleteCall[0]).toContain("DELETE FROM users");
+    expect(deleteCall[1]).toEqual(["user-123"]);
   });
 
-  it("successful delete with zero balance -> 200", async () => {
+  it("user not found -> 404", async () => {
     mockAuthenticateRequest.mockResolvedValueOnce("user-123");
-    vi.mocked(transaction).mockImplementation(async (cb) => {
-      return cb(vi.mocked(query) as any);
-    });
-
-    // SELECT user
-    vi.mocked(query).mockResolvedValueOnce(
-      mockQueryResult([{ email: "zero@test.com", nostr_npub: null }])
-    );
-    // SELECT credits — no rows
-    vi.mocked(query).mockResolvedValueOnce(mockQueryResult([]));
-    // INSERT pending_refunds
-    vi.mocked(query).mockResolvedValueOnce(mockQueryResult([]));
-    // DELETE users
     vi.mocked(query).mockResolvedValueOnce(mockQueryResult([]));
 
     const res = await DELETE(
-      makeRequest() as any,
+      makeDeleteRequest() as any,
       { params: Promise.resolve({}) }
     );
-    expect(res.status).toBe(200);
-
-    // Verify pending_refunds insert has amount_sats=0
-    const insertCall = vi.mocked(query).mock.calls[2];
-    expect(insertCall[0]).toContain("INSERT INTO pending_refunds");
-    expect(insertCall[1]).toEqual(["zero@test.com", 0]);
-  });
-
-  it("nostr-only user -> 200", async () => {
-    mockAuthenticateRequest.mockResolvedValueOnce("user-123");
-    vi.mocked(transaction).mockImplementation(async (cb) => {
-      return cb(vi.mocked(query) as any);
-    });
-
-    // SELECT user — no email, nostr only
-    vi.mocked(query).mockResolvedValueOnce(
-      mockQueryResult([{ email: null, nostr_npub: "abc123hex" }])
-    );
-    // SELECT credits
-    vi.mocked(query).mockResolvedValueOnce(
-      mockQueryResult([{ credit_sats: "1000" }])
-    );
-    // INSERT pending_refunds
-    vi.mocked(query).mockResolvedValueOnce(mockQueryResult([]));
-    // DELETE users
-    vi.mocked(query).mockResolvedValueOnce(mockQueryResult([]));
-
-    const res = await DELETE(
-      makeRequest() as any,
-      { params: Promise.resolve({}) }
-    );
-    expect(res.status).toBe(200);
-
-    // Verify pending_refunds insert uses nostr_npub as contact
-    const insertCall = vi.mocked(query).mock.calls[2];
-    expect(insertCall[0]).toContain("INSERT INTO pending_refunds");
-    expect(insertCall[1]).toEqual(["abc123hex", 1000]);
+    expect(res.status).toBe(404);
+    const data = await res.json();
+    expect(data.error).toMatch(/not found/i);
   });
 
   it("unauthenticated -> 401", async () => {
     mockAuthenticateRequest.mockResolvedValueOnce(null as any);
 
     const res = await DELETE(
-      makeRequest() as any,
+      makeDeleteRequest() as any,
       { params: Promise.resolve({}) }
     );
     expect(res.status).toBe(401);

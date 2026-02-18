@@ -1,7 +1,6 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import Link from "next/link";
 import { useAuth, authFetch } from "@/lib/hooks/use-auth";
 import {
   DndContext,
@@ -35,31 +34,12 @@ interface QueueItem {
   plan_price_cents: number | null;
 }
 
-interface SlotData {
-  slot_number: number;
-  current_service_id: string | null;
-  current_service_name: string | null;
-  next_service_id: string | null;
-  next_service_name: string | null;
-  locked_at: string | null;
-  subscription_status: "active" | "cancel_scheduled" | "signup_scheduled" | null;
-  subscription_end_date: string | null;
-}
-
-type LockInState = "unlocked" | "imminent" | "locked";
-
-interface Credits {
-  credit_sats: number;
-  credit_usd_cents: number;
-  recent_transactions: Transaction[];
-}
-
-interface Transaction {
+interface JobRecord {
   id: string;
-  type: string;
-  amount_sats: number;
-  balance_after_sats: number;
-  description: string;
+  service_name: string;
+  flow_type: string;
+  status: string;
+  completed_at: string | null;
   created_at: string;
 }
 
@@ -78,10 +58,6 @@ function formatDate(iso: string): string {
 
 function formatSats(n: number): string {
   return n.toLocaleString("en-US");
-}
-
-function centsToDollars(cents: number): string {
-  return (cents / 100).toFixed(2);
 }
 
 function statusColor(
@@ -106,64 +82,36 @@ function statusLabel(status: QueueItem["subscription_status"]): string {
     case "cancel_scheduled":
       return "Cancelling";
     case "signup_scheduled":
-      return "Signing up";
+      return "Resuming";
     default:
       return "Queued";
   }
 }
 
-function activeDescription(item: QueueItem): string {
-  const date = item.subscription_end_date
-    ? formatDate(item.subscription_end_date)
-    : null;
-
-  switch (item.subscription_status) {
-    case "active":
-      return date
-        ? `Active through ~${date}`
-        : "Active";
-    case "cancel_scheduled":
-      return date
-        ? `Cancel pending, ends ~${date}`
-        : "Cancel pending";
-    case "signup_scheduled":
-      return "Signing up now";
+function jobStatusBadge(status: string): string {
+  switch (status) {
+    case "completed":
+      return "bg-green-900/50 text-green-400 border border-green-700";
+    case "failed":
+    case "dead_letter":
+      return "bg-red-900/50 text-red-400 border border-red-700";
+    case "in_progress":
+    case "claimed":
+      return "bg-blue-900/50 text-blue-400 border border-blue-700";
     default:
-      return "Queued";
+      return "bg-neutral-800/50 text-neutral-400 border border-neutral-700";
   }
 }
 
-/** Determine lock-in state for a slot. */
-function getLockInState(slot: SlotData): LockInState {
-  // If locked_at is set, the gift card has been purchased
-  if (slot.locked_at) return "locked";
-
-  // If there's an active subscription, check how far along we are
-  if (slot.subscription_status === "active" && slot.subscription_end_date) {
-    // Lock-in happens around day 14. If cancel is already scheduled, it's imminent or locked.
-    return "unlocked";
-  }
-
-  if (slot.subscription_status === "cancel_scheduled") {
-    return "imminent";
-  }
-
-  if (slot.subscription_status === "signup_scheduled") {
-    return "imminent";
-  }
-
-  return "unlocked";
-}
-
-/** Border class for lock-in state. */
-function lockInBorderClass(state: LockInState): string {
-  switch (state) {
-    case "locked":
-      return "border-green-600";
-    case "imminent":
-      return "border-amber-600";
+function flowTypeLabel(flowType: string): string {
+  switch (flowType) {
+    case "cancel":
+      return "Cancel";
+    case "signup":
+    case "resume":
+      return "Resume";
     default:
-      return "border-border";
+      return flowType;
   }
 }
 
@@ -184,7 +132,7 @@ function userStatusLabel(status: string): string {
     case "paused":
       return "Paused";
     case "auto_paused":
-      return "Paused (low balance)";
+      return "Paused (debt)";
     default:
       return status;
   }
@@ -246,13 +194,6 @@ function SortableItem({ item }: SortableItemProps) {
       <span className="flex-1 text-foreground font-medium min-w-0 truncate">
         {item.service_name}
       </span>
-      {item.plan_name && (
-        <span className="text-muted/60 text-sm shrink-0">
-          {item.plan_name}
-          {item.plan_price_cents != null &&
-            `  $${(item.plan_price_cents / 100).toFixed(2)}/mo`}
-        </span>
-      )}
       {item.subscription_status && (
         <span
           className={`text-xs font-medium px-2 py-0.5 rounded shrink-0 ${statusColor(item.subscription_status)}`}
@@ -265,7 +206,7 @@ function SortableItem({ item }: SortableItemProps) {
 }
 
 // ---------------------------------------------------------------------------
-// PinnedItem (non-draggable, locked/imminent queue item)
+// PinnedItem (non-draggable, active/scheduled queue item)
 // ---------------------------------------------------------------------------
 
 interface PinnedItemProps {
@@ -290,134 +231,12 @@ function PinnedItem({ item }: PinnedItemProps) {
       <span className="flex-1 text-foreground font-medium min-w-0 truncate">
         {item.service_name}
       </span>
-      {item.plan_name && (
-        <span className="text-muted/60 text-sm shrink-0">
-          {item.plan_name}
-          {item.plan_price_cents != null &&
-            `  $${(item.plan_price_cents / 100).toFixed(2)}/mo`}
-        </span>
-      )}
       {item.subscription_status && (
         <span
           className={`text-xs font-medium px-2 py-0.5 rounded shrink-0 ${statusColor(item.subscription_status)}`}
         >
           {statusLabel(item.subscription_status)}
         </span>
-      )}
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// SlotCard
-// ---------------------------------------------------------------------------
-
-interface SlotCardProps {
-  slot: SlotData;
-  slotLabel: string;
-  onStay: (serviceId: string, serviceName: string) => void;
-  onSkip: (serviceId: string, serviceName: string) => void;
-  onSendBackToQueue: (serviceId: string) => void;
-}
-
-function SlotCard({ slot, slotLabel, onStay, onSkip, onSendBackToQueue }: SlotCardProps) {
-  const lockInState = getLockInState(slot);
-  const borderClass = lockInBorderClass(lockInState);
-
-  const hasCurrentService = slot.current_service_id && slot.current_service_name;
-  const hasNextService = slot.next_service_id && slot.next_service_name;
-
-  return (
-    <div className={`bg-surface border ${borderClass} rounded p-6`}>
-      <h2 className="text-sm font-medium text-muted mb-4">
-        {slotLabel}
-      </h2>
-
-      {hasCurrentService ? (
-        <div>
-          <div className="flex items-center gap-3 mb-2">
-            <span className="text-2xl font-bold text-foreground">
-              {slot.current_service_name}
-            </span>
-            {slot.subscription_status && (
-              <span
-                className={`text-xs font-medium px-2 py-0.5 rounded ${statusColor(slot.subscription_status)}`}
-              >
-                {statusLabel(slot.subscription_status)}
-              </span>
-            )}
-          </div>
-
-          <p className="text-muted text-sm mb-4">
-            {activeDescription({
-              service_id: slot.current_service_id!,
-              service_name: slot.current_service_name!,
-              position: 0,
-              subscription_status: slot.subscription_status,
-              subscription_end_date: slot.subscription_end_date,
-              plan_name: null,
-              plan_price_cents: null,
-            })}
-          </p>
-
-          <div className="flex gap-3">
-            <button
-              type="button"
-              onClick={() =>
-                onStay(slot.current_service_id!, slot.current_service_name!)
-              }
-              className="py-2 px-4 bg-accent text-background font-semibold rounded hover:bg-accent/90 transition-colors text-sm"
-            >
-              Stay
-            </button>
-            <button
-              type="button"
-              onClick={() =>
-                onSkip(slot.current_service_id!, slot.current_service_name!)
-              }
-              className="py-2 px-4 bg-surface border border-border text-foreground font-semibold rounded hover:border-muted transition-colors text-sm"
-            >
-              Skip
-            </button>
-          </div>
-        </div>
-      ) : (
-        <p className="text-muted text-sm">
-          No active subscription in this slot.
-        </p>
-      )}
-
-      {/* Next service info */}
-      {hasNextService && (
-        <div className="mt-4 pt-4 border-t border-border">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <div className="min-w-0">
-              <span className="text-xs font-medium text-muted">Next up: </span>
-              <span className="text-sm font-medium text-foreground">
-                {slot.next_service_name}
-              </span>
-              {lockInState === "locked" && (
-                <span className="ml-2 text-xs font-medium px-2 py-0.5 rounded bg-green-900/50 text-green-400 border border-green-700">
-                  Locked in
-                </span>
-              )}
-              {lockInState === "imminent" && (
-                <span className="ml-2 text-xs font-medium px-2 py-0.5 rounded bg-amber-900/50 text-amber-400 border border-amber-700">
-                  Locking soon
-                </span>
-              )}
-            </div>
-            {lockInState === "unlocked" && (
-              <button
-                type="button"
-                onClick={() => onSendBackToQueue(slot.next_service_id!)}
-                className="shrink-0 py-1.5 px-3 bg-surface border border-border text-muted font-medium rounded hover:border-muted hover:text-foreground transition-colors text-xs"
-              >
-                Send back to queue
-              </button>
-            )}
-          </div>
-        </div>
       )}
     </div>
   );
@@ -431,25 +250,14 @@ export default function DashboardPage() {
   const { user, loading: authLoading, logout } = useAuth();
 
   const [queue, setQueue] = useState<QueueItem[]>([]);
-  const [slots, setSlots] = useState<SlotData[]>([]);
-  const [credits, setCredits] = useState<Credits | null>(null);
-  const [platformFeeSats, setPlatformFeeSats] = useState<number | null>(null);
+  const [jobs, setJobs] = useState<JobRecord[]>([]);
+  const [debtSats, setDebtSats] = useState(0);
   const [loadingData, setLoadingData] = useState(true);
   const [error, setError] = useState("");
 
   // Pause/unpause
   const [pauseLoading, setPauseLoading] = useState(false);
   const [unpauseError, setUnpauseError] = useState("");
-  const [shortfallSats, setShortfallSats] = useState<number | null>(null);
-  const [nextServiceName, setNextServiceName] = useState<string | null>(null);
-
-  // Confirmation dialogs
-  const [confirmAction, setConfirmAction] = useState<{
-    type: "stay" | "skip";
-    serviceId: string;
-    serviceName: string;
-  } | null>(null);
-  const [actionLoading, setActionLoading] = useState(false);
 
   // Nostr npub copy
   const [npubCopied, setNpubCopied] = useState(false);
@@ -464,32 +272,26 @@ export default function DashboardPage() {
     setLoadingData(true);
     setError("");
     try {
-      const [qRes, cRes, sRes, pRes] = await Promise.all([
+      const [qRes, meRes] = await Promise.all([
         authFetch("/api/queue"),
-        authFetch("/api/credits"),
-        authFetch("/api/slots"),
-        fetch("/api/platform-config"),
+        // TODO: GET /api/me should return { debt_sats, recent_jobs }
+        // For now, try fetching it; if it fails, fall back gracefully.
+        authFetch("/api/me").catch(() => null),
       ]);
 
-      if (!qRes.ok || !cRes.ok) {
+      if (!qRes.ok) {
         setError("Failed to load dashboard data.");
         setLoadingData(false);
         return;
       }
 
       const qData = await qRes.json();
-      const cData = await cRes.json();
       setQueue(qData.queue);
-      setCredits(cData);
 
-      if (sRes && sRes.ok) {
-        const sData = await sRes.json();
-        setSlots(sData.slots);
-      }
-
-      if (pRes.ok) {
-        const pData = await pRes.json();
-        setPlatformFeeSats(pData.platform_fee_sats);
+      if (meRes && meRes.ok) {
+        const meData = await meRes.json();
+        setDebtSats(meData.debt_sats ?? 0);
+        setJobs(meData.recent_jobs ?? []);
       }
     } catch {
       setError("Failed to load dashboard data.");
@@ -504,38 +306,10 @@ export default function DashboardPage() {
     }
   }, [authLoading, user, fetchData]);
 
-  // Fetch shortfall when auto_paused
-  const fetchShortfall = useCallback(async () => {
-    if (!user || user.status !== "auto_paused") return;
-    try {
-      const res = await authFetch("/api/required-balance");
-      if (res.ok) {
-        const data = await res.json();
-        setShortfallSats(data.shortfall_sats);
-        setNextServiceName(data.next_service_name);
-      }
-    } catch {
-      // Non-critical, leave null
-    }
-  }, [user]);
-
-  useEffect(() => {
-    fetchShortfall();
-  }, [fetchShortfall]);
-
   // ---------- Derived data ----------
 
-  // Split queue into pinned (active/scheduled) and sortable (queued)
   const pinnedItems = queue.filter(isItemPinned);
   const sortableItems = queue.filter((q) => !isItemPinned(q));
-
-  // For users without slot data, fall back to the old active item detection
-  const activeItem = queue.find(
-    (q) =>
-      q.subscription_status === "active" ||
-      q.subscription_status === "cancel_scheduled" ||
-      q.subscription_status === "signup_scheduled"
-  );
 
   // ---------- Drag and drop ----------
 
@@ -551,7 +325,6 @@ export default function DashboardPage() {
       const { active, over } = event;
       if (!over || active.id === over.id) return;
 
-      // Only reorder within sortable items, then reconstruct full queue
       const oldSortableIndex = sortableItems.findIndex(
         (q) => q.service_id === active.id
       );
@@ -575,70 +348,11 @@ export default function DashboardPage() {
             order: fullReordered.map((q) => q.service_id),
           }),
         });
-        fetchShortfall();
       } catch {
-        // Revert on failure
         setQueue(queue);
       }
     },
-    [queue, pinnedItems, sortableItems, fetchShortfall]
-  );
-
-  // ---------- Stay / Skip ----------
-
-  const handleConfirmAction = useCallback(async () => {
-    if (!confirmAction) return;
-    setActionLoading(true);
-
-    try {
-      const res = await authFetch(
-        `/api/queue/${confirmAction.serviceId}/${confirmAction.type}`,
-        { method: "POST" }
-      );
-      if (!res.ok) {
-        setError(`Failed to ${confirmAction.type} ${confirmAction.serviceName}.`);
-      } else {
-        await fetchData();
-      }
-    } catch {
-      setError(`Failed to ${confirmAction.type} ${confirmAction.serviceName}.`);
-    } finally {
-      setActionLoading(false);
-      setConfirmAction(null);
-    }
-  }, [confirmAction, fetchData]);
-
-  // ---------- Send back to queue ----------
-
-  const handleSendBackToQueue = useCallback(
-    async (serviceId: string) => {
-      // Move the service from next_service on its slot back to the end of the queue.
-      const currentOrder = queue.map((q) => q.service_id);
-      const filtered = currentOrder.filter((id) => id !== serviceId);
-      const newOrder = [...filtered, serviceId];
-
-      // Optimistic update
-      const serviceInQueue = queue.find((q) => q.service_id === serviceId);
-      if (serviceInQueue) {
-        const reordered = [
-          ...queue.filter((q) => q.service_id !== serviceId),
-          { ...serviceInQueue, subscription_status: null as QueueItem["subscription_status"], subscription_end_date: null },
-        ];
-        setQueue(reordered);
-      }
-
-      try {
-        await authFetch("/api/queue", {
-          method: "PUT",
-          body: JSON.stringify({ order: newOrder }),
-        });
-        await fetchData();
-      } catch {
-        setError("Failed to send service back to queue.");
-        await fetchData(); // Revert by re-fetching
-      }
-    },
-    [queue, fetchData]
+    [queue, pinnedItems, sortableItems]
   );
 
   // ---------- Pause / Unpause ----------
@@ -649,7 +363,6 @@ export default function DashboardPage() {
     try {
       const res = await authFetch("/api/pause", { method: "POST" });
       if (res.ok) {
-        // Reload page to reflect new status
         window.location.reload();
       } else {
         const data = await res.json().catch(() => ({}));
@@ -669,14 +382,9 @@ export default function DashboardPage() {
       const res = await authFetch("/api/unpause", { method: "POST" });
       if (res.ok) {
         window.location.reload();
-      } else if (res.status === 402) {
-        const data = await res.json();
-        setUnpauseError(
-          `Not enough sats. You need ${formatSats(data.shortfall_sats)} more sats to resume.`
-        );
       } else {
         const data = await res.json().catch(() => ({}));
-        setUnpauseError(data.error || "Failed to unpause.");
+        setUnpauseError(data.error || "Failed to resume.");
       }
     } catch {
       setUnpauseError("Connection failed.");
@@ -719,151 +427,40 @@ export default function DashboardPage() {
 
   // ---------- Render ----------
 
-  const hasSlots = slots.length > 0;
-
   return (
     <main className="min-h-screen">
       <div className="max-w-2xl mx-auto px-4 py-12 space-y-8">
         <h1 className="text-4xl font-bold tracking-tight text-foreground">
-          Your rotation
+          Dashboard
         </h1>
 
         {error && <p className="text-red-400 text-sm">{error}</p>}
+
+        {/* Outstanding debt warning */}
+        {debtSats > 0 && (
+          <div className="bg-red-900/30 border border-red-700 rounded p-4">
+            <p className="text-red-300 text-sm font-medium">
+              You have an outstanding balance of {formatSats(debtSats)} sats.
+              Pay via the Nostr bot to continue using the service.
+            </p>
+          </div>
+        )}
 
         {loadingData ? (
           <p className="text-muted">Loading your data...</p>
         ) : (
           <>
             {/* --------------------------------------------------------- */}
-            {/* 1. Slot Cards (or single active subscription card)        */}
-            {/* --------------------------------------------------------- */}
-            {hasSlots ? (
-              <div>
-                {slots.map((slot) => (
-                  <SlotCard
-                    key={slot.slot_number}
-                    slot={slot}
-                    slotLabel="Current subscription"
-                    onStay={(serviceId, serviceName) =>
-                      setConfirmAction({ type: "stay", serviceId, serviceName })
-                    }
-                    onSkip={(serviceId, serviceName) =>
-                      setConfirmAction({ type: "skip", serviceId, serviceName })
-                    }
-                    onSendBackToQueue={handleSendBackToQueue}
-                  />
-                ))}
-              </div>
-            ) : (
-              /* Fallback: no slots exist yet (pre-orchestrator) */
-              <section className="bg-surface border border-border rounded p-6">
-                <h2 className="text-sm font-medium text-muted mb-4">
-                  Current subscription
-                </h2>
-
-                {activeItem ? (
-                  <div>
-                    <div className="flex items-center gap-3 mb-2">
-                      <span className="text-2xl font-bold text-foreground">
-                        {activeItem.service_name}
-                      </span>
-                      <span
-                        className={`text-xs font-medium px-2 py-0.5 rounded ${statusColor(activeItem.subscription_status)}`}
-                      >
-                        {statusLabel(activeItem.subscription_status)}
-                      </span>
-                    </div>
-
-                    <p className="text-muted text-sm mb-4">
-                      {activeDescription(activeItem)}
-                    </p>
-
-                    <div className="flex gap-3">
-                      <button
-                        type="button"
-                        onClick={() =>
-                          setConfirmAction({
-                            type: "stay",
-                            serviceId: activeItem.service_id,
-                            serviceName: activeItem.service_name,
-                          })
-                        }
-                        className="py-2 px-4 bg-accent text-background font-semibold rounded hover:bg-accent/90 transition-colors text-sm"
-                      >
-                        Stay
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() =>
-                          setConfirmAction({
-                            type: "skip",
-                            serviceId: activeItem.service_id,
-                            serviceName: activeItem.service_name,
-                          })
-                        }
-                        className="py-2 px-4 bg-surface border border-border text-foreground font-semibold rounded hover:border-muted transition-colors text-sm"
-                      >
-                        Skip
-                      </button>
-                    </div>
-                  </div>
-                ) : (
-                  <p className="text-muted text-sm">
-                    No active subscription right now.
-                  </p>
-                )}
-              </section>
-            )}
-
-            {/* --------------------------------------------------------- */}
-            {/* Confirmation Dialog                                       */}
-            {/* --------------------------------------------------------- */}
-            {confirmAction && (
-              <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
-                <div className="bg-surface border border-border rounded p-6 max-w-sm w-full mx-4 space-y-4">
-                  <h3 className="text-lg font-bold text-foreground">
-                    {confirmAction.type === "stay"
-                      ? `Stay on ${confirmAction.serviceName}?`
-                      : `Skip ${confirmAction.serviceName}?`}
-                  </h3>
-                  <p className="text-sm text-muted">
-                    {confirmAction.type === "stay"
-                      ? `This will keep your ${confirmAction.serviceName} subscription active and delay rotation.`
-                      : `This will cancel ${confirmAction.serviceName} and move to the next service in your queue.`}
-                  </p>
-                  <div className="flex gap-3 justify-end">
-                    <button
-                      type="button"
-                      onClick={() => setConfirmAction(null)}
-                      disabled={actionLoading}
-                      className="py-2 px-4 bg-surface border border-border text-foreground rounded hover:border-muted transition-colors text-sm"
-                    >
-                      Cancel
-                    </button>
-                    <button
-                      type="button"
-                      onClick={handleConfirmAction}
-                      disabled={actionLoading}
-                      className="py-2 px-4 bg-accent text-background font-semibold rounded hover:bg-accent/90 transition-colors disabled:opacity-50 text-sm"
-                    >
-                      {actionLoading ? "Processing..." : "Confirm"}
-                    </button>
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {/* --------------------------------------------------------- */}
-            {/* 2. Rotation Queue                                         */}
+            {/* 1. Rotation Queue                                         */}
             {/* --------------------------------------------------------- */}
             <section className="bg-surface border border-border rounded p-6">
               <h2 className="text-sm font-medium text-muted mb-4">
-                Rotation queue
+                Your queue
               </h2>
 
               {queue.length === 0 ? (
                 <p className="text-muted text-sm">
-                  No services in your queue. Add at least two to start rotating.
+                  No services in your queue. Add services from settings.
                 </p>
               ) : queue.length === 1 ? (
                 <>
@@ -874,13 +471,6 @@ export default function DashboardPage() {
                     <span className="flex-1 text-foreground font-medium min-w-0 truncate">
                       {queue[0].service_name}
                     </span>
-                    {queue[0].plan_name && (
-                      <span className="text-muted/60 text-sm shrink-0">
-                        {queue[0].plan_name}
-                        {queue[0].plan_price_cents != null &&
-                          `  $${(queue[0].plan_price_cents / 100).toFixed(2)}/mo`}
-                      </span>
-                    )}
                     {queue[0].subscription_status && (
                       <span
                         className={`text-xs font-medium px-2 py-0.5 rounded shrink-0 ${statusColor(queue[0].subscription_status)}`}
@@ -895,12 +485,12 @@ export default function DashboardPage() {
                 </>
               ) : (
                 <div className="space-y-2">
-                  {/* Pinned items (active/scheduled) - not draggable */}
+                  {/* Pinned items (active/scheduled) */}
                   {pinnedItems.map((item) => (
                     <PinnedItem key={item.service_id} item={item} />
                   ))}
 
-                  {/* Sortable items (queued) - draggable */}
+                  {/* Sortable items (queued) */}
                   {sortableItems.length > 0 && (
                     <DndContext
                       sensors={sensors}
@@ -921,72 +511,62 @@ export default function DashboardPage() {
                   )}
                 </div>
               )}
+
+              <p className="text-xs text-muted/60 mt-4">
+                Each cancel or resume costs 3,000 sats. Drag to reorder queued services.
+              </p>
             </section>
 
             {/* --------------------------------------------------------- */}
-            {/* 3. Service Credits                                        */}
+            {/* 2. Recent Job History                                      */}
             {/* --------------------------------------------------------- */}
-            {credits && (
-              <section className="bg-surface border border-border rounded p-6">
-                <h2 className="text-sm font-medium text-muted mb-4">
-                  Service credits
-                </h2>
+            <section className="bg-surface border border-border rounded p-6">
+              <h2 className="text-sm font-medium text-muted mb-4">
+                Recent jobs
+              </h2>
 
-                <div className="flex items-baseline gap-2 mb-4">
-                  <span className="text-2xl font-bold text-foreground">
-                    {formatSats(credits.credit_sats)} sats
-                  </span>
-                  <span className="text-muted text-sm">
-                    (~${centsToDollars(credits.credit_usd_cents)})
-                  </span>
-                </div>
-
-                <Link
-                  href="/dashboard/add-credits"
-                  className="inline-block py-2 px-4 bg-accent text-background font-semibold rounded hover:bg-accent/90 transition-colors text-sm mb-6"
-                >
-                  Add credits
-                </Link>
-
-                {credits.recent_transactions.length > 0 && (
-                  <div>
-                    <h3 className="text-sm font-medium text-muted mb-2">
-                      Recent transactions
-                    </h3>
-                    <div className="space-y-1">
-                      {credits.recent_transactions.map((tx) => (
-                        <div
-                          key={tx.id}
-                          className="flex items-center justify-between gap-3 text-sm py-2 border-b border-border last:border-b-0"
-                        >
-                          <div className="min-w-0">
-                            <span className="text-foreground truncate block">
-                              {tx.description}
+              {jobs.length > 0 ? (
+                <div className="overflow-x-auto">
+                  <table className="w-full">
+                    <thead>
+                      <tr className="border-b border-border">
+                        <th className="text-left text-xs font-medium text-muted px-3 py-2">Service</th>
+                        <th className="text-left text-xs font-medium text-muted px-3 py-2">Action</th>
+                        <th className="text-left text-xs font-medium text-muted px-3 py-2">Status</th>
+                        <th className="text-left text-xs font-medium text-muted px-3 py-2">Date</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {jobs.map((job) => (
+                        <tr key={job.id} className="border-b border-border/50">
+                          <td className="px-3 py-2 text-sm text-foreground">
+                            {job.service_name}
+                          </td>
+                          <td className="px-3 py-2 text-sm text-muted">
+                            {flowTypeLabel(job.flow_type)}
+                          </td>
+                          <td className="px-3 py-2">
+                            <span className={`text-xs font-medium px-2 py-0.5 rounded ${jobStatusBadge(job.status)}`}>
+                              {job.status}
                             </span>
-                            <span className="text-muted text-xs">
-                              {formatDate(tx.created_at)}
-                            </span>
-                          </div>
-                          <span
-                            className={`shrink-0 ${
-                              tx.amount_sats >= 0
-                                ? "text-green-400 font-medium"
-                                : "text-red-400 font-medium"
-                            }`}
-                          >
-                            {tx.amount_sats >= 0 ? "+" : ""}
-                            {formatSats(tx.amount_sats)} sats
-                          </span>
-                        </div>
+                          </td>
+                          <td className="px-3 py-2 text-sm text-muted">
+                            {formatDate(job.completed_at ?? job.created_at)}
+                          </td>
+                        </tr>
                       ))}
-                    </div>
-                  </div>
-                )}
-              </section>
-            )}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <p className="text-muted text-sm">
+                  No jobs yet. When you request a cancel or resume, it will show up here.
+                </p>
+              )}
+            </section>
 
             {/* --------------------------------------------------------- */}
-            {/* 4. Account                                                */}
+            {/* 3. Account                                                */}
             {/* --------------------------------------------------------- */}
             <section className="bg-surface border border-border rounded p-6 space-y-6">
               <h2 className="text-sm font-medium text-muted mb-4">Account</h2>
@@ -1027,20 +607,12 @@ export default function DashboardPage() {
 
                 {user.status === "auto_paused" && (
                   <p className="text-sm text-amber-400">
-                    {shortfallSats !== null && shortfallSats > 0
-                      ? `Paused (low balance). Add at least ${formatSats(shortfallSats)} sats to afford the ${nextServiceName ?? "next"} gift card.`
-                      : "Paused (low balance). Add sats to resume automatically."}
+                    Paused due to outstanding debt. Pay your balance to resume.
                   </p>
                 )}
 
                 {unpauseError && (
                   <p className="text-red-400 text-sm">{unpauseError}</p>
-                )}
-
-                {platformFeeSats !== null && (
-                  <div className="text-sm text-muted">
-                    Platform fee: {formatSats(platformFeeSats)} sats/mo
-                  </div>
                 )}
               </div>
 
@@ -1051,7 +623,7 @@ export default function DashboardPage() {
                     {process.env.NEXT_PUBLIC_NOSTR_BOT_NAME}
                   </h3>
                   <p className="text-sm text-muted">
-                    DM for status, queue, skip, stay, or pause commands.
+                    DM for status, queue, cancel, resume, or pause commands.
                   </p>
                   {process.env.NEXT_PUBLIC_NOSTR_BOT_NPUB && (
                     <button

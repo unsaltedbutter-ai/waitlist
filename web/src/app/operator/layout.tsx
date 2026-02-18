@@ -8,7 +8,6 @@ const navLinks = [
   { href: "/operator", label: "Hub" },
   { href: "/operator/jobs", label: "Jobs" },
   { href: "/operator/business", label: "Business" },
-  { href: "/operator/refunds", label: "Refunds" },
   { href: "/operator/waitlist", label: "Waitlist" },
   { href: "/operator/dead-letter", label: "Dead Letter" },
 ];

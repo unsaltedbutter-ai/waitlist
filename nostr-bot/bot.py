@@ -1,4 +1,4 @@
-"""UnsaltedButter Nostr Bot — DM commands + zap topups."""
+"""UnsaltedButter Nostr Bot: DM commands + zap invoice payments."""
 
 import asyncio
 import json
@@ -30,6 +30,7 @@ from nostr_sdk import (
     nip04_decrypt,
 )
 
+import api_client
 import commands
 import db
 import notifications
@@ -57,6 +58,7 @@ class BotNotificationHandler(HandleNotification):
         client: Client,
         start_time: Timestamp,
         zap_provider_pubkey_hex: str,
+        vps_bot_pubkey_hex: str,
     ):
         self._keys = keys
         self._signer = signer
@@ -64,6 +66,7 @@ class BotNotificationHandler(HandleNotification):
         self._start_time = start_time
         self._bot_pubkey_hex = keys.public_key().to_hex()
         self._zap_provider_pubkey_hex = zap_provider_pubkey_hex
+        self._vps_bot_pubkey_hex = vps_bot_pubkey_hex
 
     async def handle(self, relay_url: RelayUrl, subscription_id: str, event: Event):
         kind = event.kind()
@@ -81,7 +84,7 @@ class BotNotificationHandler(HandleNotification):
     async def handle_msg(self, relay_url: RelayUrl, msg: RelayMessage):
         pass
 
-    # ── NIP-04 DM (kind 4) ──────────────────────────────────
+    # -- NIP-04 DM (kind 4) ---------------------------------------------------
 
     async def _handle_nip04_dm(self, event: Event):
         # Skip old events
@@ -93,6 +96,11 @@ class BotNotificationHandler(HandleNotification):
 
         plaintext = nip04_decrypt(self._keys.secret_key(), sender_pk, event.content())
         log.info("NIP-04 DM from %s: %s", sender_hex[:16], plaintext[:80])
+
+        # Check if this is a push notification from the VPS bot
+        if sender_hex == self._vps_bot_pubkey_hex:
+            await self._handle_push_notification(plaintext)
+            return
 
         replies = await self._dispatch_command(sender_hex, plaintext)
         if isinstance(replies, str):
@@ -112,7 +120,7 @@ class BotNotificationHandler(HandleNotification):
         ])
         await self._client.send_event_builder(builder)
 
-    # ── NIP-17 DM (kind 1059 gift wrap) ──────────────────────
+    # -- NIP-17 DM (kind 1059 gift wrap) --------------------------------------
 
     async def _handle_nip17_dm(self, event: Event):
         unwrapped: UnwrappedGift = await UnwrappedGift.from_gift_wrap(self._signer, event)
@@ -131,13 +139,18 @@ class BotNotificationHandler(HandleNotification):
         plaintext = rumor.content()
         log.info("NIP-17 DM from %s: %s", sender_hex[:16], plaintext[:80])
 
+        # Check if this is a push notification from the VPS bot
+        if sender_hex == self._vps_bot_pubkey_hex:
+            await self._handle_push_notification(plaintext)
+            return
+
         replies = await self._dispatch_command(sender_hex, plaintext)
         if isinstance(replies, str):
             replies = [replies]
         for reply in replies:
             await self._client.send_private_msg(sender, reply, [])
 
-    # ── Zap receipt (kind 9735) ──────────────────────────────
+    # -- Zap receipt (kind 9735) -----------------------------------------------
 
     async def _handle_zap(self, event: Event):
         if event.created_at().as_secs() < self._start_time.as_secs():
@@ -151,7 +164,27 @@ class BotNotificationHandler(HandleNotification):
             event, send_dm, self._bot_pubkey_hex, self._zap_provider_pubkey_hex,
         )
 
-    # ── Command dispatch ─────────────────────────────────────
+    # -- Push notification from VPS bot ----------------------------------------
+
+    async def _handle_push_notification(self, message: str):
+        """Handle a push notification from the VPS private bot."""
+        payload = notifications.parse_push_notification(message)
+        if payload is None:
+            log.debug("Ignoring non-JSON message from VPS bot: %s", message[:80])
+            return
+
+        target_npub, msg = notifications.format_notification(payload)
+        if target_npub and msg:
+            try:
+                pk = PublicKey.parse(target_npub)
+                await self._client.send_private_msg(pk, msg, [])
+                log.info("Forwarded %s notification to %s", payload.get("type"), target_npub[:16])
+            except Exception as e:
+                log.error("Failed to forward notification to %s: %s", target_npub[:16], e)
+        else:
+            log.debug("Push notification type %s produced no message", payload.get("type"))
+
+    # -- Command dispatch ------------------------------------------------------
 
     async def _dispatch_command(self, sender_hex: str, message: str) -> str:
         cmd = message.strip().lower()
@@ -198,9 +231,9 @@ class BotNotificationHandler(HandleNotification):
             base_url = os.getenv("BASE_URL", "https://unsaltedbutter.ai")
             return f"Complete your setup first.\n\n{base_url}/login"
 
-        return await commands.handle_dm(user["id"], user["status"], message)
+        return await commands.handle_dm(sender_hex, message)
 
-    # ── Invite DM sending ─────────────────────────────────────
+    # -- Invite DM sending -----------------------------------------------------
 
     async def _send_pending_invite_dms(self) -> int:
         """Send invite link DMs to waitlist entries flagged invite_dm_pending."""
@@ -228,34 +261,28 @@ class BotNotificationHandler(HandleNotification):
         return count
 
 
-async def _notification_loop(client, signer, shutdown_event, handler):
-    """Check for users needing notifications every 6 hours."""
+async def _invite_check_loop(handler, shutdown_event):
+    """Periodically check for pending invite DMs (backup in case VPS push is missed)."""
     # Wait 60 seconds after startup before first check
     try:
         await asyncio.wait_for(shutdown_event.wait(), timeout=60)
-        return  # Shutdown requested during initial wait
+        return
     except asyncio.TimeoutError:
-        pass  # Expected, continue to first check
+        pass
 
     while not shutdown_event.is_set():
         try:
-            await notifications.check_and_send_notifications(client, signer)
-        except Exception as e:
-            log.error("[notifications] Error: %s", e)
-
-        # Backup: send any pending invite DMs (in case operator forgot to DM "invites")
-        try:
             count = await handler._send_pending_invite_dms()
             if count > 0:
-                log.info("[notifications] Backup invite DM check sent %d DM(s)", count)
+                log.info("[invite_check] Sent %d invite DM(s)", count)
         except Exception as e:
-            log.error("[notifications] Invite DM backup check error: %s", e)
+            log.error("[invite_check] Error: %s", e)
 
         try:
             await asyncio.wait_for(shutdown_event.wait(), timeout=6 * 3600)
-            return  # Shutdown requested
+            return
         except asyncio.TimeoutError:
-            pass  # Expected, time for next check
+            pass
 
 
 async def main():
@@ -269,6 +296,9 @@ async def main():
     # Database
     await db.init_pool()
 
+    # API client
+    api_client.init()
+
     # Nostr keys
     nsec = os.environ["NOSTR_NSEC"]
     keys = Keys.parse(nsec)
@@ -276,11 +306,16 @@ async def main():
     bot_pk = keys.public_key()
     log.info("Bot pubkey: %s", bot_pk.to_bech32())
 
-    # Zap provider pubkey — required for validating zap receipts (NIP-57).
-    # This is the nostr pubkey your Lightning provider (e.g. Alby) uses to
-    # sign kind 9735 events. Get it from your LUD-16 LNURL metadata endpoint.
+    # Zap provider pubkey (required for validating zap receipts per NIP-57)
     zap_provider_pubkey_hex = os.environ["ZAP_PROVIDER_PUBKEY"]
     log.info("Zap provider pubkey: %s...", zap_provider_pubkey_hex[:16])
+
+    # VPS private bot pubkey (for receiving push notifications)
+    vps_bot_pubkey_hex = os.getenv("VPS_BOT_PUBKEY", "")
+    if vps_bot_pubkey_hex:
+        log.info("VPS bot pubkey: %s...", vps_bot_pubkey_hex[:16])
+    else:
+        log.warning("VPS_BOT_PUBKEY not set, push notifications from VPS will be ignored")
 
     # Client
     client = Client(signer)
@@ -295,7 +330,7 @@ async def main():
     # Publish kind 0 profile metadata
     meta_dict = {
         "name": os.getenv("BOT_NAME", "UnsaltedButter Bot"),
-        "about": os.getenv("BOT_ABOUT", "DM me to manage your streaming rotation. Zap me to add credits."),
+        "about": os.getenv("BOT_ABOUT", "DM me to manage your streaming services. Pay-per-action, 3k sats."),
     }
     bot_lud16 = os.getenv("BOT_LUD16", "")
     if bot_lud16:
@@ -304,9 +339,7 @@ async def main():
     await client.set_metadata(metadata)
     log.info("Published kind 0 profile")
 
-    # Subscribe — since=now so we don't reprocess old events.
-    # Gift wraps (kind 1059) have randomized outer timestamps, so the handler
-    # also checks rumor.created_at() as a fallback.
+    # Subscribe (since=now so we don't reprocess old events)
     start_time = Timestamp.now()
     f = (
         Filter()
@@ -332,12 +365,12 @@ async def main():
     for sig in (signal.SIGINT, signal.SIGTERM):
         loop.add_signal_handler(sig, _signal_handler)
 
-    # Run notification handler in a task
-    handler = BotNotificationHandler(keys, signer, client, start_time, zap_provider_pubkey_hex)
+    # Run notification handler
+    handler = BotNotificationHandler(keys, signer, client, start_time, zap_provider_pubkey_hex, vps_bot_pubkey_hex)
     notify_task = asyncio.create_task(client.handle_notifications(handler))
 
-    # Run proactive notification scheduler (includes backup invite DM check)
-    notif_loop_task = asyncio.create_task(_notification_loop(client, signer, shutdown_event, handler))
+    # Run periodic invite check (backup)
+    invite_task = asyncio.create_task(_invite_check_loop(handler, shutdown_event))
 
     log.info("Bot running. Waiting for events...")
 
@@ -347,8 +380,8 @@ async def main():
     # Clean shutdown
     log.info("Shutting down...")
     notify_task.cancel()
-    notif_loop_task.cancel()
-    for task in (notify_task, notif_loop_task):
+    invite_task.cancel()
+    for task in (notify_task, invite_task):
         try:
             await task
         except asyncio.CancelledError:

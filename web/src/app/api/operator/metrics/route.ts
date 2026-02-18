@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { withOperator } from "@/lib/operator-auth";
 import { query } from "@/lib/db";
-import { checkMarginCalls } from "@/lib/margin-call";
 
 export const GET = withOperator(async (_req: NextRequest) => {
   try {
@@ -11,25 +10,22 @@ export const GET = withOperator(async (_req: NextRequest) => {
       perf30d,
       cache7d,
       cache14d,
-      usersByStatus,
-      subsByStatus,
+      totalUsers,
+      jobsByStatus,
       satsIn,
-      satsOut,
+      debtTotal,
       deadLetter,
-      marginCallUsers,
-      creditLiability,
-      refundLiability,
     ] = await Promise.all([
       // Section 1: Jobs Today
       query(`
         SELECT
-          aj.status,
+          j.status,
           ss.display_name AS service_name,
           COUNT(*)::int AS count
-        FROM agent_jobs aj
-        JOIN streaming_services ss ON ss.id = aj.service_id
-        WHERE aj.scheduled_for = CURRENT_DATE
-        GROUP BY aj.status, ss.display_name
+        FROM jobs j
+        JOIN streaming_services ss ON ss.id = j.service_id
+        WHERE j.created_at::date = CURRENT_DATE
+        GROUP BY j.status, ss.display_name
       `),
 
       // Section 2: Agent Performance 7d
@@ -94,54 +90,43 @@ export const GET = withOperator(async (_req: NextRequest) => {
         GROUP BY ss.display_name
       `),
 
-      // Section 4: Business — Users by status
-      query(`SELECT status, COUNT(*)::int AS count FROM users GROUP BY status`),
+      // Section 4: Business, total users
+      query(`SELECT COUNT(*)::int AS count FROM users`),
 
-      // Section 4: Business — Subscriptions by status
+      // Section 4: Business, jobs by status (active/recent)
       query(`
         SELECT status, COUNT(*)::int AS count
-        FROM subscriptions
-        WHERE status IN ('active', 'cancel_scheduled', 'signup_scheduled')
+        FROM jobs
+        WHERE status NOT IN (
+          'completed_paid', 'completed_eventual', 'completed_reneged',
+          'user_skip', 'user_abandon', 'implied_skip'
+        )
         GROUP BY status
       `),
 
-      // Section 4: Business — Sats in (30d)
+      // Section 4: Business, sats in (paid transactions, 30d)
       query(`
-        SELECT COALESCE(SUM(received_amount_sats), 0)::bigint AS sats_in
-        FROM btc_prepayments
-        WHERE status = 'paid' AND created_at > NOW() - INTERVAL '30 days'
+        SELECT COALESCE(SUM(amount_sats), 0)::bigint AS sats_in
+        FROM transactions
+        WHERE status = 'paid' AND paid_at > NOW() - INTERVAL '30 days'
       `),
 
-      // Section 4: Business — Sats out (30d)
+      // Section 4: Business, total user debt
       query(`
-        SELECT COALESCE(SUM(ABS(amount_sats)), 0)::bigint AS sats_out
-        FROM credit_transactions
-        WHERE amount_sats < 0 AND created_at > NOW() - INTERVAL '30 days'
+        SELECT COALESCE(SUM(debt_sats), 0)::bigint AS total_debt
+        FROM users
+        WHERE debt_sats > 0
       `),
 
-      // Section 5: Dead Letter Jobs
+      // Section 5: Stuck/failed jobs (terminal failure states)
       query(`
-        SELECT aj.id, ss.display_name AS service_name, aj.flow_type, aj.error_message, aj.completed_at
-        FROM agent_jobs aj
-        JOIN streaming_services ss ON ss.id = aj.service_id
-        WHERE aj.status = 'dead_letter'
-        ORDER BY aj.completed_at DESC
+        SELECT j.id, ss.display_name AS service_name, j.action AS flow_type,
+               j.status, j.status_updated_at
+        FROM jobs j
+        JOIN streaming_services ss ON ss.id = j.service_id
+        WHERE j.status IN ('completed_reneged', 'user_abandon')
+        ORDER BY j.status_updated_at DESC
         LIMIT 20
-      `),
-
-      // Section 4: Margin call risk count
-      checkMarginCalls().catch(() => []),
-
-      // Section 4: Total credit liability
-      query(`
-        SELECT COALESCE(SUM(credit_sats), 0)::bigint AS total_credit_liability
-        FROM service_credits
-      `),
-
-      // Section 4: Total refund liability
-      query(`
-        SELECT COALESCE(SUM(amount_sats), 0)::bigint AS total_refund_liability
-        FROM pending_refunds
       `),
     ]);
 
@@ -159,11 +144,9 @@ export const GET = withOperator(async (_req: NextRequest) => {
     const byService = Object.entries(serviceMap).map(([service, statuses]) => ({
       service,
       pending: statuses.pending || 0,
-      claimed: statuses.claimed || 0,
-      in_progress: statuses.in_progress || 0,
-      completed: statuses.completed || 0,
-      failed: statuses.failed || 0,
-      dead_letter: statuses.dead_letter || 0,
+      dispatched: statuses.dispatched || 0,
+      active: statuses.active || 0,
+      completed_paid: statuses.completed_paid || 0,
     }));
 
     // Transform performance rows
@@ -182,7 +165,7 @@ export const GET = withOperator(async (_req: NextRequest) => {
         avg_steps: Number(r.avg_steps) || 0,
       }));
 
-    // Transform cache hit rates — merge 7d and 14d by service
+    // Transform cache hit rates: merge 7d and 14d by service
     const cacheMap: Record<string, { pct_7d: number; pct_14d: number }> = {};
     for (const row of cache7d.rows) {
       cacheMap[row.service_name] = {
@@ -203,26 +186,15 @@ export const GET = withOperator(async (_req: NextRequest) => {
       })
     );
 
-    // Status maps
-    const usersStatus: Record<string, number> = {};
-    for (const row of usersByStatus.rows) {
-      usersStatus[row.status] = row.count;
-    }
-    const subsStatus: Record<string, number> = {};
-    for (const row of subsByStatus.rows) {
-      subsStatus[row.status] = row.count;
+    // Active jobs by status
+    const activeJobs: Record<string, number> = {};
+    for (const row of jobsByStatus.rows) {
+      activeJobs[row.status] = row.count;
     }
 
     return NextResponse.json({
       jobs_today: {
-        by_status: {
-          pending: byStatus.pending || 0,
-          claimed: byStatus.claimed || 0,
-          in_progress: byStatus.in_progress || 0,
-          completed: byStatus.completed || 0,
-          failed: byStatus.failed || 0,
-          dead_letter: byStatus.dead_letter || 0,
-        },
+        by_status: byStatus,
         by_service: byService,
       },
       agent_performance: {
@@ -231,20 +203,17 @@ export const GET = withOperator(async (_req: NextRequest) => {
       },
       playbook_cache: playbookCache,
       business: {
-        users: usersStatus,
-        subscriptions: subsStatus,
+        total_users: totalUsers.rows[0]?.count ?? 0,
+        active_jobs: activeJobs,
         sats_in_30d: Number(satsIn.rows[0]?.sats_in ?? 0),
-        sats_out_30d: Number(satsOut.rows[0]?.sats_out ?? 0),
-        margin_call_count: marginCallUsers.length,
-        total_credit_liability: Number(creditLiability.rows[0]?.total_credit_liability ?? 0),
-        total_refund_liability: Number(refundLiability.rows[0]?.total_refund_liability ?? 0),
+        total_debt: Number(debtTotal.rows[0]?.total_debt ?? 0),
       },
-      dead_letter: deadLetter.rows.map((r) => ({
+      problem_jobs: deadLetter.rows.map((r) => ({
         id: r.id,
         service_name: r.service_name,
         flow_type: r.flow_type,
-        error_message: r.error_message,
-        completed_at: r.completed_at,
+        status: r.status,
+        status_updated_at: r.status_updated_at,
       })),
     });
   } catch (err) {

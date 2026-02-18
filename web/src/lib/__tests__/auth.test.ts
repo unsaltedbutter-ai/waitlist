@@ -3,8 +3,6 @@ import { TEST_JWT_SECRET } from "@/__test-utils__/fixtures";
 
 let createToken: typeof import("@/lib/auth").createToken;
 let verifyToken: typeof import("@/lib/auth").verifyToken;
-let hashPassword: typeof import("@/lib/auth").hashPassword;
-let verifyPassword: typeof import("@/lib/auth").verifyPassword;
 let authenticateRequest: typeof import("@/lib/auth").authenticateRequest;
 
 beforeEach(async () => {
@@ -13,8 +11,6 @@ beforeEach(async () => {
   const mod = await import("@/lib/auth");
   createToken = mod.createToken;
   verifyToken = mod.verifyToken;
-  hashPassword = mod.hashPassword;
-  verifyPassword = mod.verifyPassword;
   authenticateRequest = mod.authenticateRequest;
 });
 
@@ -50,26 +46,6 @@ describe("JWT tokens", () => {
 
     const result = await verifyToken(token);
     expect(result).toBeNull();
-  });
-});
-
-describe("password hashing", () => {
-  it("hashPassword → verifyPassword round-trip", async () => {
-    const hashed = await hashPassword("correct-horse-battery");
-    const ok = await verifyPassword("correct-horse-battery", hashed);
-    expect(ok).toBe(true);
-  });
-
-  it("verifyPassword rejects wrong password", async () => {
-    const hashed = await hashPassword("correct-horse-battery");
-    const ok = await verifyPassword("wrong-password", hashed);
-    expect(ok).toBe(false);
-  });
-
-  it("hashPassword produces different hashes for same input (salt)", async () => {
-    const a = await hashPassword("same-password");
-    const b = await hashPassword("same-password");
-    expect(a).not.toBe(b);
   });
 });
 

@@ -3,9 +3,6 @@
 import { useState, useEffect, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 
-type Tab = "nostr" | "email";
-type EmailMode = "login" | "signup";
-
 const TOKEN_KEY = "ub_token";
 const BOT_NPUB = process.env.NEXT_PUBLIC_NOSTR_BOT_NPUB ?? "";
 const BOT_NAME = process.env.NEXT_PUBLIC_NOSTR_BOT_NAME ?? "UnsaltedButter Bot";
@@ -21,10 +18,6 @@ export default function LoginPage() {
 function LoginContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const [tab, setTab] = useState<Tab>("nostr");
-  const [emailMode, setEmailMode] = useState<EmailMode>("login");
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
@@ -57,9 +50,6 @@ function LoginContent() {
       .then((res) => res.json())
       .then((data) => {
         setCodeValid(data.valid === true);
-        if (data.valid) {
-          setEmailMode("signup");
-        }
       })
       .catch(() => {
         setCodeValid(false);
@@ -156,39 +146,6 @@ function LoginContent() {
     }
   }
 
-  async function handleEmailSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    setError("");
-    setLoading(true);
-
-    const endpoint = emailMode === "login" ? "/api/auth/login" : "/api/auth/signup";
-
-    try {
-      const res = await fetch(endpoint, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          email,
-          password,
-          ...(emailMode === "signup" && inviteCode ? { inviteCode } : {}),
-        }),
-      });
-
-      const data = await res.json();
-      if (!res.ok) {
-        setError(data.error || "Authentication failed.");
-        setLoading(false);
-        return;
-      }
-
-      localStorage.setItem(TOKEN_KEY, data.token);
-      router.replace(emailMode === "signup" || data.needsOnboarding ? "/onboarding" : "/dashboard");
-    } catch {
-      setError("Connection failed. Try again.");
-      setLoading(false);
-    }
-  }
-
   return (
     <main className="min-h-screen flex items-center justify-center px-4">
       <div className="max-w-lg w-full">
@@ -203,213 +160,99 @@ function LoginContent() {
           </p>
         </div>
 
-        {/* Tab toggle */}
-        <div className="flex gap-2 mb-8">
-          <button
-            type="button"
-            onClick={() => setTab("nostr")}
-            className={`flex-1 py-2 px-4 rounded text-sm font-medium border transition-colors ${
-              tab === "nostr"
-                ? "bg-accent text-background border-accent"
-                : "bg-surface text-muted border-border hover:border-muted"
-            }`}
-          >
-            Nostr
-          </button>
-          <button
-            type="button"
-            onClick={() => setTab("email")}
-            className={`flex-1 py-2 px-4 rounded text-sm font-medium border transition-colors ${
-              tab === "email"
-                ? "bg-accent text-background border-accent"
-                : "bg-surface text-muted border-border hover:border-muted"
-            }`}
-          >
-            Email
-          </button>
-        </div>
+        <div className="space-y-6">
+          {!otpSent ? (
+            <>
+              <button
+                type="button"
+                onClick={() => setOtpSent(true)}
+                disabled={codeChecking}
+                className="w-full py-3 px-4 bg-accent text-background font-semibold rounded hover:bg-accent/90 transition-colors disabled:opacity-50"
+              >
+                Enter login code
+              </button>
 
-        {/* Nostr tab */}
-        {tab === "nostr" && (
-          <div className="space-y-6">
-            {!otpSent ? (
-              <>
+              <div className="text-sm text-muted leading-relaxed text-center">
+                <p>Just DM <span className="text-foreground font-medium">login</span></p>
+                <p>to your friendly <span className="text-foreground font-medium">{BOT_NAME}</span></p>
+                <p>for your login code.</p>
+              </div>
+
+              <p className="text-center text-xs text-muted">
+                Have a Nostr extension?{" "}
                 <button
                   type="button"
-                  onClick={() => setOtpSent(true)}
-                  disabled={codeChecking}
-                  className="w-full py-3 px-4 bg-accent text-background font-semibold rounded hover:bg-accent/90 transition-colors disabled:opacity-50"
+                  onClick={handleNostrLogin}
+                  disabled={loading || codeChecking}
+                  className="text-accent hover:underline"
                 >
-                  Enter login code
+                  Sign in with NIP-07
                 </button>
+              </p>
 
-                <div className="text-sm text-muted leading-relaxed text-center">
-                  <p>Just DM <span className="text-foreground font-medium">login</span></p>
-                  <p>to your friendly <span className="text-foreground font-medium">{BOT_NAME}</span></p>
-                  <p>for your login code.</p>
-                </div>
-
+              {BOT_NPUB && (
                 <p className="text-center text-xs text-muted">
-                  Have a Nostr extension?{" "}
-                  <button
-                    type="button"
-                    onClick={handleNostrLogin}
-                    disabled={loading || codeChecking}
-                    className="text-accent hover:underline"
-                  >
-                    Sign in with NIP-07
-                  </button>
-                </p>
-
-                {BOT_NPUB && (
-                  <p className="text-center text-xs text-muted">
-                    {BOT_NAME}:{" "}
-                    <button
-                      type="button"
-                      onClick={() => {
-                        navigator.clipboard.writeText(BOT_NPUB);
-                        setNpubCopied(true);
-                        setTimeout(() => setNpubCopied(false), 2000);
-                      }}
-                      className="font-mono text-muted hover:text-foreground transition-colors break-all"
-                    >
-                      {npubCopied ? "Copied!" : BOT_NPUB}
-                    </button>
-                  </p>
-                )}
-              </>
-            ) : (
-              <form onSubmit={handleOtpSubmit} className="space-y-6">
-                <div>
-                  <label className="block text-sm font-medium text-muted mb-2">
-                    Login code
-                  </label>
-                  <input
-                    type="text"
-                    inputMode="numeric"
-                    required
-                    value={otpCode}
-                    onChange={(e) => handleOtpChange(e.target.value)}
-                    placeholder="XXXXXX-XXXXXX"
-                    maxLength={13}
-                    className="w-full py-3 px-4 bg-surface border border-border rounded text-foreground text-center text-lg font-mono tracking-widest placeholder:text-muted/50 focus:outline-none focus:border-accent"
-                  />
-                </div>
-
-                <button
-                  type="submit"
-                  disabled={loading || otpCode.replace("-", "").length !== 12}
-                  className="w-full py-3 px-4 bg-accent text-background font-semibold rounded hover:bg-accent/90 transition-colors disabled:opacity-50"
-                >
-                  {loading
-                    ? "Verifying..."
-                    : canSignup
-                      ? "Create account"
-                      : "Sign in"}
-                </button>
-
-                <p className="text-center text-sm text-muted">
+                  {BOT_NAME}:{" "}
                   <button
                     type="button"
                     onClick={() => {
-                      setOtpSent(false);
-                      setOtpCode("");
-                      setError("");
+                      navigator.clipboard.writeText(BOT_NPUB);
+                      setNpubCopied(true);
+                      setTimeout(() => setNpubCopied(false), 2000);
                     }}
-                    className="text-accent hover:underline"
+                    className="font-mono text-muted hover:text-foreground transition-colors break-all"
                   >
-                    Back
+                    {npubCopied ? "Copied!" : BOT_NPUB}
                   </button>
                 </p>
-              </form>
-            )}
-          </div>
-        )}
-
-        {/* Email tab */}
-        {tab === "email" && (
-          <form onSubmit={handleEmailSubmit} className="space-y-6">
-            <div>
-              <label className="block text-sm font-medium text-muted mb-2">
-                Email
-              </label>
-              <input
-                type="email"
-                required
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                placeholder="you@example.com"
-                className="w-full py-3 px-4 bg-surface border border-border rounded text-foreground placeholder:text-muted/50 focus:outline-none focus:border-accent"
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-muted mb-2">
-                Password
-              </label>
-              <input
-                type="password"
-                required
-                minLength={8}
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                placeholder="Min 8 characters"
-                className="w-full py-3 px-4 bg-surface border border-border rounded text-foreground placeholder:text-muted/50 focus:outline-none focus:border-accent"
-              />
-            </div>
-            {emailMode === "login" && (
-              <p className="text-right text-sm -mt-2">
-                <a href={`/forgot-password${email ? `?email=${encodeURIComponent(email)}` : ""}`} className="text-accent hover:underline">
-                  Forgot password?
-                </a>
-              </p>
-            )}
-            <button
-              type="submit"
-              disabled={loading || codeChecking}
-              className="w-full py-3 px-4 bg-accent text-background font-semibold rounded hover:bg-accent/90 transition-colors disabled:opacity-50"
-            >
-              {loading
-                ? "Submitting..."
-                : emailMode === "login"
-                  ? "Sign in"
-                  : "Create account"}
-            </button>
-            <p className="text-center text-sm text-muted">
-              {emailMode === "login" ? (
-                canSignup ? (
-                  <>
-                    New here?{" "}
-                    <button
-                      type="button"
-                      onClick={() => setEmailMode("signup")}
-                      className="text-accent hover:underline"
-                    >
-                      Create account
-                    </button>
-                  </>
-                ) : (
-                  <span>
-                    Need an account?{" "}
-                    <a href="/" className="text-accent hover:underline">
-                      Join the waitlist
-                    </a>
-                  </span>
-                )
-              ) : (
-                <>
-                  Already have an account?{" "}
-                  <button
-                    type="button"
-                    onClick={() => setEmailMode("login")}
-                    className="text-accent hover:underline"
-                  >
-                    Sign in
-                  </button>
-                </>
               )}
-            </p>
-          </form>
-        )}
+            </>
+          ) : (
+            <form onSubmit={handleOtpSubmit} className="space-y-6">
+              <div>
+                <label className="block text-sm font-medium text-muted mb-2">
+                  Login code
+                </label>
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  required
+                  value={otpCode}
+                  onChange={(e) => handleOtpChange(e.target.value)}
+                  placeholder="XXXXXX-XXXXXX"
+                  maxLength={13}
+                  className="w-full py-3 px-4 bg-surface border border-border rounded text-foreground text-center text-lg font-mono tracking-widest placeholder:text-muted/50 focus:outline-none focus:border-accent"
+                />
+              </div>
+
+              <button
+                type="submit"
+                disabled={loading || otpCode.replace("-", "").length !== 12}
+                className="w-full py-3 px-4 bg-accent text-background font-semibold rounded hover:bg-accent/90 transition-colors disabled:opacity-50"
+              >
+                {loading
+                  ? "Verifying..."
+                  : canSignup
+                    ? "Create account"
+                    : "Sign in"}
+              </button>
+
+              <p className="text-center text-sm text-muted">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setOtpSent(false);
+                    setOtpCode("");
+                    setError("");
+                  }}
+                  className="text-accent hover:underline"
+                >
+                  Back
+                </button>
+              </p>
+            </form>
+          )}
+        </div>
 
         {/* Error */}
         {error && <p className="text-red-400 text-sm mt-4">{error}</p>}

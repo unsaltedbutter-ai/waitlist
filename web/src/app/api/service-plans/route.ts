@@ -9,7 +9,6 @@ const SERVICE_LABELS: Record<string, string> = {
   paramount: "Paramount+",
   peacock: "Peacock",
   apple_tv: "Apple TV+",
-  prime_video: "Prime Video",
 };
 
 export async function GET() {

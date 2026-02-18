@@ -7,13 +7,12 @@ export const GET = withOperator(async (_req: NextRequest) => {
   const [waitlistResult, activeUsers] = await Promise.all([
     query<{
       id: string;
-      email: string | null;
-      nostr_npub: string | null;
+      nostr_npub: string;
       invited: boolean;
       invited_at: string | null;
       created_at: string;
     }>(
-      `SELECT id, email, nostr_npub, invited, invited_at, created_at
+      `SELECT id, nostr_npub, invited, invited_at, created_at
        FROM waitlist
        ORDER BY created_at ASC`
     ),

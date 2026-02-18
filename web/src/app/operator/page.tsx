@@ -68,7 +68,7 @@ export default function OperatorHubPage() {
   }, []);
 
   if (error === "Access denied.") {
-    return <p className="text-red-400 text-sm">403 — Not authorized.</p>;
+    return <p className="text-red-400 text-sm">403 -- Not authorized.</p>;
   }
 
   if (loading) return <p className="text-muted">Loading...</p>;
@@ -88,8 +88,10 @@ export default function OperatorHubPage() {
   const activeUsers = biz?.users?.active ?? 0;
   const satsIn = biz?.sats_in_30d ?? 0;
   const satsOut = biz?.sats_out_30d ?? 0;
-  const refundLiability = biz?.total_refund_liability ?? 0;
   const deadLetterCount = metrics?.dead_letter?.length ?? 0;
+
+  // TODO: fetch from GET /api/operator/stats for job-revenue data
+  // (earned_sats, outstanding_sats) once the API exists
 
   const navCards = [
     {
@@ -102,17 +104,10 @@ export default function OperatorHubPage() {
     },
     {
       href: "/operator/business",
-      title: "Business & Ledger",
+      title: "Revenue & Users",
       lines: [
         `${activeUsers} active users`,
-        `${formatSats(satsIn)} in / ${formatSats(satsOut)} out (30d)`,
-      ],
-    },
-    {
-      href: "/operator/refunds",
-      title: "Refunds",
-      lines: [
-        `${formatSats(refundLiability)} sats liability`,
+        `${formatSats(satsIn)} earned / ${formatSats(satsOut)} paid out (30d)`,
       ],
     },
     {

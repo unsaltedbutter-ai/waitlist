@@ -1,0 +1,548 @@
+import { describe, it, expect, beforeEach, vi } from "vitest";
+import { mockQueryResult } from "@/__test-utils__/fixtures";
+
+vi.mock("@/lib/db", () => ({
+  query: vi.fn(),
+}));
+vi.mock("@/lib/agent-auth", () => ({
+  withAgentAuth: vi.fn((handler: Function) => {
+    return async (req: Request, segmentData: any) => {
+      const params = segmentData?.params
+        ? await segmentData.params
+        : undefined;
+      const body = await req.text();
+      return handler(req, { body, params });
+    };
+  }),
+}));
+
+import { query } from "@/lib/db";
+import { PATCH } from "../route";
+
+const JOB_ID = "a1b2c3d4-e5f6-7890-abcd-ef1234567890";
+
+function makeRequest(body: object): Request {
+  return new Request(`http://localhost/api/agent/jobs/${JOB_ID}/status`, {
+    method: "PATCH",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
+function mockJobLookup(status: string) {
+  vi.mocked(query).mockResolvedValueOnce(
+    mockQueryResult([{
+      id: JOB_ID,
+      status,
+    }])
+  );
+}
+
+function mockAtomicUpdate(newStatus: string, overrides: Record<string, unknown> = {}) {
+  vi.mocked(query).mockResolvedValueOnce(
+    mockQueryResult([{
+      id: JOB_ID,
+      user_id: "user-1",
+      service_id: "netflix",
+      action: "cancel",
+      trigger: "scheduled",
+      status: newStatus,
+      billing_date: "2026-03-01",
+      access_end_date: null,
+      outreach_count: 0,
+      next_outreach_at: null,
+      amount_sats: null,
+      invoice_id: null,
+      created_at: "2026-02-15T05:00:00Z",
+      status_updated_at: "2026-02-18T10:30:00Z",
+      ...overrides,
+    }])
+  );
+}
+
+/** Simulate the atomic UPDATE returning 0 rows (concurrent change). */
+function mockAtomicUpdateEmpty() {
+  vi.mocked(query).mockResolvedValueOnce(mockQueryResult([]));
+}
+
+beforeEach(() => {
+  vi.mocked(query).mockReset();
+});
+
+describe("PATCH /api/agent/jobs/[id]/status", () => {
+  // -- UUID validation --
+
+  it("rejects non-UUID job ID with 400", async () => {
+    const res = await PATCH(
+      makeRequest({ status: "active" }) as any,
+      { params: Promise.resolve({ id: "not-a-uuid" }) }
+    );
+    expect(res.status).toBe(400);
+    const data = await res.json();
+    expect(data.error).toContain("Invalid job ID format");
+  });
+
+  it("rejects SQL-injection-style job ID", async () => {
+    const res = await PATCH(
+      makeRequest({ status: "active" }) as any,
+      { params: Promise.resolve({ id: "'; DROP TABLE jobs;--" }) }
+    );
+    expect(res.status).toBe(400);
+  });
+
+  // -- amount_sats validation --
+
+  it("rejects non-integer amount_sats", async () => {
+    const res = await PATCH(
+      makeRequest({ status: "completed_paid", amount_sats: 3.5 }) as any,
+      { params: Promise.resolve({ id: JOB_ID }) }
+    );
+    expect(res.status).toBe(400);
+    const data = await res.json();
+    expect(data.error).toContain("amount_sats must be a positive integer");
+  });
+
+  it("rejects zero amount_sats", async () => {
+    const res = await PATCH(
+      makeRequest({ status: "completed_paid", amount_sats: 0 }) as any,
+      { params: Promise.resolve({ id: JOB_ID }) }
+    );
+    expect(res.status).toBe(400);
+    const data = await res.json();
+    expect(data.error).toContain("amount_sats must be a positive integer");
+  });
+
+  it("rejects negative amount_sats", async () => {
+    const res = await PATCH(
+      makeRequest({ status: "completed_paid", amount_sats: -100 }) as any,
+      { params: Promise.resolve({ id: JOB_ID }) }
+    );
+    expect(res.status).toBe(400);
+  });
+
+  it("rejects NaN amount_sats", async () => {
+    const req = new Request(`http://localhost/api/agent/jobs/${JOB_ID}/status`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ status: "completed_paid", amount_sats: "not_a_number" }),
+    });
+    // JSON.parse will turn "not_a_number" into a string, which is not an integer
+    const res = await PATCH(req as any, { params: Promise.resolve({ id: JOB_ID }) });
+    expect(res.status).toBe(400);
+  });
+
+  // -- Concurrent status change (409) --
+
+  it("returns 409 when status changed concurrently", async () => {
+    mockJobLookup("dispatched");
+    // Atomic UPDATE returns 0 rows (another request changed the status)
+    mockAtomicUpdateEmpty();
+    // Re-read to distinguish 404 vs 409: job still exists
+    vi.mocked(query).mockResolvedValueOnce(
+      mockQueryResult([{ status: "active" }])
+    );
+
+    const res = await PATCH(
+      makeRequest({ status: "outreach_sent" }) as any,
+      { params: Promise.resolve({ id: JOB_ID }) }
+    );
+    expect(res.status).toBe(409);
+    const data = await res.json();
+    expect(data.error).toContain("concurrently");
+  });
+
+  it("returns 404 when job deleted between SELECT and UPDATE", async () => {
+    mockJobLookup("dispatched");
+    // Atomic UPDATE returns 0 rows
+    mockAtomicUpdateEmpty();
+    // Re-read: job no longer exists
+    vi.mocked(query).mockResolvedValueOnce(mockQueryResult([]));
+
+    const res = await PATCH(
+      makeRequest({ status: "outreach_sent" }) as any,
+      { params: Promise.resolve({ id: JOB_ID }) }
+    );
+    expect(res.status).toBe(404);
+  });
+
+  // -- Valid transitions --
+
+  it("dispatched -> outreach_sent", async () => {
+    mockJobLookup("dispatched");
+    mockAtomicUpdate("outreach_sent");
+
+    const res = await PATCH(
+      makeRequest({ status: "outreach_sent" }) as any,
+      { params: Promise.resolve({ id: JOB_ID }) }
+    );
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data.job.status).toBe("outreach_sent");
+
+    // Verify atomic WHERE clause includes current status
+    const updateCall = vi.mocked(query).mock.calls[1];
+    const sql = updateCall[0] as string;
+    expect(sql).toContain("AND status =");
+    expect(updateCall[1]).toContain("dispatched");
+  });
+
+  it("dispatched -> active (on-demand jobs skip outreach)", async () => {
+    mockJobLookup("dispatched");
+    mockAtomicUpdate("active");
+
+    const res = await PATCH(
+      makeRequest({ status: "active" }) as any,
+      { params: Promise.resolve({ id: JOB_ID }) }
+    );
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data.job.status).toBe("active");
+  });
+
+  it("dispatched -> implied_skip", async () => {
+    mockJobLookup("dispatched");
+    mockAtomicUpdate("implied_skip");
+
+    const res = await PATCH(
+      makeRequest({ status: "implied_skip" }) as any,
+      { params: Promise.resolve({ id: JOB_ID }) }
+    );
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data.job.status).toBe("implied_skip");
+  });
+
+  it("outreach_sent -> snoozed", async () => {
+    mockJobLookup("outreach_sent");
+    mockAtomicUpdate("snoozed");
+
+    const res = await PATCH(
+      makeRequest({ status: "snoozed" }) as any,
+      { params: Promise.resolve({ id: JOB_ID }) }
+    );
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data.job.status).toBe("snoozed");
+  });
+
+  it("outreach_sent -> active", async () => {
+    mockJobLookup("outreach_sent");
+    mockAtomicUpdate("active");
+
+    const res = await PATCH(
+      makeRequest({ status: "active" }) as any,
+      { params: Promise.resolve({ id: JOB_ID }) }
+    );
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data.job.status).toBe("active");
+  });
+
+  it("outreach_sent -> user_skip", async () => {
+    mockJobLookup("outreach_sent");
+    mockAtomicUpdate("user_skip");
+
+    const res = await PATCH(
+      makeRequest({ status: "user_skip" }) as any,
+      { params: Promise.resolve({ id: JOB_ID }) }
+    );
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data.job.status).toBe("user_skip");
+  });
+
+  it("snoozed -> dispatched", async () => {
+    mockJobLookup("snoozed");
+    mockAtomicUpdate("dispatched");
+
+    const res = await PATCH(
+      makeRequest({ status: "dispatched" }) as any,
+      { params: Promise.resolve({ id: JOB_ID }) }
+    );
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data.job.status).toBe("dispatched");
+  });
+
+  it("active -> awaiting_otp", async () => {
+    mockJobLookup("active");
+    mockAtomicUpdate("awaiting_otp");
+
+    const res = await PATCH(
+      makeRequest({ status: "awaiting_otp" }) as any,
+      { params: Promise.resolve({ id: JOB_ID }) }
+    );
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data.job.status).toBe("awaiting_otp");
+  });
+
+  it("active -> completed_paid", async () => {
+    mockJobLookup("active");
+    mockAtomicUpdate("completed_paid");
+
+    const res = await PATCH(
+      makeRequest({ status: "completed_paid" }) as any,
+      { params: Promise.resolve({ id: JOB_ID }) }
+    );
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data.job.status).toBe("completed_paid");
+  });
+
+  it("active -> completed_eventual", async () => {
+    mockJobLookup("active");
+    mockAtomicUpdate("completed_eventual");
+
+    const res = await PATCH(
+      makeRequest({ status: "completed_eventual" }) as any,
+      { params: Promise.resolve({ id: JOB_ID }) }
+    );
+    expect(res.status).toBe(200);
+  });
+
+  it("active -> completed_reneged", async () => {
+    mockJobLookup("active");
+    mockAtomicUpdate("completed_reneged");
+
+    const res = await PATCH(
+      makeRequest({ status: "completed_reneged" }) as any,
+      { params: Promise.resolve({ id: JOB_ID }) }
+    );
+    expect(res.status).toBe(200);
+  });
+
+  it("awaiting_otp -> active", async () => {
+    mockJobLookup("awaiting_otp");
+    mockAtomicUpdate("active");
+
+    const res = await PATCH(
+      makeRequest({ status: "active" }) as any,
+      { params: Promise.resolve({ id: JOB_ID }) }
+    );
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data.job.status).toBe("active");
+  });
+
+  it("awaiting_otp -> user_abandon", async () => {
+    mockJobLookup("awaiting_otp");
+    mockAtomicUpdate("user_abandon");
+
+    const res = await PATCH(
+      makeRequest({ status: "user_abandon" }) as any,
+      { params: Promise.resolve({ id: JOB_ID }) }
+    );
+    expect(res.status).toBe(200);
+  });
+
+  it("awaiting_otp -> completed_paid", async () => {
+    mockJobLookup("awaiting_otp");
+    mockAtomicUpdate("completed_paid");
+
+    const res = await PATCH(
+      makeRequest({ status: "completed_paid" }) as any,
+      { params: Promise.resolve({ id: JOB_ID }) }
+    );
+    expect(res.status).toBe(200);
+  });
+
+  it("awaiting_otp -> completed_eventual", async () => {
+    mockJobLookup("awaiting_otp");
+    mockAtomicUpdate("completed_eventual");
+
+    const res = await PATCH(
+      makeRequest({ status: "completed_eventual" }) as any,
+      { params: Promise.resolve({ id: JOB_ID }) }
+    );
+    expect(res.status).toBe(200);
+  });
+
+  it("awaiting_otp -> completed_reneged", async () => {
+    mockJobLookup("awaiting_otp");
+    mockAtomicUpdate("completed_reneged");
+
+    const res = await PATCH(
+      makeRequest({ status: "completed_reneged" }) as any,
+      { params: Promise.resolve({ id: JOB_ID }) }
+    );
+    expect(res.status).toBe(200);
+  });
+
+  // -- Invalid transitions --
+
+  it("pending -> active returns 400", async () => {
+    mockJobLookup("pending");
+
+    const res = await PATCH(
+      makeRequest({ status: "active" }) as any,
+      { params: Promise.resolve({ id: JOB_ID }) }
+    );
+    expect(res.status).toBe(400);
+    const data = await res.json();
+    expect(data.error).toContain("Invalid transition");
+  });
+
+  it("dispatched -> completed_paid returns 400", async () => {
+    mockJobLookup("dispatched");
+
+    const res = await PATCH(
+      makeRequest({ status: "completed_paid" }) as any,
+      { params: Promise.resolve({ id: JOB_ID }) }
+    );
+    expect(res.status).toBe(400);
+  });
+
+  it("completed_paid -> anything returns 400 (terminal state)", async () => {
+    mockJobLookup("completed_paid");
+
+    const res = await PATCH(
+      makeRequest({ status: "active" }) as any,
+      { params: Promise.resolve({ id: JOB_ID }) }
+    );
+    expect(res.status).toBe(400);
+  });
+
+  it("user_skip -> anything returns 400 (terminal state)", async () => {
+    mockJobLookup("user_skip");
+
+    const res = await PATCH(
+      makeRequest({ status: "dispatched" }) as any,
+      { params: Promise.resolve({ id: JOB_ID }) }
+    );
+    expect(res.status).toBe(400);
+  });
+
+  it("outreach_sent -> dispatched returns 400 (must go through snoozed)", async () => {
+    mockJobLookup("outreach_sent");
+
+    const res = await PATCH(
+      makeRequest({ status: "dispatched" }) as any,
+      { params: Promise.resolve({ id: JOB_ID }) }
+    );
+    expect(res.status).toBe(400);
+  });
+
+  // -- Missing job --
+
+  it("nonexistent job returns 404", async () => {
+    vi.mocked(query).mockResolvedValueOnce(mockQueryResult([]));
+
+    const res = await PATCH(
+      makeRequest({ status: "active" }) as any,
+      { params: Promise.resolve({ id: "00000000-0000-0000-0000-000000000000" }) }
+    );
+    expect(res.status).toBe(404);
+    const data = await res.json();
+    expect(data.error).toContain("not found");
+  });
+
+  // -- Metadata updates --
+
+  it("updates next_outreach_at with status change", async () => {
+    mockJobLookup("outreach_sent");
+    mockAtomicUpdate("snoozed", { next_outreach_at: "2026-02-20T10:00:00Z" });
+
+    const res = await PATCH(
+      makeRequest({
+        status: "snoozed",
+        next_outreach_at: "2026-02-20T10:00:00Z",
+      }) as any,
+      { params: Promise.resolve({ id: JOB_ID }) }
+    );
+    expect(res.status).toBe(200);
+
+    // Verify the SQL includes next_outreach_at
+    const updateCall = vi.mocked(query).mock.calls[1];
+    const sql = updateCall[0] as string;
+    expect(sql).toContain("next_outreach_at");
+    expect(updateCall[1]).toContain("2026-02-20T10:00:00Z");
+  });
+
+  it("updates outreach_count with status change", async () => {
+    mockJobLookup("dispatched");
+    mockAtomicUpdate("outreach_sent", { outreach_count: 2 });
+
+    const res = await PATCH(
+      makeRequest({ status: "outreach_sent", outreach_count: 2 }) as any,
+      { params: Promise.resolve({ id: JOB_ID }) }
+    );
+    expect(res.status).toBe(200);
+
+    const updateCall = vi.mocked(query).mock.calls[1];
+    const sql = updateCall[0] as string;
+    expect(sql).toContain("outreach_count");
+    expect(updateCall[1]).toContain(2);
+  });
+
+  it("updates access_end_date with status change", async () => {
+    mockJobLookup("active");
+    mockAtomicUpdate("completed_paid", { access_end_date: "2026-03-15" });
+
+    const res = await PATCH(
+      makeRequest({
+        status: "completed_paid",
+        access_end_date: "2026-03-15",
+      }) as any,
+      { params: Promise.resolve({ id: JOB_ID }) }
+    );
+    expect(res.status).toBe(200);
+
+    const updateCall = vi.mocked(query).mock.calls[1];
+    const sql = updateCall[0] as string;
+    expect(sql).toContain("access_end_date");
+  });
+
+  it("updates amount_sats with status change", async () => {
+    mockJobLookup("active");
+    mockAtomicUpdate("completed_reneged", { amount_sats: 3000 });
+
+    const res = await PATCH(
+      makeRequest({ status: "completed_reneged", amount_sats: 3000 }) as any,
+      { params: Promise.resolve({ id: JOB_ID }) }
+    );
+    expect(res.status).toBe(200);
+
+    const updateCall = vi.mocked(query).mock.calls[1];
+    const sql = updateCall[0] as string;
+    expect(sql).toContain("amount_sats");
+    expect(updateCall[1]).toContain(3000);
+  });
+
+  it("updates billing_date with status change", async () => {
+    mockJobLookup("dispatched");
+    mockAtomicUpdate("outreach_sent", { billing_date: "2026-04-01" });
+
+    const res = await PATCH(
+      makeRequest({ status: "outreach_sent", billing_date: "2026-04-01" }) as any,
+      { params: Promise.resolve({ id: JOB_ID }) }
+    );
+    expect(res.status).toBe(200);
+
+    const updateCall = vi.mocked(query).mock.calls[1];
+    const sql = updateCall[0] as string;
+    expect(sql).toContain("billing_date");
+  });
+
+  // -- Missing / invalid body --
+
+  it("invalid JSON returns 400", async () => {
+    const req = new Request(`http://localhost/api/agent/jobs/${JOB_ID}/status`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: "not json",
+    });
+    const res = await PATCH(req as any, { params: Promise.resolve({ id: JOB_ID }) });
+    expect(res.status).toBe(400);
+  });
+
+  it("missing status field returns 400", async () => {
+    const res = await PATCH(
+      makeRequest({}) as any,
+      { params: Promise.resolve({ id: JOB_ID }) }
+    );
+    expect(res.status).toBe(400);
+    const data = await res.json();
+    expect(data.error).toContain("Missing status");
+  });
+});

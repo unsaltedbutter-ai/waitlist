@@ -1,265 +1,251 @@
-"""Tests for DM command handlers.
+"""Tests for DM command handlers (pay-per-action concierge model).
 
-Uses the same mock pattern as test_zap_validation.py: real logic, mocked DB.
+Uses the same mock pattern: real logic, mocked API client.
 
 Run: cd nostr-bot && python -m pytest test_commands.py -v
 """
 
-from datetime import datetime
 from unittest.mock import AsyncMock, patch
-from uuid import UUID
 
 import pytest
 
 import commands
 
-USER_ID = UUID("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
+
+NPUB_HEX = "aabbccdd" * 8
 
 
 @pytest.fixture
-def mock_db():
-    with patch("commands.db") as m:
-        m.get_user_status = AsyncMock()
-        m.get_user_queue = AsyncMock()
-        m.get_active_service_id = AsyncMock()
-        m.skip_service = AsyncMock()
-        m.stay_service = AsyncMock()
-        m.pause_user = AsyncMock()
-        m.get_required_balance = AsyncMock(return_value=None)
+def mock_api():
+    with patch("commands.api_client") as m:
+        m.create_on_demand_job = AsyncMock()
+        m.get_user = AsyncMock()
         yield m
 
 
-# -- status ---------------------------------------------------------------
+# -- cancel/resume (action commands) ------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_status_active_sub_with_lapse(mock_db):
-    mock_db.get_user_status.return_value = {
-        "subscription": {
-            "display_name": "Netflix",
-            "status": "active",
-            "estimated_lapse_at": datetime(2025, 3, 15),
-        },
-        "credit_sats": 45230,
-        "next_service": "Hulu",
+async def test_cancel_success(mock_api):
+    mock_api.create_on_demand_job.return_value = {
+        "status_code": 200,
+        "data": {"job_id": "job-123", "status": "pending"},
     }
-    result = await commands.handle_dm(USER_ID, "active", "status")
-    assert "Netflix (active, ends Mar 15)" in result
-    assert "45,230 sats" in result
-    assert "Next: Hulu" in result
+    result = await commands.handle_dm(NPUB_HEX, "cancel netflix")
+    assert "Netflix cancel is queued" in result
+    mock_api.create_on_demand_job.assert_awaited_once_with(NPUB_HEX, "netflix", "cancel")
 
 
 @pytest.mark.asyncio
-async def test_status_no_active_sub(mock_db):
-    mock_db.get_user_status.return_value = {
-        "subscription": None,
-        "credit_sats": 0,
-        "next_service": None,
+async def test_resume_success(mock_api):
+    mock_api.create_on_demand_job.return_value = {
+        "status_code": 200,
+        "data": {"job_id": "job-456", "status": "pending"},
     }
-    result = await commands.handle_dm(USER_ID, "active", "status")
-    assert "No active subscription" in result
+    result = await commands.handle_dm(NPUB_HEX, "resume hulu")
+    assert "Hulu resume is queued" in result
+    mock_api.create_on_demand_job.assert_awaited_once_with(NPUB_HEX, "hulu", "resume")
 
 
 @pytest.mark.asyncio
-async def test_status_without_next_service(mock_db):
-    mock_db.get_user_status.return_value = {
-        "subscription": {
-            "display_name": "Netflix",
-            "status": "active",
-            "estimated_lapse_at": datetime(2025, 3, 15),
-        },
-        "credit_sats": 1000,
-        "next_service": None,
-    }
-    result = await commands.handle_dm(USER_ID, "active", "status")
-    assert "Next:" not in result
+async def test_cancel_unknown_service(mock_api):
+    result = await commands.handle_dm(NPUB_HEX, "cancel foobar")
+    assert "Unknown service" in result
+    mock_api.create_on_demand_job.assert_not_awaited()
 
 
 @pytest.mark.asyncio
-async def test_status_credit_formatting(mock_db):
-    mock_db.get_user_status.return_value = {
-        "subscription": None,
-        "credit_sats": 1234567,
-        "next_service": None,
+async def test_cancel_debt_blocked(mock_api):
+    mock_api.create_on_demand_job.return_value = {
+        "status_code": 403,
+        "data": {"error": "Outstanding debt", "debt_sats": 3000},
     }
-    result = await commands.handle_dm(USER_ID, "active", "status")
-    assert "1,234,567 sats" in result
+    result = await commands.handle_dm(NPUB_HEX, "cancel netflix")
+    assert "outstanding balance" in result.lower()
+    assert "3,000 sats" in result
 
 
 @pytest.mark.asyncio
-async def test_status_paused_shows_status_line(mock_db):
-    mock_db.get_user_status.return_value = {
-        "subscription": None,
-        "credit_sats": 5000,
-        "next_service": None,
+async def test_cancel_already_pending(mock_api):
+    mock_api.create_on_demand_job.return_value = {
+        "status_code": 409,
+        "data": {"error": "A non-terminal job already exists"},
     }
-    result = await commands.handle_dm(USER_ID, "paused", "status")
-    assert "Status: Paused" in result
+    result = await commands.handle_dm(NPUB_HEX, "cancel netflix")
+    assert "pending job" in result.lower()
 
 
 @pytest.mark.asyncio
-async def test_status_auto_paused_shows_status_line(mock_db):
-    mock_db.get_user_status.return_value = {
-        "subscription": None,
-        "credit_sats": 1000,
-        "next_service": "Netflix",
+async def test_cancel_no_credentials(mock_api):
+    mock_api.create_on_demand_job.return_value = {
+        "status_code": 400,
+        "data": {"error": "No credentials for service: netflix"},
     }
-    mock_db.get_required_balance.return_value = {
-        "platform_fee_sats": 4400,
-        "gift_card_cost_sats": 25000,
-        "total_sats": 29400,
-    }
-    result = await commands.handle_dm(USER_ID, "auto_paused", "status")
-    assert "Status: Paused (low balance)" in result
-    assert "Zap me 28,400 sats to keep things moving." in result
+    result = await commands.handle_dm(NPUB_HEX, "cancel netflix")
+    assert "credentials" in result.lower()
 
 
 @pytest.mark.asyncio
-async def test_status_auto_paused_no_shortfall_skips_zap(mock_db):
-    mock_db.get_user_status.return_value = {
-        "subscription": None,
-        "credit_sats": 50000,
-        "next_service": "Netflix",
+async def test_cancel_user_not_found(mock_api):
+    mock_api.create_on_demand_job.return_value = {
+        "status_code": 404,
+        "data": {"error": "User not found"},
     }
-    mock_db.get_required_balance.return_value = {
-        "platform_fee_sats": 4400,
-        "gift_card_cost_sats": 25000,
-        "total_sats": 29400,
-    }
-    result = await commands.handle_dm(USER_ID, "auto_paused", "status")
-    assert "Status: Paused (low balance)" in result
-    assert "Zap me" not in result
+    result = await commands.handle_dm(NPUB_HEX, "cancel netflix")
+    assert "not found" in result.lower()
 
 
 @pytest.mark.asyncio
-async def test_status_auto_paused_no_queue_skips_zap(mock_db):
-    mock_db.get_user_status.return_value = {
-        "subscription": None,
-        "credit_sats": 1000,
-        "next_service": None,
-    }
-    mock_db.get_required_balance.return_value = None
-    result = await commands.handle_dm(USER_ID, "auto_paused", "status")
-    assert "Status: Paused (low balance)" in result
-    assert "Zap me" not in result
+async def test_cancel_api_error(mock_api):
+    mock_api.create_on_demand_job.side_effect = Exception("connection refused")
+    result = await commands.handle_dm(NPUB_HEX, "cancel netflix")
+    assert "something went wrong" in result.lower()
 
 
-# -- queue ----------------------------------------------------------------
+# -- service alias parsing -----------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_queue_populated(mock_db):
-    mock_db.get_user_queue.return_value = [
-        {"position": 1, "display_name": "Netflix", "service_id": "netflix", "sub_status": "active"},
-        {"position": 2, "display_name": "Hulu", "service_id": "hulu", "sub_status": None},
-    ]
-    result = await commands.handle_dm(USER_ID, "active", "queue")
-    assert "1. Netflix [active]" in result
+async def test_service_aliases(mock_api):
+    mock_api.create_on_demand_job.return_value = {
+        "status_code": 200,
+        "data": {"job_id": "job-1", "status": "pending"},
+    }
+
+    aliases = {
+        "disney+": "disney_plus",
+        "disney plus": "disney_plus",
+        "prime video": "prime_video",
+        "prime": "prime_video",
+        "apple tv+": "apple_tv_plus",
+        "paramount+": "paramount_plus",
+        "espn+": "espn_plus",
+        "hbo": "max",
+        "max": "max",
+        "peacock": "peacock",
+    }
+
+    for alias, expected_id in aliases.items():
+        mock_api.create_on_demand_job.reset_mock()
+        await commands.handle_dm(NPUB_HEX, f"cancel {alias}")
+        mock_api.create_on_demand_job.assert_awaited_once_with(NPUB_HEX, expected_id, "cancel")
+
+
+# -- status command ------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_status_with_jobs_and_debt(mock_api):
+    mock_api.get_user.return_value = {
+        "user": {"id": "user-1", "nostr_npub": NPUB_HEX, "debt_sats": 3000, "onboarded_at": "2026-01-01", "created_at": "2026-01-01"},
+        "services": [{"service_id": "netflix", "display_name": "Netflix"}],
+        "queue": [
+            {"service_id": "netflix", "position": 1, "plan_id": None},
+            {"service_id": "hulu", "position": 2, "plan_id": None},
+        ],
+        "active_jobs": [
+            {"id": "job-1", "service_id": "netflix", "action": "cancel", "status": "in_progress"},
+        ],
+    }
+    result = await commands.handle_dm(NPUB_HEX, "status")
+    assert "3,000 sats" in result
+    assert "Netflix cancel: in_progress" in result
+    assert "Queue: Netflix, Hulu" in result
+
+
+@pytest.mark.asyncio
+async def test_status_no_jobs(mock_api):
+    mock_api.get_user.return_value = {
+        "user": {"id": "user-1", "nostr_npub": NPUB_HEX, "debt_sats": 0, "onboarded_at": "2026-01-01", "created_at": "2026-01-01"},
+        "services": [],
+        "queue": [],
+        "active_jobs": [],
+    }
+    result = await commands.handle_dm(NPUB_HEX, "status")
+    assert "No active jobs" in result
+    assert "outstanding" not in result.lower()
+
+
+@pytest.mark.asyncio
+async def test_status_user_not_found(mock_api):
+    mock_api.get_user.return_value = None
+    result = await commands.handle_dm(NPUB_HEX, "status")
+    assert "not found" in result.lower()
+
+
+@pytest.mark.asyncio
+async def test_status_api_error(mock_api):
+    mock_api.get_user.side_effect = Exception("timeout")
+    result = await commands.handle_dm(NPUB_HEX, "status")
+    assert "something went wrong" in result.lower()
+
+
+# -- queue command -------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_queue_populated(mock_api):
+    mock_api.get_user.return_value = {
+        "user": {"id": "user-1", "nostr_npub": NPUB_HEX, "debt_sats": 0, "onboarded_at": "2026-01-01", "created_at": "2026-01-01"},
+        "services": [],
+        "queue": [
+            {"service_id": "netflix", "position": 1, "plan_id": None},
+            {"service_id": "hulu", "position": 2, "plan_id": None},
+        ],
+        "active_jobs": [],
+    }
+    result = await commands.handle_dm(NPUB_HEX, "queue")
+    assert "1. Netflix" in result
     assert "2. Hulu" in result
-    assert "[" not in result.split("\n")[1] or "Hulu" in result  # Hulu has no status tag
 
 
 @pytest.mark.asyncio
-async def test_queue_empty(mock_db):
-    mock_db.get_user_queue.return_value = []
-    result = await commands.handle_dm(USER_ID, "active", "queue")
+async def test_queue_empty(mock_api):
+    mock_api.get_user.return_value = {
+        "user": {"id": "user-1", "nostr_npub": NPUB_HEX, "debt_sats": 0, "onboarded_at": "2026-01-01", "created_at": "2026-01-01"},
+        "services": [],
+        "queue": [],
+        "active_jobs": [],
+    }
+    result = await commands.handle_dm(NPUB_HEX, "queue")
     assert "empty" in result.lower()
 
 
-# -- skip -----------------------------------------------------------------
+@pytest.mark.asyncio
+async def test_queue_user_not_found(mock_api):
+    mock_api.get_user.return_value = None
+    result = await commands.handle_dm(NPUB_HEX, "queue")
+    assert "not found" in result.lower()
+
+
+# -- help / unknown commands ---------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_skip_success(mock_db):
-    mock_db.get_active_service_id.return_value = "netflix"
-    mock_db.get_user_queue.return_value = [
-        {"position": 1, "display_name": "Netflix", "service_id": "netflix", "sub_status": "active"},
-        {"position": 2, "display_name": "Hulu", "service_id": "hulu", "sub_status": None},
-    ]
-    mock_db.skip_service.return_value = True
-    result = await commands.handle_dm(USER_ID, "active", "skip")
-    assert "Netflix moved to end of queue" in result
-
-
-@pytest.mark.asyncio
-async def test_skip_no_active_sub(mock_db):
-    mock_db.get_active_service_id.return_value = None
-    result = await commands.handle_dm(USER_ID, "active", "skip")
-    assert "No active subscription to skip" in result
-
-
-@pytest.mark.asyncio
-async def test_skip_not_in_queue(mock_db):
-    mock_db.get_active_service_id.return_value = "netflix"
-    mock_db.get_user_queue.return_value = []
-    mock_db.skip_service.return_value = False
-    result = await commands.handle_dm(USER_ID, "active", "skip")
-    assert "Could not skip" in result
-
-
-# -- stay -----------------------------------------------------------------
-
-
-@pytest.mark.asyncio
-async def test_stay_success(mock_db):
-    mock_db.get_active_service_id.return_value = "netflix"
-    mock_db.get_user_queue.return_value = [
-        {"position": 1, "display_name": "Netflix", "service_id": "netflix", "sub_status": "active"},
-    ]
-    mock_db.stay_service.return_value = True
-    result = await commands.handle_dm(USER_ID, "active", "stay")
-    assert "Staying on Netflix" in result
-
-
-@pytest.mark.asyncio
-async def test_stay_no_active_sub(mock_db):
-    mock_db.get_active_service_id.return_value = None
-    result = await commands.handle_dm(USER_ID, "active", "stay")
-    assert "No active subscription to stay on" in result
-
-
-# -- pause ----------------------------------------------------------------
-
-
-@pytest.mark.asyncio
-async def test_pause_from_active(mock_db):
-    mock_db.pause_user.return_value = True
-    result = await commands.handle_dm(USER_ID, "active", "pause")
-    assert "paused" in result.lower()
-    assert "no fees" in result.lower()
-    mock_db.pause_user.assert_awaited_once_with(USER_ID)
-
-
-@pytest.mark.asyncio
-async def test_pause_from_auto_paused(mock_db):
-    mock_db.pause_user.return_value = True
-    result = await commands.handle_dm(USER_ID, "auto_paused", "pause")
-    assert "paused" in result.lower()
-    assert "no fees" in result.lower()
-
-
-@pytest.mark.asyncio
-async def test_pause_already_paused(mock_db):
-    mock_db.pause_user.return_value = False
-    result = await commands.handle_dm(USER_ID, "paused", "pause")
-    assert "can only pause" in result.lower()
-
-
-# -- help / unknown -------------------------------------------------------
-
-
-@pytest.mark.asyncio
-async def test_help(mock_db):
-    result = await commands.handle_dm(USER_ID, "active", "help")
+async def test_help(mock_api):
+    result = await commands.handle_dm(NPUB_HEX, "help")
     assert result == commands.HELP_TEXT
 
 
 @pytest.mark.asyncio
-async def test_unknown_command(mock_db):
-    result = await commands.handle_dm(USER_ID, "active", "gibberish")
+async def test_unknown_command_returns_help(mock_api):
+    result = await commands.handle_dm(NPUB_HEX, "gibberish")
     assert result == commands.HELP_TEXT
 
 
 @pytest.mark.asyncio
-async def test_help_includes_pause(mock_db):
-    assert "pause" in commands.HELP_TEXT
+async def test_help_mentions_cancel_resume():
+    assert "cancel" in commands.HELP_TEXT
+    assert "resume" in commands.HELP_TEXT
+    assert "3,000 sats" in commands.HELP_TEXT
+
+
+# -- HELP_TEXT does not contain old model terms --------------------------------
+
+
+@pytest.mark.asyncio
+async def test_help_no_old_model_references():
+    old_terms = ["credit", "balance", "gift card", "skip", "stay", "pause", "zap me"]
+    for term in old_terms:
+        assert term not in commands.HELP_TEXT.lower(), f"HELP_TEXT still contains old model term: {term}"

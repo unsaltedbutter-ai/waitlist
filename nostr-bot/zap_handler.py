@@ -1,12 +1,15 @@
-"""Kind 9735 zap receipt processing → credit topup.
+"""Kind 9735 zap receipt processing for job invoice payments.
 
-Validates zap receipts per NIP-57 before crediting:
+Validates zap receipts per NIP-57 before confirming payment:
   1. 9735 author must be the configured LNURL provider's nostr pubkey
   2. bolt11 description_hash must equal SHA-256 of the description tag (binds invoice to 9734)
   3. Embedded 9734 zap request must have a valid signature
   4. 9734 must be kind 9734
   5. 9734 must have a 'p' tag matching the bot's pubkey (zap was for us)
   6. If 9734 has an 'amount' tag, it must match the bolt11 amount
+
+When a valid zap is received, if it includes an 'e' tag referencing a job,
+we call POST /api/agent/jobs/{id}/paid to confirm payment.
 """
 
 import hashlib
@@ -16,6 +19,7 @@ import logging
 import bolt11 as bolt11_lib
 from nostr_sdk import Event as NostrEvent
 
+import api_client
 import db
 
 log = logging.getLogger(__name__)
@@ -27,7 +31,7 @@ async def handle_zap_receipt(
     bot_pubkey_hex: str,
     zap_provider_pubkey_hex: str,
 ) -> None:
-    """Parse and validate a kind 9735 zap receipt, then credit the sender.
+    """Parse and validate a kind 9735 zap receipt, then confirm job payment.
 
     Args:
         event: nostr_sdk.Event (kind 9735)
@@ -38,16 +42,16 @@ async def handle_zap_receipt(
     """
     event_id = event.id().to_hex()
 
-    # ── CHECK 1: 9735 must be signed by our LNURL provider ──────
+    # -- CHECK 1: 9735 must be signed by our LNURL provider --
     receipt_author = event.author().to_hex()
     if receipt_author != zap_provider_pubkey_hex:
         log.warning(
-            "Zap receipt %s: author %s does not match provider %s — rejected",
+            "Zap receipt %s: author %s does not match provider %s, rejected",
             event_id, receipt_author[:16], zap_provider_pubkey_hex[:16],
         )
         return
 
-    # ── Extract tags ─────────────────────────────────────────────
+    # -- Extract tags --
     bolt11_str = None
     description_json = None
     for tag in event.tags().to_vec():
@@ -62,7 +66,7 @@ async def handle_zap_receipt(
         log.warning("Zap receipt %s missing bolt11 or description tag", event_id)
         return
 
-    # ── Decode bolt11 invoice ────────────────────────────────────
+    # -- Decode bolt11 invoice --
     try:
         invoice = bolt11_lib.decode(bolt11_str)
     except Exception:
@@ -75,9 +79,7 @@ async def handle_zap_receipt(
         return
     amount_sats = amount_msats // 1000
 
-    # ── CHECK 2: bolt11 description_hash must match SHA-256 of description tag ──
-    # NIP-57 requires the invoice use description_hash (BOLT-11 'h' tag), not
-    # description ('d' tag). This binds the payment to the exact 9734 zap request.
+    # -- CHECK 2: bolt11 description_hash must match SHA-256 of description tag --
     expected_hash = hashlib.sha256(description_json.encode("utf-8")).hexdigest()
     if not invoice.description_hash:
         log.warning("Zap receipt %s: bolt11 missing description_hash (not a valid zap invoice)", event_id)
@@ -86,10 +88,7 @@ async def handle_zap_receipt(
         log.warning("Zap receipt %s: bolt11 description_hash mismatch", event_id)
         return
 
-    # ── CHECK 3: Parse 9734 and verify its signature ────────────────
-    # Event.from_json() only parses — it does NOT verify the signature.
-    # We must call verify() explicitly to confirm the 9734 was actually
-    # signed by the claimed pubkey.
+    # -- CHECK 3: Parse 9734 and verify its signature --
     try:
         zap_request_event = NostrEvent.from_json(description_json)
     except Exception:
@@ -100,7 +99,7 @@ async def handle_zap_receipt(
         log.warning("Zap receipt %s: embedded 9734 failed signature verification", event_id)
         return
 
-    # ── CHECK 4: Must be kind 9734 ──────────────────────────────
+    # -- CHECK 4: Must be kind 9734 --
     if zap_request_event.kind().as_u16() != 9734:
         log.warning(
             "Zap receipt %s: embedded event is kind %d, expected 9734",
@@ -108,7 +107,7 @@ async def handle_zap_receipt(
         )
         return
 
-    # ── CHECK 5: 9734 'p' tag must reference our bot pubkey ─────
+    # -- CHECK 5: 9734 'p' tag must reference our bot pubkey --
     p_tags = []
     for tag in zap_request_event.tags().to_vec():
         tag_vec = tag.as_vec()
@@ -117,12 +116,12 @@ async def handle_zap_receipt(
 
     if bot_pubkey_hex not in p_tags:
         log.warning(
-            "Zap receipt %s: 9734 p-tags %s do not include bot pubkey %s — rejected",
+            "Zap receipt %s: 9734 p-tags %s do not include bot pubkey %s, rejected",
             event_id, p_tags, bot_pubkey_hex[:16],
         )
         return
 
-    # ── CHECK 6: If 9734 has 'amount' tag, it must match bolt11 ─
+    # -- CHECK 6: If 9734 has 'amount' tag, it must match bolt11 --
     for tag in zap_request_event.tags().to_vec():
         tag_vec = tag.as_vec()
         if len(tag_vec) >= 2 and tag_vec[0] == "amount":
@@ -130,7 +129,7 @@ async def handle_zap_receipt(
                 requested_msats = int(tag_vec[1])
                 if requested_msats != amount_msats:
                     log.warning(
-                        "Zap receipt %s: amount mismatch — 9734 says %d msats, bolt11 says %d msats",
+                        "Zap receipt %s: amount mismatch, 9734 says %d msats, bolt11 says %d msats",
                         event_id, requested_msats, amount_msats,
                     )
                     return
@@ -139,7 +138,7 @@ async def handle_zap_receipt(
                 return
             break
 
-    # ── All checks passed — identify sender and credit ───────────
+    # -- All checks passed, identify sender --
     sender_hex = zap_request_event.author().to_hex()
 
     user = await db.get_user_by_npub(sender_hex)
@@ -151,42 +150,46 @@ async def handle_zap_receipt(
             log.debug("Could not DM unregistered zapper %s", sender_hex[:16])
         return
 
-    # Credit the account (idempotent)
-    new_balance = await db.credit_zap(event_id, user["id"], sender_hex, amount_sats)
+    # -- Look for 'e' tag in 9734 referencing a job --
+    # The VPS sends invoices with a job_id reference. When the user zaps,
+    # their client includes the event reference. We also check for a custom
+    # 'job_id' tag that we may include in the zap request.
+    job_id = None
+    for tag in zap_request_event.tags().to_vec():
+        tag_vec = tag.as_vec()
+        if len(tag_vec) >= 2 and tag_vec[0] == "job_id":
+            job_id = tag_vec[1]
+            break
 
-    if new_balance is None:
-        log.info("Zap receipt %s already processed (idempotent skip)", event_id)
-        return
-
-    log.info("Credited %d sats to user %s (new balance: %d)", amount_sats, str(user["id"])[:8], new_balance)
-
-    user_status = user["status"]
-    try:
-        if user_status == "auto_paused":
-            onboarded = await db.has_onboarded(user["id"])
-            if onboarded:
-                required = await db.get_required_balance(user["id"])
-                if required and new_balance >= required["total_sats"]:
-                    await db.activate_user(user["id"])
-                    await send_dm(
-                        sender_hex,
-                        f"Received {amount_sats:,} sats. You're back to active. Setting up your next service now.",
-                    )
-                else:
-                    needed = (required["total_sats"] - new_balance) if required else 0
-                    await send_dm(
-                        sender_hex,
-                        f"Received {amount_sats:,} sats (balance: {new_balance:,}). Need {needed:,} more sats to resume.",
-                    )
+    if job_id:
+        # Try to mark the job as paid
+        try:
+            result = await api_client.mark_job_paid(job_id, zap_event_id=event_id)
+            status_code = result["status_code"]
+            if status_code == 200:
+                log.info("Job %s marked paid via zap %s from %s", job_id, event_id[:16], sender_hex[:16])
+                try:
+                    await send_dm(sender_hex, f"Payment received ({amount_sats:,} sats). Thanks.")
+                except Exception:
+                    log.debug("Could not send payment confirmation DM to %s", sender_hex[:16])
+            elif status_code == 409:
+                log.info("Job %s already paid (zap %s)", job_id, event_id[:16])
             else:
-                await send_dm(
-                    sender_hex,
-                    f"Received {amount_sats:,} sats (balance: {new_balance:,}). Complete your setup at unsaltedbutter.ai to get started.",
-                )
-        else:
-            await send_dm(
-                sender_hex,
-                f"Received {amount_sats:,} sats. New balance: {new_balance:,} sats.",
-            )
-    except Exception:
-        log.warning("Failed to send zap confirmation DM to %s", sender_hex[:16])
+                log.warning("Failed to mark job %s paid: %d %s", job_id, status_code, result["data"])
+                try:
+                    await send_dm(sender_hex, f"Received {amount_sats:,} sats but couldn't apply it. We'll sort it out.")
+                except Exception:
+                    pass
+        except Exception as e:
+            log.error("API error marking job %s paid: %s", job_id, e)
+            try:
+                await send_dm(sender_hex, f"Received {amount_sats:,} sats but hit an error. We'll sort it out.")
+            except Exception:
+                pass
+    else:
+        # No job reference, just acknowledge the zap
+        log.info("Zap %s from %s (%d sats), no job_id tag", event_id[:16], sender_hex[:16], amount_sats)
+        try:
+            await send_dm(sender_hex, f"Received {amount_sats:,} sats. No job reference found, so nothing was applied. If this was for an invoice, pay directly from the invoice link.")
+        except Exception:
+            log.debug("Could not DM zapper %s", sender_hex[:16])

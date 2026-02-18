@@ -1,18 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { withAuth } from "@/lib/auth";
 import { query, transaction } from "@/lib/db";
-import { getRequiredBalance } from "@/lib/margin-call";
-import { notifyOrchestrator } from "@/lib/orchestrator-notify";
 
 export const GET = withAuth(async (_req: NextRequest, { userId }) => {
   const result = await query(
     `SELECT rq.service_id, ss.display_name AS service_name, rq.position,
-            s.status AS subscription_status, s.subscription_end_date,
             sp.display_name AS plan_name, sp.monthly_price_cents AS plan_price_cents
      FROM rotation_queue rq
      JOIN streaming_services ss ON ss.id = rq.service_id
-     LEFT JOIN subscriptions s ON s.user_id = rq.user_id AND s.service_id = rq.service_id
-       AND s.status IN ('active', 'signup_scheduled', 'cancel_scheduled')
      LEFT JOIN service_plans sp ON sp.id = rq.plan_id
      WHERE rq.user_id = $1
      ORDER BY rq.position`,
@@ -102,8 +97,8 @@ export const PUT = withAuth(async (req: NextRequest, { userId }) => {
   });
 
   // Set onboarded_at on first queue save (completes onboarding)
-  const user = await query<{ onboarded_at: string | null; status: string }>(
-    "SELECT onboarded_at, status FROM users WHERE id = $1",
+  const user = await query<{ onboarded_at: string | null }>(
+    "SELECT onboarded_at FROM users WHERE id = $1",
     [userId]
   );
 
@@ -112,26 +107,6 @@ export const PUT = withAuth(async (req: NextRequest, { userId }) => {
       "UPDATE users SET onboarded_at = NOW(), updated_at = NOW() WHERE id = $1",
       [userId]
     );
-
-    // If auto_paused + sufficient balance, auto-activate
-    if (user.rows[0].status === "auto_paused") {
-      const required = await getRequiredBalance(order[0]);
-      const balanceResult = await query<{ credit_sats: string }>(
-        "SELECT COALESCE(credit_sats, 0) AS credit_sats FROM service_credits WHERE user_id = $1",
-        [userId]
-      );
-      const creditSats = balanceResult.rows.length > 0
-        ? Number(balanceResult.rows[0].credit_sats)
-        : 0;
-
-      if (creditSats >= required.totalSats) {
-        await query(
-          "UPDATE users SET status = 'active', paused_at = NULL, updated_at = NOW() WHERE id = $1",
-          [userId]
-        );
-        await notifyOrchestrator(userId);
-      }
-    }
   }
 
   return NextResponse.json({ success: true });

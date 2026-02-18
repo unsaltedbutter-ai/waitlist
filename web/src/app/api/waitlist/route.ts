@@ -17,8 +17,7 @@ export async function POST(req: NextRequest) {
   }
 
   let body: {
-    contactType: "email" | "npub";
-    contactValue: string;
+    nostrNpub: string;
   };
   try {
     body = await req.json();
@@ -26,32 +25,17 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
   }
 
-  const { contactType, contactValue } = body;
+  const { nostrNpub } = body;
 
-  if (!contactType || !contactValue) {
+  if (!nostrNpub) {
     return NextResponse.json(
-      { error: "Contact info required" },
-      { status: 400 }
-    );
-  }
-
-  if (contactType !== "email" && contactType !== "npub") {
-    return NextResponse.json(
-      { error: "contactType must be email or npub" },
-      { status: 400 }
-    );
-  }
-
-  // Validate email format
-  if (contactType === "email" && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(contactValue)) {
-    return NextResponse.json(
-      { error: "Invalid email format" },
+      { error: "nostrNpub is required" },
       { status: 400 }
     );
   }
 
   // Validate npub format (basic check)
-  if (contactType === "npub" && !contactValue.startsWith("npub1")) {
+  if (!nostrNpub.startsWith("npub1")) {
     return NextResponse.json(
       { error: "Invalid npub format" },
       { status: 400 }
@@ -59,37 +43,20 @@ export async function POST(req: NextRequest) {
   }
 
   // Check for duplicate
-  if (contactType === "email") {
-    const existing = await query(
-      "SELECT id FROM waitlist WHERE email = $1",
-      [contactValue.toLowerCase()]
+  const existing = await query(
+    "SELECT id FROM waitlist WHERE nostr_npub = $1",
+    [nostrNpub]
+  );
+  if (existing.rows.length > 0) {
+    return NextResponse.json(
+      { error: "You're already on the list." },
+      { status: 409 }
     );
-    if (existing.rows.length > 0) {
-      return NextResponse.json(
-        { error: "You're already on the list." },
-        { status: 409 }
-      );
-    }
-  } else {
-    const existing = await query(
-      "SELECT id FROM waitlist WHERE nostr_npub = $1",
-      [contactValue]
-    );
-    if (existing.rows.length > 0) {
-      return NextResponse.json(
-        { error: "You're already on the list." },
-        { status: 409 }
-      );
-    }
   }
 
   await query(
-    `INSERT INTO waitlist (email, nostr_npub)
-     VALUES ($1, $2)`,
-    [
-      contactType === "email" ? contactValue.toLowerCase() : null,
-      contactType === "npub" ? contactValue : null,
-    ]
+    "INSERT INTO waitlist (nostr_npub) VALUES ($1)",
+    [nostrNpub]
   );
 
   return NextResponse.json(
