@@ -173,6 +173,8 @@ main() {
         echo "     - AGENT_HMAC_SECRET  (shared HMAC secret with VPS)"
         echo "     - ZAP_PROVIDER_PUBKEY (Lightning provider's nostr pubkey)"
         echo "     - BOT_LUD16          (Lightning address for zaps)"
+        echo "     - VPS_BOT_PUBKEY     (hex pubkey of VPS private Nostr bot)"
+        echo "     - OPERATOR_NPUB      (operator's npub for admin commands)"
         echo "  2. Run the bot:"
         echo "     cd $BOT_DIR && venv/bin/python bot.py"
     else
