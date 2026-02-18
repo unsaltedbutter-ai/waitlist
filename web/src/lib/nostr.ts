@@ -17,7 +17,7 @@ export function npubToHex(npub: string): string {
   }
 
   if (trimmed.startsWith("npub1")) {
-    const decoded = bech32.decode(trimmed, 1_000);
+    const decoded = bech32.decode(trimmed as `${string}1${string}`, 1_000);
     if (decoded.prefix !== "npub") {
       throw new Error(`Expected npub prefix, got "${decoded.prefix}"`);
     }
