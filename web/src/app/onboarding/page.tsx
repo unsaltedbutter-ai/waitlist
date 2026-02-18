@@ -302,17 +302,14 @@ export default function OnboardingPage() {
             Add your services
           </h1>
           <p className="text-muted leading-relaxed text-sm">
-            Select the streaming services you want us to manage and provide
-            the login credentials for each. You can skip this step and add
-            services later from your dashboard.
+            Select the streaming services you want us to manage.
           </p>
         </div>
 
         {/* Credentials callout */}
         <div className="border-l-4 border-amber-500 bg-amber-500/[0.08] rounded-r-lg px-5 py-4">
           <p className="text-amber-200 text-sm font-medium leading-relaxed">
-            These are your accounts. Provide the email and password you use
-            to log in to each service.
+            Provide the email and password you use to log in to each service. We'll only use them when you explicitly ask us to, otherwise they stay encrypted.
           </p>
         </div>
 
@@ -561,8 +558,7 @@ export default function OnboardingPage() {
             Arrange your queue
           </h1>
           <p className="text-muted leading-relaxed">
-            Drag to reorder. Top of the list is where we start. When you ask
-            us to cancel one service and resume the next, we follow this order.
+            When you ask us to cancel one service and resume the next, we follow this order. Drag to reorder.
           </p>
         </div>
 
@@ -609,7 +605,7 @@ export default function OnboardingPage() {
           disabled={submitting}
           className="w-full py-3 px-4 bg-accent text-background font-semibold rounded hover:bg-accent/90 transition-colors disabled:opacity-50"
         >
-          {submitting ? "Saving..." : "Confirm queue order"}
+          {submitting ? "Saving..." : "Next"}
         </button>
       </div>
     );
@@ -662,9 +658,6 @@ export default function OnboardingPage() {
           <h1 className="text-4xl font-bold tracking-tight text-foreground mb-4">
             Almost there
           </h1>
-          <p className="text-muted leading-relaxed">
-            Read and accept the terms below to finish setup.
-          </p>
         </div>
 
         <div className="bg-surface border border-border rounded p-6 space-y-4">
@@ -675,21 +668,19 @@ export default function OnboardingPage() {
             <li className="flex gap-2">
               <span className="text-muted/60 shrink-0">&bull;</span>
               <span>
-                You keep your own streaming accounts. We cancel and resume
-                subscriptions on your behalf when you ask.
+                We cancel and resume subscriptions for you, when you ask.
               </span>
             </li>
             <li className="flex gap-2">
               <span className="text-muted/60 shrink-0">&bull;</span>
               <span>
-                You are charged after each action completes (not before).
+                We charge you per transaction.
               </span>
             </li>
             <li className="flex gap-2">
               <span className="text-muted/60 shrink-0">&bull;</span>
               <span>
-                Your credentials are encrypted and destroyed immediately if you
-                delete your account.
+                Your credentials are destroyed immediately when you destroy your account.
               </span>
             </li>
             <li className="flex gap-2">
@@ -738,7 +729,7 @@ export default function OnboardingPage() {
           />
           <span className="text-sm text-foreground leading-relaxed">
             I authorize UnsaltedButter to act on my behalf, including
-            cancelling and resuming streaming subscriptions using
+            cancelling and resuming subscriptions using
             the credentials I provided.
           </span>
         </label>
