@@ -12,7 +12,11 @@ import time
 from uuid import UUID
 
 import asyncpg
-import httpx
+
+try:
+    import httpx
+except ImportError:
+    httpx = None  # type: ignore[assignment]
 
 log = logging.getLogger(__name__)
 
@@ -331,6 +335,8 @@ _BTC_CACHE_TTL = 300  # 5 minutes
 
 async def _fetch_btc_price_usd() -> float:
     """Fetch BTC/USD from BTCPay (preferred) or CoinGecko fallback."""
+    if httpx is None:
+        raise RuntimeError("httpx not installed, cannot fetch BTC price")
     btcpay_url = os.environ.get("BTCPAY_URL", "")
     async with httpx.AsyncClient(timeout=10) as client:
         if btcpay_url:

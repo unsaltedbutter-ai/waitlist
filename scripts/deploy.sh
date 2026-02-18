@@ -465,8 +465,27 @@ echo "PM2 started"
 REMOTE_PM2
 
 # =============================================================================
-# 11. Restart nostr-bot (if service exists)
+# 11. Install bot deps + smoke test + restart
 # =============================================================================
+log "Updating nostr-bot dependencies..."
+
+${SSH_CMD} bash << 'REMOTE_BOT_DEPS'
+set -euo pipefail
+NOSTR_VENV="$HOME/venvs/nostr-bot"
+REMOTE_DIR="$HOME/unsaltedbutter"
+
+if [[ -d "$NOSTR_VENV" ]]; then
+    "$NOSTR_VENV/bin/pip" install -r "${REMOTE_DIR}/nostr-bot/requirements.txt" --quiet 2>&1
+    echo "Bot dependencies installed"
+
+    # Smoke test: verify all modules import cleanly
+    cd "${REMOTE_DIR}/nostr-bot"
+    "$NOSTR_VENV/bin/python" -c "import db; import commands; import notifications; import zap_handler; print('Bot smoke test passed')"
+else
+    echo "Bot venv missing (run with --setup-bots first)"
+fi
+REMOTE_BOT_DEPS
+
 ${SSH_CMD} bash << 'REMOTE_BOT_RESTART'
 if systemctl is-enabled unsaltedbutter-bot &>/dev/null; then
     if systemctl is-active unsaltedbutter-bot &>/dev/null; then
