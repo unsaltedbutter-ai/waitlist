@@ -101,17 +101,35 @@ export default function OperatorHubPage() {
       ],
     },
     {
-      href: "/operator/business",
-      title: "Revenue & Users",
+      href: "/operator/members",
+      title: "Members",
       lines: [
         `${totalUsers} total users`,
-        `${formatSats(satsIn)} sats earned (30d), ${formatSats(totalDebt)} sats debt`,
+        `${formatSats(totalDebt)} sats total debt`,
+      ],
+    },
+    {
+      href: "/operator/business",
+      title: "Revenue & Export",
+      lines: [
+        `${formatSats(satsIn)} sats earned (30d)`,
+        "CSV export for taxes",
       ],
     },
     {
       href: "/operator/waitlist",
       title: "Waitlist",
       lines: ["View capacity & invites"],
+    },
+    {
+      href: "/operator/health",
+      title: "System Health",
+      lines: ["Orchestrator, agent, inference"],
+    },
+    {
+      href: "/operator/blocklist",
+      title: "Blocklist",
+      lines: ["Reneged email management"],
     },
     {
       href: "/operator/dead-letter",

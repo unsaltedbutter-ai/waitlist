@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
+import Link from "next/link";
 import { authFetch } from "@/lib/hooks/use-auth";
 import {
   ProblemJobRow,
@@ -66,8 +67,12 @@ export default function DeadLetterPage() {
               </thead>
               <tbody>
                 {problemJobs.map((r) => (
-                  <tr key={r.id} className="border-b border-border/50">
-                    <td className={tdClass}>{r.service_name}</td>
+                  <tr key={r.id} className="border-b border-border/50 hover:bg-accent/5 cursor-pointer">
+                    <td className={tdClass}>
+                      <Link href={`/operator/jobs/${r.id}`} className="hover:text-accent">
+                        {r.service_name}
+                      </Link>
+                    </td>
                     <td className={tdMuted}>{r.flow_type}</td>
                     <td className="px-3 py-2 text-sm text-red-400">
                       {r.status}
