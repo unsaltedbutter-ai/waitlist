@@ -1,17 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { withAgentAuth } from "@/lib/agent-auth";
 import { query } from "@/lib/db";
+import { TERMINAL_STATUSES } from "@/lib/constants";
+import { getUserByNpub } from "@/lib/queries";
 
 const VALID_ACTIONS = ["cancel", "resume"];
-
-const TERMINAL_STATUSES = [
-  "completed_paid",
-  "completed_eventual",
-  "completed_reneged",
-  "user_skip",
-  "user_abandon",
-  "implied_skip",
-];
 
 export const POST = withAgentAuth(async (_req: NextRequest, { body: rawBody, params }) => {
   const npub = params?.npub;
@@ -19,8 +12,6 @@ export const POST = withAgentAuth(async (_req: NextRequest, { body: rawBody, par
   if (!npub) {
     return NextResponse.json({ error: "Missing npub" }, { status: 400 });
   }
-
-  const decodedNpub = decodeURIComponent(npub);
 
   let parsed: { service?: string; action?: string };
   try {
@@ -46,16 +37,11 @@ export const POST = withAgentAuth(async (_req: NextRequest, { body: rawBody, par
   }
 
   // Verify user exists
-  const userResult = await query<{ id: string; debt_sats: number }>(
-    "SELECT id, debt_sats FROM users WHERE nostr_npub = $1",
-    [decodedNpub]
-  );
+  const user = await getUserByNpub(npub);
 
-  if (userResult.rows.length === 0) {
+  if (!user) {
     return NextResponse.json({ error: "User not found" }, { status: 404 });
   }
-
-  const user = userResult.rows[0];
 
   // Check for outstanding debt
   if (user.debt_sats > 0) {

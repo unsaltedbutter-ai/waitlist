@@ -9,11 +9,9 @@ import React from "react";
 export interface JobsByService {
   service: string;
   pending: number;
-  claimed: number;
-  in_progress: number;
-  completed: number;
-  failed: number;
-  dead_letter: number;
+  dispatched: number;
+  active: number;
+  completed_paid: number;
 }
 
 export interface PerfRow {
@@ -33,12 +31,12 @@ export interface CacheRow {
   pct_14d: number;
 }
 
-export interface DeadLetterRow {
+export interface ProblemJobRow {
   id: string;
   service_name: string;
   flow_type: string;
-  error_message: string | null;
-  completed_at: string;
+  status: string;
+  status_updated_at: string;
 }
 
 export interface Alert {
@@ -52,8 +50,7 @@ export interface Alert {
 
 export interface WaitlistEntry {
   id: string;
-  email: string | null;
-  nostr_npub: string | null;
+  nostr_npub: string;
   invited: boolean;
   invited_at: string | null;
   created_at: string;
@@ -63,22 +60,6 @@ export interface CapacityInfo {
   activeUsers: number;
   cap: number;
   availableSlots: number;
-}
-
-export interface PendingRefund {
-  id: string;
-  contact: string;
-  amount_sats: number;
-  created_at: string;
-}
-
-export interface LedgerMonth {
-  month: string;
-  membership_revenue: number;
-  credit_deposits: number;
-  gift_card_purchases: number;
-  refunds: number;
-  net_flow: number;
 }
 
 export interface Metrics {
@@ -92,15 +73,12 @@ export interface Metrics {
   };
   playbook_cache: CacheRow[];
   business: {
-    users: Record<string, number>;
-    subscriptions: Record<string, number>;
+    total_users: number;
+    active_jobs: Record<string, number>;
     sats_in_30d: number;
-    sats_out_30d: number;
-    margin_call_count: number;
-    total_credit_liability: number;
-    total_refund_liability: number;
+    total_debt: number;
   };
-  dead_letter: DeadLetterRow[];
+  problem_jobs: ProblemJobRow[];
 }
 
 // ---------------------------------------------------------------------------

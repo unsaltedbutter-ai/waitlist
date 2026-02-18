@@ -116,12 +116,12 @@ async def test_service_aliases(mock_api):
     aliases = {
         "disney+": "disney_plus",
         "disney plus": "disney_plus",
-        "prime video": "prime_video",
-        "prime": "prime_video",
-        "apple tv+": "apple_tv_plus",
-        "paramount+": "paramount_plus",
-        "espn+": "espn_plus",
+        "apple tv+": "apple_tv",
+        "appletv": "apple_tv",
+        "paramount+": "paramount",
+        "paramount plus": "paramount",
         "hbo": "max",
+        "hbo max": "max",
         "max": "max",
         "peacock": "peacock",
     }

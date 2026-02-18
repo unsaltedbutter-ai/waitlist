@@ -1,8 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { verifyEvent, type Event } from "nostr-tools";
-import { query, transaction } from "@/lib/db";
-import { createToken, needsOnboarding } from "@/lib/auth";
-import { isAtCapacity } from "@/lib/capacity";
+import {
+  loginExistingUser,
+  createUserWithInvite,
+  validateInviteCode,
+} from "@/lib/auth-login";
 
 // Replay protection: track consumed event IDs with 5-minute TTL
 const consumedEvents = new Map<string, number>(); // eventId -> expiresAt (ms)
@@ -59,22 +61,13 @@ export async function POST(req: NextRequest) {
 
   const npub = event.pubkey;
 
-  // Check if user already exists
-  const existing = await query<{ id: string }>(
-    "SELECT id FROM users WHERE nostr_npub = $1",
-    [npub]
-  );
-
-  if (existing.rows.length > 0) {
-    // Existing user: login, no invite code needed
-    const userId = existing.rows[0].id;
-    await query("UPDATE users SET updated_at = NOW() WHERE id = $1", [userId]);
-    const token = await createToken(userId);
-    const onboarding = await needsOnboarding(userId);
-    return NextResponse.json({ token, userId, ...(onboarding && { needsOnboarding: true }) });
+  // Existing user: login
+  const loginResult = await loginExistingUser(npub);
+  if (loginResult) {
+    return NextResponse.json(loginResult.body, { status: loginResult.status });
   }
 
-  // New user — require invite code
+  // New user: require invite code
   if (!inviteCode) {
     return NextResponse.json(
       { error: "Invite code required" },
@@ -82,42 +75,14 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  // Validate invite code against waitlist (must not already be redeemed)
-  const codeCheck = await query<{ id: string }>(
-    "SELECT id FROM waitlist WHERE invite_code = $1 AND invited = TRUE AND redeemed_at IS NULL",
-    [inviteCode]
-  );
-  if (codeCheck.rows.length === 0) {
+  const waitlistId = await validateInviteCode(inviteCode);
+  if (!waitlistId) {
     return NextResponse.json(
       { error: "Invalid or expired invite code" },
       { status: 403 }
     );
   }
 
-  // Check capacity
-  if (await isAtCapacity()) {
-    return NextResponse.json(
-      { error: "At capacity" },
-      { status: 403 }
-    );
-  }
-
-  // Create user and redeem invite code in a single transaction
-  const userId = await transaction(async (txQuery) => {
-    const result = await txQuery<{ id: string }>(
-      `INSERT INTO users (nostr_npub, status)
-       VALUES ($1, 'auto_paused')
-       RETURNING id`,
-      [npub]
-    );
-    await txQuery(
-      "UPDATE waitlist SET redeemed_at = NOW() WHERE invite_code = $1",
-      [inviteCode]
-    );
-    return result.rows[0].id;
-  });
-
-  const token = await createToken(userId);
-
-  return NextResponse.json({ token, userId }, { status: 201 });
+  const result = await createUserWithInvite(npub, waitlistId);
+  return NextResponse.json(result.body, { status: result.status });
 }

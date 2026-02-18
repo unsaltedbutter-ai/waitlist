@@ -1,22 +1,18 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { TEST_JWT_SECRET, mockQueryResult } from "@/__test-utils__/fixtures";
+import { TEST_JWT_SECRET } from "@/__test-utils__/fixtures";
 import { generateSecretKey, getPublicKey, finalizeEvent } from "nostr-tools";
 
-vi.mock("@/lib/db", () => ({
-  query: vi.fn(),
-  transaction: vi.fn(),
-}));
-vi.mock("@/lib/auth", () => ({
-  createToken: vi.fn(),
-  needsOnboarding: vi.fn().mockResolvedValue(false),
-}));
-vi.mock("@/lib/capacity", () => ({
-  isAtCapacity: vi.fn(),
+vi.mock("@/lib/auth-login", () => ({
+  loginExistingUser: vi.fn(),
+  createUserWithInvite: vi.fn(),
+  validateInviteCode: vi.fn(),
 }));
 
-import { query, transaction } from "@/lib/db";
-import { createToken, needsOnboarding } from "@/lib/auth";
-import { isAtCapacity } from "@/lib/capacity";
+import {
+  loginExistingUser,
+  createUserWithInvite,
+  validateInviteCode,
+} from "@/lib/auth-login";
 import { POST } from "../route";
 
 function makeNip42Event(
@@ -54,28 +50,21 @@ function makeRequest(body: object): Request {
 beforeEach(() => {
   vi.unstubAllEnvs();
   vi.stubEnv("JWT_SECRET", TEST_JWT_SECRET);
-  vi.mocked(query).mockReset();
-  vi.mocked(transaction).mockReset();
-  vi.mocked(createToken).mockReset();
-  vi.mocked(createToken).mockResolvedValue("mock-jwt-token");
-  vi.mocked(needsOnboarding).mockReset();
-  vi.mocked(needsOnboarding).mockResolvedValue(false);
-  vi.mocked(isAtCapacity).mockReset();
-  vi.mocked(isAtCapacity).mockResolvedValue(false);
+  vi.mocked(loginExistingUser).mockReset();
+  vi.mocked(createUserWithInvite).mockReset();
+  vi.mocked(validateInviteCode).mockReset();
 });
 
 describe("Nostr auth (NIP-42)", () => {
   // --- Existing user path ---
 
-  it("existing user, valid NIP-42 event → 200 + token (no invite code needed)", async () => {
-    const { event, pubkey } = makeNip42Event();
+  it("existing user, valid NIP-42 event: 200 + token (no invite code needed)", async () => {
+    const { event } = makeNip42Event();
 
-    // SELECT: user found
-    vi.mocked(query).mockResolvedValueOnce(
-      mockQueryResult([{ id: "user-abc" }])
-    );
-    // UPDATE updated_at
-    vi.mocked(query).mockResolvedValueOnce(mockQueryResult([]));
+    vi.mocked(loginExistingUser).mockResolvedValueOnce({
+      status: 200,
+      body: { token: "mock-jwt-token", userId: "user-abc" },
+    });
 
     const res = await POST(makeRequest({ event }) as any);
     const data = await res.json();
@@ -83,25 +72,16 @@ describe("Nostr auth (NIP-42)", () => {
     expect(res.status).toBe(200);
     expect(data.token).toBe("mock-jwt-token");
     expect(data.userId).toBe("user-abc");
-    expect(query).toHaveBeenCalledWith(
-      expect.stringContaining("SELECT id FROM users"),
-      [pubkey]
-    );
-    expect(query).toHaveBeenCalledWith(
-      expect.stringContaining("UPDATE users SET updated_at"),
-      ["user-abc"]
-    );
+    expect(loginExistingUser).toHaveBeenCalledWith(event.pubkey);
   });
 
-  it("existing user, no invite code → 200", async () => {
+  it("existing user, no invite code: 200", async () => {
     const { event } = makeNip42Event();
 
-    // SELECT: user found
-    vi.mocked(query).mockResolvedValueOnce(
-      mockQueryResult([{ id: "user-existing" }])
-    );
-    // UPDATE updated_at
-    vi.mocked(query).mockResolvedValueOnce(mockQueryResult([]));
+    vi.mocked(loginExistingUser).mockResolvedValueOnce({
+      status: 200,
+      body: { token: "mock-jwt-token", userId: "user-existing" },
+    });
 
     const res = await POST(makeRequest({ event }) as any);
     expect(res.status).toBe(200);
@@ -110,14 +90,13 @@ describe("Nostr auth (NIP-42)", () => {
     expect(data.userId).toBe("user-existing");
   });
 
-  it("existing user, onboarding incomplete → needsOnboarding in response", async () => {
-    vi.mocked(needsOnboarding).mockResolvedValue(true);
+  it("existing user, onboarding incomplete: needsOnboarding in response", async () => {
     const { event } = makeNip42Event();
 
-    vi.mocked(query).mockResolvedValueOnce(
-      mockQueryResult([{ id: "user-abc" }])
-    );
-    vi.mocked(query).mockResolvedValueOnce(mockQueryResult([]));
+    vi.mocked(loginExistingUser).mockResolvedValueOnce({
+      status: 200,
+      body: { token: "mock-jwt-token", userId: "user-abc", needsOnboarding: true },
+    });
 
     const res = await POST(makeRequest({ event }) as any);
     expect(res.status).toBe(200);
@@ -127,11 +106,10 @@ describe("Nostr auth (NIP-42)", () => {
 
   // --- New user path ---
 
-  it("new user, no invite code → 403", async () => {
+  it("new user, no invite code: 403", async () => {
     const { event } = makeNip42Event();
 
-    // SELECT: no user found
-    vi.mocked(query).mockResolvedValueOnce(mockQueryResult([]));
+    vi.mocked(loginExistingUser).mockResolvedValueOnce(null);
 
     const res = await POST(makeRequest({ event }) as any);
     expect(res.status).toBe(403);
@@ -139,21 +117,14 @@ describe("Nostr auth (NIP-42)", () => {
     expect(data.error).toMatch(/invite code required/i);
   });
 
-  it("new user, valid code → 201", async () => {
+  it("new user, valid code: 201", async () => {
     const { event } = makeNip42Event();
 
-    // SELECT users: no user found
-    vi.mocked(query).mockResolvedValueOnce(mockQueryResult([]));
-    // SELECT waitlist: code found
-    vi.mocked(query).mockResolvedValueOnce(
-      mockQueryResult([{ id: "wl-1" }])
-    );
-    // transaction: insert user + redeem invite
-    vi.mocked(transaction).mockImplementationOnce(async (cb: any) => {
-      const txQuery = vi.fn()
-        .mockResolvedValueOnce(mockQueryResult([{ id: "new-user-xyz" }]))
-        .mockResolvedValueOnce(mockQueryResult([]));
-      return cb(txQuery);
+    vi.mocked(loginExistingUser).mockResolvedValueOnce(null);
+    vi.mocked(validateInviteCode).mockResolvedValueOnce("wl-1");
+    vi.mocked(createUserWithInvite).mockResolvedValueOnce({
+      status: 201,
+      body: { token: "mock-jwt-token", userId: "new-user-xyz" },
     });
 
     const res = await POST(
@@ -165,13 +136,11 @@ describe("Nostr auth (NIP-42)", () => {
     expect(data.userId).toBe("new-user-xyz");
   });
 
-  it("new user, invalid code → 403", async () => {
+  it("new user, invalid code: 403", async () => {
     const { event } = makeNip42Event();
 
-    // SELECT users: no user found
-    vi.mocked(query).mockResolvedValueOnce(mockQueryResult([]));
-    // SELECT waitlist: code not found
-    vi.mocked(query).mockResolvedValueOnce(mockQueryResult([]));
+    vi.mocked(loginExistingUser).mockResolvedValueOnce(null);
+    vi.mocked(validateInviteCode).mockResolvedValueOnce(null);
 
     const res = await POST(
       makeRequest({ event, inviteCode: "BADCODE" }) as any
@@ -181,16 +150,15 @@ describe("Nostr auth (NIP-42)", () => {
     expect(data.error).toMatch(/invalid or expired/i);
   });
 
-  it("new user, at capacity → 403", async () => {
+  it("new user, at capacity: 403", async () => {
     const { event } = makeNip42Event();
 
-    // SELECT users: no user found
-    vi.mocked(query).mockResolvedValueOnce(mockQueryResult([]));
-    // SELECT waitlist: code found
-    vi.mocked(query).mockResolvedValueOnce(
-      mockQueryResult([{ id: "wl-1" }])
-    );
-    vi.mocked(isAtCapacity).mockResolvedValueOnce(true);
+    vi.mocked(loginExistingUser).mockResolvedValueOnce(null);
+    vi.mocked(validateInviteCode).mockResolvedValueOnce("wl-1");
+    vi.mocked(createUserWithInvite).mockResolvedValueOnce({
+      status: 403,
+      body: { error: "At capacity" },
+    });
 
     const res = await POST(
       makeRequest({ event, inviteCode: "VALIDCODE123" }) as any
@@ -202,7 +170,7 @@ describe("Nostr auth (NIP-42)", () => {
 
   // --- Validation tests ---
 
-  it("wrong kind (not 22242) → 400", async () => {
+  it("wrong kind (not 22242): 400", async () => {
     const { event } = makeNip42Event({ kind: 1 });
 
     const res = await POST(makeRequest({ event }) as any);
@@ -211,7 +179,7 @@ describe("Nostr auth (NIP-42)", () => {
     expect(data.error).toMatch(/kind/i);
   });
 
-  it("invalid signature → 401", async () => {
+  it("invalid signature: 401", async () => {
     const { event } = makeNip42Event();
     const tampered = {
       ...event,
@@ -222,7 +190,7 @@ describe("Nostr auth (NIP-42)", () => {
     expect(res.status).toBe(401);
   });
 
-  it("expired event (>5 min old) → 401", async () => {
+  it("expired event (>5 min old): 401", async () => {
     const old = Math.floor(Date.now() / 1000) - 600;
     const { event } = makeNip42Event({ created_at: old });
 
@@ -230,7 +198,7 @@ describe("Nostr auth (NIP-42)", () => {
     expect(res.status).toBe(401);
   });
 
-  it("future event (>5 min ahead) → 401", async () => {
+  it("future event (>5 min ahead): 401", async () => {
     const future = Math.floor(Date.now() / 1000) + 600;
     const { event } = makeNip42Event({ created_at: future });
 
@@ -238,7 +206,7 @@ describe("Nostr auth (NIP-42)", () => {
     expect(res.status).toBe(401);
   });
 
-  it("missing event in body → 400", async () => {
+  it("missing event in body: 400", async () => {
     const res = await POST(makeRequest({}) as any);
     expect(res.status).toBe(400);
   });

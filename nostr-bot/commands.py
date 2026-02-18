@@ -13,22 +13,15 @@ SERVICE_ALIASES: dict[str, str] = {
     "disney+": "disney_plus",
     "disney plus": "disney_plus",
     "disneyplus": "disney_plus",
-    "prime": "prime_video",
-    "prime video": "prime_video",
-    "primevideo": "prime_video",
-    "amazon": "prime_video",
-    "apple tv": "apple_tv_plus",
-    "apple tv+": "apple_tv_plus",
-    "appletv": "apple_tv_plus",
-    "appletv+": "apple_tv_plus",
-    "paramount+": "paramount_plus",
-    "paramount plus": "paramount_plus",
-    "paramountplus": "paramount_plus",
-    "paramount": "paramount_plus",
+    "apple tv": "apple_tv",
+    "apple tv+": "apple_tv",
+    "appletv": "apple_tv",
+    "appletv+": "apple_tv",
+    "paramount+": "paramount",
+    "paramount plus": "paramount",
+    "paramountplus": "paramount",
+    "paramount": "paramount",
     "peacock": "peacock",
-    "espn+": "espn_plus",
-    "espn plus": "espn_plus",
-    "espn": "espn_plus",
     "max": "max",
     "hbo": "max",
     "hbo max": "max",
@@ -39,11 +32,9 @@ SERVICE_DISPLAY: dict[str, str] = {
     "netflix": "Netflix",
     "hulu": "Hulu",
     "disney_plus": "Disney+",
-    "prime_video": "Prime Video",
-    "apple_tv_plus": "Apple TV+",
-    "paramount_plus": "Paramount+",
+    "apple_tv": "Apple TV+",
+    "paramount": "Paramount+",
     "peacock": "Peacock",
-    "espn_plus": "ESPN+",
     "max": "Max",
 }
 
@@ -88,7 +79,7 @@ async def _cmd_action(npub_hex: str, service_input: str, action: str) -> str:
     """Handle cancel/resume commands by creating an on-demand job via the API."""
     service_id = _parse_service(service_input)
     if service_id is None:
-        return f"Unknown service: {service_input.strip()}\nTry: netflix, hulu, disney+, prime video, apple tv+, paramount+, peacock, espn+, max"
+        return f"Unknown service: {service_input.strip()}\nTry: netflix, hulu, disney+, apple tv+, paramount+, peacock, max"
 
     display = SERVICE_DISPLAY.get(service_id, service_id)
 

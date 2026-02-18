@@ -1,8 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
-import { query, transaction } from "@/lib/db";
-import { createToken, needsOnboarding } from "@/lib/auth";
-import { isAtCapacity } from "@/lib/capacity";
+import { query } from "@/lib/db";
 import { createRateLimiter, getClientIp } from "@/lib/rate-limit";
+import {
+  loginExistingUser,
+  createUserWithInvite,
+  lookupInviteByNpub,
+  validateInviteCode,
+} from "@/lib/auth-login";
 
 const limiter = createRateLimiter(5, 15 * 60 * 1000); // 5 attempts per 15 minutes
 
@@ -56,74 +60,34 @@ export async function POST(req: NextRequest) {
 
   const npubHex = otpResult.rows[0].npub_hex;
 
-  // Check if user already exists
-  const existing = await query<{ id: string }>(
-    "SELECT id FROM users WHERE nostr_npub = $1",
-    [npubHex]
-  );
-
-  if (existing.rows.length > 0) {
-    // Existing user: login
-    const userId = existing.rows[0].id;
-    await query("UPDATE users SET updated_at = NOW() WHERE id = $1", [userId]);
-    const token = await createToken(userId);
-    const onboarding = await needsOnboarding(userId);
-    return NextResponse.json({ token, userId, ...(onboarding && { needsOnboarding: true }) });
+  // Existing user: login
+  const loginResult = await loginExistingUser(npubHex);
+  if (loginResult) {
+    return NextResponse.json(loginResult.body, { status: loginResult.status });
   }
 
-  // New user: check for invite (auto-lookup by npub, fallback to explicit code)
-  // Track which waitlist row to redeem
-  let waitlistId: string | null = null;
+  // New user: auto-lookup invite by npub, fallback to explicit code
+  let waitlistId = await lookupInviteByNpub(npubHex);
 
-  const inviteCheck = await query<{ id: string }>(
-    "SELECT id FROM waitlist WHERE nostr_npub = $1 AND invited = TRUE AND redeemed_at IS NULL",
-    [npubHex]
-  );
-
-  if (inviteCheck.rows.length > 0) {
-    waitlistId = inviteCheck.rows[0].id;
-  } else {
-    // Fallback: check explicit invite code (e.g. email waitlist entry with separate npub)
+  if (!waitlistId) {
     if (!inviteCode) {
       return NextResponse.json(
         { error: "No invite found for this npub" },
         { status: 403 }
       );
     }
-    const codeCheck = await query<{ id: string }>(
-      "SELECT id FROM waitlist WHERE invite_code = $1 AND invited = TRUE AND redeemed_at IS NULL",
-      [inviteCode]
-    );
-    if (codeCheck.rows.length === 0) {
+    waitlistId = await validateInviteCode(inviteCode);
+    if (!waitlistId) {
       return NextResponse.json(
         { error: "Invalid or expired invite code" },
         { status: 403 }
       );
     }
-    waitlistId = codeCheck.rows[0].id;
   }
 
-  // Check capacity
-  if (await isAtCapacity()) {
-    return NextResponse.json({ error: "At capacity" }, { status: 403 });
-  }
-
-  // Create user and redeem invite in a single transaction
-  const userId = await transaction(async (txQuery) => {
-    const result = await txQuery<{ id: string }>(
-      `INSERT INTO users (nostr_npub, status)
-       VALUES ($1, 'auto_paused')
-       RETURNING id`,
-      [npubHex]
-    );
-    await txQuery(
-      "UPDATE waitlist SET redeemed_at = NOW() WHERE id = $1",
-      [waitlistId]
-    );
-    return result.rows[0].id;
-  });
-
-  const token = await createToken(userId);
-
-  return NextResponse.json({ token, userId, isNew: true }, { status: 201 });
+  const result = await createUserWithInvite(npubHex, waitlistId);
+  return NextResponse.json(
+    { ...result.body, isNew: true },
+    { status: result.status }
+  );
 }

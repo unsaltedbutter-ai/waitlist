@@ -6,8 +6,7 @@ const BOT_NPUB = process.env.NEXT_PUBLIC_NOSTR_BOT_NPUB ?? "";
 const BOT_NAME = process.env.NEXT_PUBLIC_NOSTR_BOT_NAME ?? "UnsaltedButter Bot";
 
 export default function WaitlistPage() {
-  const [contactType, setContactType] = useState<"email" | "npub">("npub");
-  const [contactValue, setContactValue] = useState("");
+  const [npub, setNpub] = useState("");
   const [status, setStatus] = useState<
     "idle" | "submitting" | "success" | "error"
   >("idle");
@@ -19,15 +18,18 @@ export default function WaitlistPage() {
     setStatus("submitting");
     setErrorMsg("");
 
+    const trimmed = npub.trim();
+    if (!trimmed.startsWith("npub1")) {
+      setStatus("error");
+      setErrorMsg("Enter a valid Nostr npub (starts with npub1).");
+      return;
+    }
+
     try {
       const res = await fetch("/api/waitlist", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          contactType,
-          contactValue,
-          currentServices: [],
-        }),
+        body: JSON.stringify({ nostrNpub: trimmed }),
       });
 
       const data = await res.json();
@@ -77,47 +79,17 @@ export default function WaitlistPage() {
 
         {/* Form */}
         <form onSubmit={handleSubmit} className="space-y-6">
-          {/* Contact type toggle */}
+          {/* npub input */}
           <div>
             <label className="block text-sm font-medium text-muted mb-2">
-              How should we reach you?
+              Your Nostr npub
             </label>
-            <div className="flex gap-2">
-              <button
-                type="button"
-                onClick={() => setContactType("npub")}
-                className={`flex-1 py-2 px-4 rounded text-sm font-medium border transition-colors ${
-                  contactType === "npub"
-                    ? "bg-accent text-background border-accent"
-                    : "bg-surface text-muted border-border hover:border-muted"
-                }`}
-              >
-                Nostr npub
-              </button>
-              <button
-                type="button"
-                onClick={() => setContactType("email")}
-                className={`flex-1 py-2 px-4 rounded text-sm font-medium border transition-colors ${
-                  contactType === "email"
-                    ? "bg-accent text-background border-accent"
-                    : "bg-surface text-muted border-border hover:border-muted"
-                }`}
-              >
-                Email
-              </button>
-            </div>
-          </div>
-
-          {/* Contact input */}
-          <div>
             <input
-              type={contactType === "email" ? "email" : "text"}
+              type="text"
               required
-              value={contactValue}
-              onChange={(e) => setContactValue(e.target.value)}
-              placeholder={
-                contactType === "email" ? "you@example.com" : "npub1..."
-              }
+              value={npub}
+              onChange={(e) => setNpub(e.target.value)}
+              placeholder="npub1..."
               className="w-full py-3 px-4 bg-surface border border-border rounded text-foreground placeholder:text-muted/50 focus:outline-none focus:border-accent"
             />
           </div>

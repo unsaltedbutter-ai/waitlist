@@ -79,19 +79,17 @@ export default function OperatorHubPage() {
   const totalJobs = jobs
     ? Object.values(jobs.by_status).reduce((a, b) => a + b, 0)
     : 0;
+  const completedPaid = jobs?.by_status.completed_paid || 0;
   const successRate =
     jobs && totalJobs > 0
-      ? Math.round(((jobs.by_status.completed || 0) / totalJobs) * 100)
+      ? Math.round((completedPaid / totalJobs) * 100)
       : 0;
 
   const biz = metrics?.business;
-  const activeUsers = biz?.users?.active ?? 0;
+  const totalUsers = biz?.total_users ?? 0;
   const satsIn = biz?.sats_in_30d ?? 0;
-  const satsOut = biz?.sats_out_30d ?? 0;
-  const deadLetterCount = metrics?.dead_letter?.length ?? 0;
-
-  // TODO: fetch from GET /api/operator/stats for job-revenue data
-  // (earned_sats, outstanding_sats) once the API exists
+  const totalDebt = biz?.total_debt ?? 0;
+  const problemJobCount = metrics?.problem_jobs?.length ?? 0;
 
   const navCards = [
     {
@@ -106,8 +104,8 @@ export default function OperatorHubPage() {
       href: "/operator/business",
       title: "Revenue & Users",
       lines: [
-        `${activeUsers} active users`,
-        `${formatSats(satsIn)} earned / ${formatSats(satsOut)} paid out (30d)`,
+        `${totalUsers} total users`,
+        `${formatSats(satsIn)} sats earned (30d), ${formatSats(totalDebt)} sats debt`,
       ],
     },
     {
@@ -117,8 +115,8 @@ export default function OperatorHubPage() {
     },
     {
       href: "/operator/dead-letter",
-      title: "Dead Letter",
-      lines: [`${deadLetterCount} items`],
+      title: "Problem Jobs",
+      lines: [`${problemJobCount} items`],
     },
   ];
 

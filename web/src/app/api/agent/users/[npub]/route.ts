@@ -1,15 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { withAgentAuth } from "@/lib/agent-auth";
 import { query } from "@/lib/db";
-
-const TERMINAL_STATUSES = [
-  "completed_paid",
-  "completed_eventual",
-  "completed_reneged",
-  "user_skip",
-  "user_abandon",
-  "implied_skip",
-];
+import { TERMINAL_STATUSES } from "@/lib/constants";
+import { getUserByNpub } from "@/lib/queries";
 
 export const GET = withAgentAuth(async (_req: NextRequest, { params }) => {
   const npub = params?.npub;
@@ -18,25 +11,11 @@ export const GET = withAgentAuth(async (_req: NextRequest, { params }) => {
     return NextResponse.json({ error: "Missing npub" }, { status: 400 });
   }
 
-  const decodedNpub = decodeURIComponent(npub);
+  const user = await getUserByNpub(npub);
 
-  // Look up user
-  const userResult = await query<{
-    id: string;
-    nostr_npub: string;
-    debt_sats: number;
-    onboarded_at: string | null;
-    created_at: string;
-  }>(
-    "SELECT id, nostr_npub, debt_sats, onboarded_at, created_at FROM users WHERE nostr_npub = $1",
-    [decodedNpub]
-  );
-
-  if (userResult.rows.length === 0) {
+  if (!user) {
     return NextResponse.json({ error: "User not found" }, { status: 404 });
   }
-
-  const user = userResult.rows[0];
 
   // Get user's services (from streaming_credentials joined with streaming_services)
   const servicesResult = await query<{

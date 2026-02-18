@@ -1,8 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { withAgentAuth } from "@/lib/agent-auth";
 import { transaction } from "@/lib/db";
-
-const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+import { UUID_REGEX } from "@/lib/constants";
 
 export const POST = withAgentAuth(async (_req: NextRequest, { body, params }) => {
   const jobId = params?.id;

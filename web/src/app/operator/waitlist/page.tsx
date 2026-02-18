@@ -119,7 +119,7 @@ export default function WaitlistPage() {
   );
 
   if (error === "Access denied.") {
-    return <p className="text-red-400 text-sm">403 — Not authorized.</p>;
+    return <p className="text-red-400 text-sm">403 -- Not authorized.</p>;
   }
 
   if (loading) return <p className="text-muted">Loading waitlist...</p>;
@@ -175,9 +175,7 @@ export default function WaitlistPage() {
                 {waitlist.map((entry) => (
                   <tr key={entry.id} className="border-b border-border/50">
                     <td className={tdClass}>
-                      {entry.email ?? (entry.nostr_npub ? (
-                        <NpubCell hex={entry.nostr_npub} />
-                      ) : "\u2014")}
+                      <NpubCell hex={entry.nostr_npub} />
                     </td>
                     <td className={tdMuted}>{formatDate(entry.created_at)}</td>
                     <td className={tdClass}>
@@ -208,7 +206,7 @@ export default function WaitlistPage() {
                             title="Click to copy"
                           />
                         ) : (
-                          <span className="text-xs text-muted">{"\u2014"}</span>
+                          <span className="text-xs text-muted">--</span>
                         )
                       ) : (
                         <button

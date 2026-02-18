@@ -43,7 +43,7 @@ export default function JobsPage() {
   }, [fetchData]);
 
   if (error === "Access denied.") {
-    return <p className="text-red-400 text-sm">403 — Not authorized.</p>;
+    return <p className="text-red-400 text-sm">403 -- Not authorized.</p>;
   }
 
   if (loading) return <p className="text-muted">Loading metrics...</p>;
@@ -65,40 +65,36 @@ export default function JobsPage() {
                 <tr className="border-b border-border">
                   <th className={thClass}>Service</th>
                   <th className={thClass}>Pending</th>
-                  <th className={thClass}>In Progress</th>
-                  <th className={thClass}>Completed</th>
-                  <th className={thClass}>Failed</th>
+                  <th className={thClass}>Dispatched</th>
+                  <th className={thClass}>Active</th>
+                  <th className={thClass}>Completed (Paid)</th>
                 </tr>
               </thead>
               <tbody>
                 {jobs.by_service.map((s) => (
                   <tr key={s.service} className="border-b border-border/50">
                     <td className={tdClass}>{s.service}</td>
-                    <td className={tdMuted}>{s.pending + s.claimed}</td>
-                    <td className={tdClass}>{s.in_progress}</td>
+                    <td className={tdMuted}>{s.pending}</td>
+                    <td className={tdMuted}>{s.dispatched}</td>
+                    <td className={tdClass}>{s.active}</td>
                     <td className="px-3 py-2 text-sm text-green-400">
-                      {s.completed}
-                    </td>
-                    <td className="px-3 py-2 text-sm text-red-400">
-                      {s.failed + s.dead_letter}
+                      {s.completed_paid}
                     </td>
                   </tr>
                 ))}
                 <tr className="font-medium">
                   <td className={tdClass}>Total</td>
                   <td className={tdMuted}>
-                    {(jobs.by_status.pending || 0) +
-                      (jobs.by_status.claimed || 0)}
+                    {jobs.by_status.pending || 0}
+                  </td>
+                  <td className={tdMuted}>
+                    {jobs.by_status.dispatched || 0}
                   </td>
                   <td className={tdClass}>
-                    {jobs.by_status.in_progress || 0}
+                    {jobs.by_status.active || 0}
                   </td>
                   <td className="px-3 py-2 text-sm text-green-400">
-                    {jobs.by_status.completed || 0}
-                  </td>
-                  <td className="px-3 py-2 text-sm text-red-400">
-                    {(jobs.by_status.failed || 0) +
-                      (jobs.by_status.dead_letter || 0)}
+                    {jobs.by_status.completed_paid || 0}
                   </td>
                 </tr>
               </tbody>

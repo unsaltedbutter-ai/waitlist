@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { withAgentAuth } from "@/lib/agent-auth";
 import { query } from "@/lib/db";
 import { decrypt } from "@/lib/crypto";
+import { getUserByNpub } from "@/lib/queries";
 
 const SERVICE_ID_REGEX = /^[a-z][a-z0-9_]{1,30}$/;
 
@@ -17,19 +18,13 @@ export const GET = withAgentAuth(async (_req: NextRequest, { params }) => {
     return NextResponse.json({ error: "Invalid service ID format" }, { status: 400 });
   }
 
-  const decodedNpub = decodeURIComponent(npub);
+  const user = await getUserByNpub(npub);
 
-  // Look up user by nostr_npub
-  const userResult = await query<{ id: string }>(
-    "SELECT id FROM users WHERE nostr_npub = $1",
-    [decodedNpub]
-  );
-
-  if (userResult.rows.length === 0) {
+  if (!user) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
-  const userId = userResult.rows[0].id;
+  const userId = user.id;
 
   // Verify a dispatched, active, or awaiting_otp job exists for this user+service
   const jobResult = await query<{ id: string }>(

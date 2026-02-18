@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { withAgentAuth } from "@/lib/agent-auth";
 import { transaction } from "@/lib/db";
+import { UUID_REGEX } from "@/lib/constants";
 
 export const POST = withAgentAuth(async (_req: NextRequest, { body }) => {
   let parsed: { job_ids: string[] };
@@ -26,9 +27,8 @@ export const POST = withAgentAuth(async (_req: NextRequest, { body }) => {
   }
 
   // Validate UUID format
-  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
   for (const id of job_ids) {
-    if (!uuidRegex.test(id)) {
+    if (!UUID_REGEX.test(id)) {
       return NextResponse.json(
         { error: `Invalid UUID: ${id}` },
         { status: 400 }

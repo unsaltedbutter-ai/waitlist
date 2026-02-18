@@ -1,14 +1,6 @@
 import { query } from "@/lib/db";
 import { pushJobsReady } from "@/lib/nostr-push";
-
-const TERMINAL_STATUSES = [
-  "completed_paid",
-  "completed_eventual",
-  "completed_reneged",
-  "user_skip",
-  "user_abandon",
-  "implied_skip",
-];
+import { TERMINAL_STATUSES } from "@/lib/constants";
 
 export interface CronResult {
   jobs_created: number;

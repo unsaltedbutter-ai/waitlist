@@ -4,7 +4,6 @@ import { useState, useEffect, useCallback } from "react";
 import { authFetch } from "@/lib/hooks/use-auth";
 import {
   Metrics,
-  LedgerMonth,
   StatCard,
   SectionHeader,
   formatSats,
@@ -13,9 +12,17 @@ import {
   tdMuted,
 } from "../_components";
 
+// Daily revenue data from GET /api/operator/revenue/daily
+interface DailyRevenue {
+  date: string;
+  sats: number;
+  cumulative_sats: number;
+  jobs: number;
+}
+
 export default function BusinessPage() {
   const [metrics, setMetrics] = useState<Metrics | null>(null);
-  const [ledger, setLedger] = useState<LedgerMonth[]>([]);
+  const [dailyRevenue, setDailyRevenue] = useState<DailyRevenue[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
@@ -23,9 +30,9 @@ export default function BusinessPage() {
     setLoading(true);
     setError("");
     try {
-      const [mRes, lRes] = await Promise.all([
+      const [mRes, rRes] = await Promise.all([
         authFetch("/api/operator/metrics"),
-        authFetch("/api/operator/ledger"),
+        authFetch("/api/operator/revenue/daily?days=90"),
       ]);
       if (mRes.status === 403) {
         setError("Access denied.");
@@ -36,9 +43,8 @@ export default function BusinessPage() {
         return;
       }
       setMetrics(await mRes.json());
-      if (lRes.ok) {
-        const lData = await lRes.json();
-        setLedger(lData.months);
+      if (rRes.ok) {
+        setDailyRevenue(await rRes.json());
       }
     } catch {
       setError("Failed to load data.");
@@ -61,9 +67,11 @@ export default function BusinessPage() {
 
   const biz = metrics.business;
 
-  // TODO: once GET /api/operator/stats returns job-based revenue
-  // (earned_sats, outstanding_debt_sats), replace sats_in/sats_out
-  // with those values.
+  // Count active jobs across all non-terminal statuses
+  const activeJobTotal = Object.values(biz.active_jobs).reduce(
+    (sum, n) => sum + n,
+    0
+  );
 
   return (
     <div className="space-y-8">
@@ -71,60 +79,49 @@ export default function BusinessPage() {
       <section>
         <SectionHeader>Revenue & Users</SectionHeader>
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
-          <StatCard label="Active Users" value={biz.users?.active ?? 0} />
+          <StatCard label="Total Users" value={biz.total_users} />
           <StatCard
-            label="Jobs Revenue (30d)"
-            value={`${formatSats(biz.sats_in_30d ?? 0)} sats`}
-            sub="earned from cancel/resume jobs"
+            label="Sats Earned (30d)"
+            value={`${formatSats(biz.sats_in_30d)} sats`}
+            sub="paid cancel/resume invoices"
           />
           <StatCard
             label="Outstanding Debt"
-            value={`${formatSats(biz.sats_out_30d ?? 0)} sats`}
+            value={`${formatSats(biz.total_debt)} sats`}
             sub="unpaid user balances"
           />
           <StatCard
-            label="Underfunded Users"
-            value={biz.margin_call_count ?? 0}
-            sub={
-              (biz.margin_call_count ?? 0) > 0
-                ? "users with debt"
-                : undefined
-            }
+            label="Active Jobs"
+            value={activeJobTotal}
+            sub="non-terminal jobs in system"
           />
         </div>
       </section>
 
-      {/* Monthly Ledger */}
+      {/* Daily Revenue Table */}
       <section>
-        <SectionHeader>Monthly Ledger</SectionHeader>
-        {ledger.length > 0 ? (
-          <div className="overflow-x-auto">
+        <SectionHeader>Daily Revenue (Last 90 Days)</SectionHeader>
+        {dailyRevenue.length > 0 ? (
+          <div className="overflow-x-auto max-h-96">
             <table className="w-full">
-              <thead>
+              <thead className="sticky top-0 bg-background">
                 <tr className="border-b border-border">
-                  <th className={thClass}>Month</th>
-                  <th className={thClass}>Jobs Revenue</th>
-                  <th className={thClass}>Payments In</th>
-                  <th className={thClass}>Net Flow</th>
+                  <th className={thClass}>Date</th>
+                  <th className={thClass}>Jobs</th>
+                  <th className={thClass}>Sats</th>
+                  <th className={thClass}>Cumulative</th>
                 </tr>
               </thead>
               <tbody>
-                {ledger.map((m) => (
-                  <tr key={m.month} className="border-b border-border/50">
-                    <td className={tdClass}>{m.month}</td>
-                    <td className={tdMuted}>
-                      {formatSats(m.membership_revenue)}
-                    </td>
+                {[...dailyRevenue].reverse().map((d) => (
+                  <tr key={d.date} className="border-b border-border/50">
+                    <td className={tdClass}>{d.date}</td>
+                    <td className={tdMuted}>{d.jobs}</td>
                     <td className="px-3 py-2 text-sm text-green-400">
-                      {formatSats(m.credit_deposits)}
+                      {formatSats(d.sats)}
                     </td>
-                    <td
-                      className={`px-3 py-2 text-sm font-medium ${
-                        m.net_flow >= 0 ? "text-green-400" : "text-red-400"
-                      }`}
-                    >
-                      {m.net_flow >= 0 ? "+" : ""}
-                      {formatSats(m.net_flow)}
+                    <td className={tdMuted}>
+                      {formatSats(d.cumulative_sats)}
                     </td>
                   </tr>
                 ))}
@@ -132,7 +129,7 @@ export default function BusinessPage() {
             </table>
           </div>
         ) : (
-          <p className="text-muted text-sm">No transaction data yet.</p>
+          <p className="text-muted text-sm">No revenue data yet.</p>
         )}
       </section>
     </div>

@@ -3,19 +3,21 @@ import { mockQueryResult } from "@/__test-utils__/fixtures";
 
 vi.mock("@/lib/db", () => ({
   query: vi.fn(),
-  transaction: vi.fn(),
 }));
-vi.mock("@/lib/auth", () => ({
-  createToken: vi.fn().mockResolvedValue("mock-jwt-token"),
-  needsOnboarding: vi.fn().mockResolvedValue(false),
-}));
-vi.mock("@/lib/capacity", () => ({
-  isAtCapacity: vi.fn().mockResolvedValue(false),
+vi.mock("@/lib/auth-login", () => ({
+  loginExistingUser: vi.fn(),
+  createUserWithInvite: vi.fn(),
+  lookupInviteByNpub: vi.fn(),
+  validateInviteCode: vi.fn(),
 }));
 
-import { query, transaction } from "@/lib/db";
-import { needsOnboarding } from "@/lib/auth";
-import { isAtCapacity } from "@/lib/capacity";
+import { query } from "@/lib/db";
+import {
+  loginExistingUser,
+  createUserWithInvite,
+  lookupInviteByNpub,
+  validateInviteCode,
+} from "@/lib/auth-login";
 import { POST } from "../route";
 
 const RATE_LIMIT_MAX = 5;
@@ -38,27 +40,39 @@ function makeRequest(body: object, ip?: string): Request {
   });
 }
 
+/** Set up standard OTP query mocks: cleanup expired + atomic delete returning npub_hex. */
+function mockOtpLookup(npubHex: string) {
+  // Cleanup expired
+  vi.mocked(query).mockResolvedValueOnce(mockQueryResult([]));
+  // Atomic delete returning npub_hex
+  vi.mocked(query).mockResolvedValueOnce(
+    mockQueryResult([{ npub_hex: npubHex }])
+  );
+}
+
+/** Set up OTP query mocks for a failed lookup (expired/wrong code). */
+function mockOtpLookupFailed() {
+  // Cleanup expired
+  vi.mocked(query).mockResolvedValueOnce(mockQueryResult([]));
+  // No matching row
+  vi.mocked(query).mockResolvedValueOnce(mockQueryResult([]));
+}
+
 beforeEach(() => {
   vi.mocked(query).mockReset();
-  vi.mocked(transaction).mockReset();
-  vi.mocked(isAtCapacity).mockResolvedValue(false);
-  vi.mocked(needsOnboarding).mockResolvedValue(false);
+  vi.mocked(loginExistingUser).mockReset();
+  vi.mocked(createUserWithInvite).mockReset();
+  vi.mocked(lookupInviteByNpub).mockReset();
+  vi.mocked(validateInviteCode).mockReset();
 });
 
 describe("POST /api/auth/nostr-otp", () => {
   it("valid OTP, existing user: 200 with token", async () => {
-    // Cleanup expired
-    vi.mocked(query).mockResolvedValueOnce(mockQueryResult([]));
-    // Atomic delete returning npub_hex
-    vi.mocked(query).mockResolvedValueOnce(
-      mockQueryResult([{ npub_hex: "aabb" }])
-    );
-    // User exists
-    vi.mocked(query).mockResolvedValueOnce(
-      mockQueryResult([{ id: "user-123" }])
-    );
-    // Update updated_at
-    vi.mocked(query).mockResolvedValueOnce(mockQueryResult([]));
+    mockOtpLookup("aabb");
+    vi.mocked(loginExistingUser).mockResolvedValueOnce({
+      status: 200,
+      body: { token: "mock-jwt-token", userId: "user-123" },
+    });
 
     const res = await POST(makeRequest({ code: "123456-789012" }) as any);
     expect(res.status).toBe(200);
@@ -69,24 +83,12 @@ describe("POST /api/auth/nostr-otp", () => {
   });
 
   it("valid OTP, new user + auto-lookup invite by npub: 201", async () => {
-    // Cleanup expired
-    vi.mocked(query).mockResolvedValueOnce(mockQueryResult([]));
-    // Atomic delete returning npub_hex
-    vi.mocked(query).mockResolvedValueOnce(
-      mockQueryResult([{ npub_hex: "ccdd" }])
-    );
-    // No existing user
-    vi.mocked(query).mockResolvedValueOnce(mockQueryResult([]));
-    // Auto-lookup: waitlist entry found by npub
-    vi.mocked(query).mockResolvedValueOnce(
-      mockQueryResult([{ id: "waitlist-1" }])
-    );
-    // transaction: insert user + redeem invite
-    vi.mocked(transaction).mockImplementationOnce(async (cb: any) => {
-      const txQuery = vi.fn()
-        .mockResolvedValueOnce(mockQueryResult([{ id: "new-user-456" }]))
-        .mockResolvedValueOnce(mockQueryResult([]));
-      return cb(txQuery);
+    mockOtpLookup("ccdd");
+    vi.mocked(loginExistingUser).mockResolvedValueOnce(null);
+    vi.mocked(lookupInviteByNpub).mockResolvedValueOnce("waitlist-1");
+    vi.mocked(createUserWithInvite).mockResolvedValueOnce({
+      status: 201,
+      body: { token: "mock-jwt-token", userId: "new-user-456" },
     });
 
     const res = await POST(
@@ -100,26 +102,13 @@ describe("POST /api/auth/nostr-otp", () => {
   });
 
   it("valid OTP, new user + explicit invite code fallback: 201", async () => {
-    // Cleanup expired
-    vi.mocked(query).mockResolvedValueOnce(mockQueryResult([]));
-    // Atomic delete returning npub_hex
-    vi.mocked(query).mockResolvedValueOnce(
-      mockQueryResult([{ npub_hex: "ccdd" }])
-    );
-    // No existing user
-    vi.mocked(query).mockResolvedValueOnce(mockQueryResult([]));
-    // Auto-lookup: no waitlist entry by npub
-    vi.mocked(query).mockResolvedValueOnce(mockQueryResult([]));
-    // Explicit invite code valid
-    vi.mocked(query).mockResolvedValueOnce(
-      mockQueryResult([{ id: "waitlist-2" }])
-    );
-    // transaction: insert user + redeem invite
-    vi.mocked(transaction).mockImplementationOnce(async (cb: any) => {
-      const txQuery = vi.fn()
-        .mockResolvedValueOnce(mockQueryResult([{ id: "new-user-789" }]))
-        .mockResolvedValueOnce(mockQueryResult([]));
-      return cb(txQuery);
+    mockOtpLookup("ccdd");
+    vi.mocked(loginExistingUser).mockResolvedValueOnce(null);
+    vi.mocked(lookupInviteByNpub).mockResolvedValueOnce(null);
+    vi.mocked(validateInviteCode).mockResolvedValueOnce("waitlist-2");
+    vi.mocked(createUserWithInvite).mockResolvedValueOnce({
+      status: 201,
+      body: { token: "mock-jwt-token", userId: "new-user-789" },
     });
 
     const res = await POST(
@@ -132,16 +121,9 @@ describe("POST /api/auth/nostr-otp", () => {
   });
 
   it("valid OTP, new user + no invite anywhere: 403", async () => {
-    // Cleanup expired
-    vi.mocked(query).mockResolvedValueOnce(mockQueryResult([]));
-    // Atomic delete returning npub_hex
-    vi.mocked(query).mockResolvedValueOnce(
-      mockQueryResult([{ npub_hex: "eeff" }])
-    );
-    // No existing user
-    vi.mocked(query).mockResolvedValueOnce(mockQueryResult([]));
-    // Auto-lookup: no waitlist entry by npub
-    vi.mocked(query).mockResolvedValueOnce(mockQueryResult([]));
+    mockOtpLookup("eeff");
+    vi.mocked(loginExistingUser).mockResolvedValueOnce(null);
+    vi.mocked(lookupInviteByNpub).mockResolvedValueOnce(null);
 
     const res = await POST(makeRequest({ code: "111111-222222" }) as any);
     expect(res.status).toBe(403);
@@ -150,18 +132,10 @@ describe("POST /api/auth/nostr-otp", () => {
   });
 
   it("valid OTP, new user + bad explicit invite: 403", async () => {
-    // Cleanup expired
-    vi.mocked(query).mockResolvedValueOnce(mockQueryResult([]));
-    // Atomic delete returning npub_hex
-    vi.mocked(query).mockResolvedValueOnce(
-      mockQueryResult([{ npub_hex: "eeff" }])
-    );
-    // No existing user
-    vi.mocked(query).mockResolvedValueOnce(mockQueryResult([]));
-    // Auto-lookup: no waitlist entry by npub
-    vi.mocked(query).mockResolvedValueOnce(mockQueryResult([]));
-    // Explicit invite code not found
-    vi.mocked(query).mockResolvedValueOnce(mockQueryResult([]));
+    mockOtpLookup("eeff");
+    vi.mocked(loginExistingUser).mockResolvedValueOnce(null);
+    vi.mocked(lookupInviteByNpub).mockResolvedValueOnce(null);
+    vi.mocked(validateInviteCode).mockResolvedValueOnce(null);
 
     const res = await POST(
       makeRequest({ code: "111111-222222", inviteCode: "BADCODE" }) as any
@@ -172,10 +146,7 @@ describe("POST /api/auth/nostr-otp", () => {
   });
 
   it("expired/wrong OTP: 401", async () => {
-    // Cleanup expired
-    vi.mocked(query).mockResolvedValueOnce(mockQueryResult([]));
-    // No matching row (expired or wrong code)
-    vi.mocked(query).mockResolvedValueOnce(mockQueryResult([]));
+    mockOtpLookupFailed();
 
     const res = await POST(makeRequest({ code: "999999-999999" }) as any);
     expect(res.status).toBe(401);
@@ -196,20 +167,13 @@ describe("POST /api/auth/nostr-otp", () => {
   });
 
   it("at capacity: 403", async () => {
-    vi.mocked(isAtCapacity).mockResolvedValue(true);
-
-    // Cleanup expired
-    vi.mocked(query).mockResolvedValueOnce(mockQueryResult([]));
-    // Atomic delete returning npub_hex
-    vi.mocked(query).mockResolvedValueOnce(
-      mockQueryResult([{ npub_hex: "aabb" }])
-    );
-    // No existing user
-    vi.mocked(query).mockResolvedValueOnce(mockQueryResult([]));
-    // Auto-lookup: waitlist entry found by npub
-    vi.mocked(query).mockResolvedValueOnce(
-      mockQueryResult([{ id: "waitlist-1" }])
-    );
+    mockOtpLookup("aabb");
+    vi.mocked(loginExistingUser).mockResolvedValueOnce(null);
+    vi.mocked(lookupInviteByNpub).mockResolvedValueOnce("waitlist-1");
+    vi.mocked(createUserWithInvite).mockResolvedValueOnce({
+      status: 403,
+      body: { error: "At capacity" },
+    });
 
     const res = await POST(
       makeRequest({ code: "111111-222222" }) as any
@@ -224,8 +188,7 @@ describe("POST /api/auth/nostr-otp", () => {
 
     // Set up query mocks for the first 5 requests (all will fail with wrong code)
     for (let i = 0; i < RATE_LIMIT_MAX + 1; i++) {
-      vi.mocked(query).mockResolvedValueOnce(mockQueryResult([])); // cleanup
-      vi.mocked(query).mockResolvedValueOnce(mockQueryResult([])); // no match
+      mockOtpLookupFailed();
     }
 
     // Exhaust the rate limit
@@ -241,18 +204,11 @@ describe("POST /api/auth/nostr-otp", () => {
   });
 
   it("accepts code without hyphen", async () => {
-    // Cleanup expired
-    vi.mocked(query).mockResolvedValueOnce(mockQueryResult([]));
-    // Atomic delete returning npub_hex
-    vi.mocked(query).mockResolvedValueOnce(
-      mockQueryResult([{ npub_hex: "aabb" }])
-    );
-    // User exists
-    vi.mocked(query).mockResolvedValueOnce(
-      mockQueryResult([{ id: "user-123" }])
-    );
-    // Update
-    vi.mocked(query).mockResolvedValueOnce(mockQueryResult([]));
+    mockOtpLookup("aabb");
+    vi.mocked(loginExistingUser).mockResolvedValueOnce({
+      status: 200,
+      body: { token: "mock-jwt-token", userId: "user-123" },
+    });
 
     const ip = uniqueIp();
     const res = await POST(
@@ -266,20 +222,11 @@ describe("POST /api/auth/nostr-otp", () => {
   });
 
   it("existing user, onboarding incomplete: returns needsOnboarding", async () => {
-    vi.mocked(needsOnboarding).mockResolvedValue(true);
-
-    // Cleanup expired
-    vi.mocked(query).mockResolvedValueOnce(mockQueryResult([]));
-    // Atomic delete returning npub_hex
-    vi.mocked(query).mockResolvedValueOnce(
-      mockQueryResult([{ npub_hex: "aabb" }])
-    );
-    // User exists
-    vi.mocked(query).mockResolvedValueOnce(
-      mockQueryResult([{ id: "user-123" }])
-    );
-    // Update updated_at
-    vi.mocked(query).mockResolvedValueOnce(mockQueryResult([]));
+    mockOtpLookup("aabb");
+    vi.mocked(loginExistingUser).mockResolvedValueOnce({
+      status: 200,
+      body: { token: "mock-jwt-token", userId: "user-123", needsOnboarding: true },
+    });
 
     const res = await POST(makeRequest({ code: "123456-789012" }) as any);
     expect(res.status).toBe(200);
@@ -289,20 +236,11 @@ describe("POST /api/auth/nostr-otp", () => {
   });
 
   it("existing user, onboarding complete: no needsOnboarding flag", async () => {
-    vi.mocked(needsOnboarding).mockResolvedValue(false);
-
-    // Cleanup expired
-    vi.mocked(query).mockResolvedValueOnce(mockQueryResult([]));
-    // Atomic delete returning npub_hex
-    vi.mocked(query).mockResolvedValueOnce(
-      mockQueryResult([{ npub_hex: "aabb" }])
-    );
-    // User exists
-    vi.mocked(query).mockResolvedValueOnce(
-      mockQueryResult([{ id: "user-123" }])
-    );
-    // Update updated_at
-    vi.mocked(query).mockResolvedValueOnce(mockQueryResult([]));
+    mockOtpLookup("aabb");
+    vi.mocked(loginExistingUser).mockResolvedValueOnce({
+      status: 200,
+      body: { token: "mock-jwt-token", userId: "user-123" },
+    });
 
     const res = await POST(makeRequest({ code: "123456-789012" }) as any);
     expect(res.status).toBe(200);
@@ -312,24 +250,12 @@ describe("POST /api/auth/nostr-otp", () => {
   });
 
   it("new user signup: no needsOnboarding flag (isNew is sufficient)", async () => {
-    // Cleanup expired
-    vi.mocked(query).mockResolvedValueOnce(mockQueryResult([]));
-    // Atomic delete returning npub_hex
-    vi.mocked(query).mockResolvedValueOnce(
-      mockQueryResult([{ npub_hex: "ccdd" }])
-    );
-    // No existing user
-    vi.mocked(query).mockResolvedValueOnce(mockQueryResult([]));
-    // Auto-lookup: waitlist entry found by npub
-    vi.mocked(query).mockResolvedValueOnce(
-      mockQueryResult([{ id: "waitlist-1" }])
-    );
-    // transaction: insert user + redeem invite
-    vi.mocked(transaction).mockImplementationOnce(async (cb: any) => {
-      const txQuery = vi.fn()
-        .mockResolvedValueOnce(mockQueryResult([{ id: "new-user-456" }]))
-        .mockResolvedValueOnce(mockQueryResult([]));
-      return cb(txQuery);
+    mockOtpLookup("ccdd");
+    vi.mocked(loginExistingUser).mockResolvedValueOnce(null);
+    vi.mocked(lookupInviteByNpub).mockResolvedValueOnce("waitlist-1");
+    vi.mocked(createUserWithInvite).mockResolvedValueOnce({
+      status: 201,
+      body: { token: "mock-jwt-token", userId: "new-user-456" },
     });
 
     const res = await POST(makeRequest({ code: "111111222222" }) as any);
