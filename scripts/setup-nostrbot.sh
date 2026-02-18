@@ -12,6 +12,8 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 BOT_DIR="$PROJECT_ROOT/nostr-bot"
 VENV_DIR="$BOT_DIR/venv"
+ENV_DIR="$HOME/.unsaltedbutter"
+ENV_FILE="$ENV_DIR/nostr.env"
 MIN_PYTHON="3.11"
 
 # ── OS detection ──────────────────────────────────────────────
@@ -121,17 +123,19 @@ main() {
     "$VENV_DIR/bin/pip" install -r "$BOT_DIR/requirements.txt" --quiet
     echo "Dependencies installed."
 
-    # 6. Create .env from example if it doesn't exist
-    if [ ! -f "$BOT_DIR/.env" ]; then
-        cp "$BOT_DIR/.env.example" "$BOT_DIR/.env"
-        chmod 600 "$BOT_DIR/.env"
+    # 6. Create env file from example if it doesn't exist
+    #    Bot loads from ~/.unsaltedbutter/nostr.env (keeps secrets out of repo)
+    mkdir -p "$ENV_DIR"
+    if [ ! -f "$ENV_FILE" ]; then
+        cp "$BOT_DIR/.env.example" "$ENV_FILE"
+        chmod 600 "$ENV_FILE"
         echo ""
-        echo "Created .env from .env.example (chmod 600)."
-        echo ">>> EDIT $BOT_DIR/.env with your actual values before running the bot. <<<"
+        echo "Created $ENV_FILE from .env.example (chmod 600)."
+        echo ">>> EDIT $ENV_FILE with your actual values before running the bot. <<<"
         NEEDS_CONFIG=true
     else
-        chmod 600 "$BOT_DIR/.env"
-        echo ".env:  exists (permissions verified)"
+        chmod 600 "$ENV_FILE"
+        echo "Config: $ENV_FILE (exists, permissions verified)"
         NEEDS_CONFIG=false
     fi
 
@@ -162,12 +166,12 @@ main() {
     echo ""
     echo "Bot directory:  $BOT_DIR"
     echo "Venv:           $VENV_DIR"
-    echo "Config:         $BOT_DIR/.env"
+    echo "Config:         $ENV_FILE"
     echo ""
 
     if [ "$NEEDS_CONFIG" = true ]; then
         echo "NEXT STEPS:"
-        echo "  1. Edit $BOT_DIR/.env with your real values:"
+        echo "  1. Edit $ENV_FILE with your real values:"
         echo "     - NOSTR_NSEC          (bot's private key)"
         echo "     - API_BASE_URL       (VPS URL, e.g. https://unsaltedbutter.ai)"
         echo "     - AGENT_HMAC_SECRET  (shared HMAC secret with VPS)"
@@ -215,7 +219,7 @@ WorkingDirectory=$BOT_DIR
 ExecStart=$VENV_DIR/bin/python bot.py
 Restart=always
 RestartSec=10
-EnvironmentFile=$BOT_DIR/.env
+EnvironmentFile=$ENV_DIR/nostr.env
 
 # Hardening
 NoNewPrivileges=yes
