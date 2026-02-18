@@ -5,8 +5,8 @@ import { getRequiredBalance } from "@/lib/margin-call";
 import { notifyOrchestrator } from "@/lib/orchestrator-notify";
 
 export const POST = withAuth(async (_req: NextRequest, { userId }) => {
-  const userResult = await query<{ status: string }>(
-    "SELECT status FROM users WHERE id = $1",
+  const userResult = await query<{ status: string; onboarded_at: string | null }>(
+    "SELECT status, onboarded_at FROM users WHERE id = $1",
     [userId]
   );
 
@@ -14,11 +14,18 @@ export const POST = withAuth(async (_req: NextRequest, { userId }) => {
     return NextResponse.json({ error: "User not found" }, { status: 404 });
   }
 
-  const { status } = userResult.rows[0];
+  const { status, onboarded_at } = userResult.rows[0];
 
-  if (status !== "paused") {
+  if (status !== "paused" && status !== "auto_paused") {
     return NextResponse.json(
-      { error: "Can only unpause from paused state" },
+      { error: "Can only unpause from paused or auto_paused state" },
+      { status: 409 }
+    );
+  }
+
+  if (status === "auto_paused" && !onboarded_at) {
+    return NextResponse.json(
+      { error: "Complete onboarding first" },
       { status: 409 }
     );
   }

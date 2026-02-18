@@ -25,6 +25,7 @@ def mock_db():
         m.skip_service = AsyncMock()
         m.stay_service = AsyncMock()
         m.pause_user = AsyncMock()
+        m.get_required_balance = AsyncMock(return_value=None)
         yield m
 
 
@@ -103,8 +104,44 @@ async def test_status_auto_paused_shows_status_line(mock_db):
         "credit_sats": 1000,
         "next_service": "Netflix",
     }
+    mock_db.get_required_balance.return_value = {
+        "platform_fee_sats": 4400,
+        "gift_card_cost_sats": 25000,
+        "total_sats": 29400,
+    }
     result = await commands.handle_dm(USER_ID, "auto_paused", "status")
     assert "Status: Paused (low balance)" in result
+    assert "Zap me 28,400 sats to keep things moving." in result
+
+
+@pytest.mark.asyncio
+async def test_status_auto_paused_no_shortfall_skips_zap(mock_db):
+    mock_db.get_user_status.return_value = {
+        "subscription": None,
+        "credit_sats": 50000,
+        "next_service": "Netflix",
+    }
+    mock_db.get_required_balance.return_value = {
+        "platform_fee_sats": 4400,
+        "gift_card_cost_sats": 25000,
+        "total_sats": 29400,
+    }
+    result = await commands.handle_dm(USER_ID, "auto_paused", "status")
+    assert "Status: Paused (low balance)" in result
+    assert "Zap me" not in result
+
+
+@pytest.mark.asyncio
+async def test_status_auto_paused_no_queue_skips_zap(mock_db):
+    mock_db.get_user_status.return_value = {
+        "subscription": None,
+        "credit_sats": 1000,
+        "next_service": None,
+    }
+    mock_db.get_required_balance.return_value = None
+    result = await commands.handle_dm(USER_ID, "auto_paused", "status")
+    assert "Status: Paused (low balance)" in result
+    assert "Zap me" not in result
 
 
 # -- queue ----------------------------------------------------------------

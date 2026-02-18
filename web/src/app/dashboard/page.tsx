@@ -440,6 +440,7 @@ export default function DashboardPage() {
   // Pause/unpause
   const [pauseLoading, setPauseLoading] = useState(false);
   const [unpauseError, setUnpauseError] = useState("");
+  const [shortfallSats, setShortfallSats] = useState<number | null>(null);
 
   // Confirmation dialogs
   const [confirmAction, setConfirmAction] = useState<{
@@ -502,6 +503,24 @@ export default function DashboardPage() {
     }
   }, [authLoading, user, fetchData]);
 
+  // Fetch shortfall when auto_paused
+  const fetchShortfall = useCallback(async () => {
+    if (!user || user.status !== "auto_paused") return;
+    try {
+      const res = await authFetch("/api/required-balance");
+      if (res.ok) {
+        const data = await res.json();
+        setShortfallSats(data.shortfall_sats);
+      }
+    } catch {
+      // Non-critical, leave null
+    }
+  }, [user]);
+
+  useEffect(() => {
+    fetchShortfall();
+  }, [fetchShortfall]);
+
   // ---------- Derived data ----------
 
   // Split queue into pinned (active/scheduled) and sortable (queued)
@@ -554,12 +573,13 @@ export default function DashboardPage() {
             order: fullReordered.map((q) => q.service_id),
           }),
         });
+        fetchShortfall();
       } catch {
         // Revert on failure
         setQueue(queue);
       }
     },
-    [queue, pinnedItems, sortableItems]
+    [queue, pinnedItems, sortableItems, fetchShortfall]
   );
 
   // ---------- Stay / Skip ----------
@@ -1005,7 +1025,9 @@ export default function DashboardPage() {
 
                 {user.status === "auto_paused" && (
                   <p className="text-sm text-amber-400">
-                    Paused (low balance). Add sats to resume automatically.
+                    {shortfallSats !== null && shortfallSats > 0
+                      ? `Paused (low balance). Add at least ${formatSats(shortfallSats)} sats to resume automatically.`
+                      : "Paused (low balance). Add sats to resume automatically."}
                   </p>
                 )}
 

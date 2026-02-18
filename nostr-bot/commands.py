@@ -9,15 +9,15 @@ log = logging.getLogger(__name__)
 
 HELP_TEXT = (
     "Commands:\n"
-    "  login  : get a one-time code to sign in on the website\n"
-    "  status : current sub, balance, next service\n"
-    "  queue  : full rotation order\n"
-    "  skip   : move current service to end of queue\n"
-    "  stay   : extend current subscription instead of rotating\n"
-    "  pause  : pause your account (no fees while paused)\n"
-    "  help   : this message\n"
+    "  login \n  - get a one-time code to sign in on the website\n"
+    "  status \n  - current sub, balance, next service\n"
+    "  queue \n  - full rotation order\n"
+    "  skip \n  - move current service to end of queue\n"
+    "  stay \n  - extend current subscription instead of rotating\n"
+    "  pause \n  - pause your account (no fees while paused)\n"
+    "  help \n  - this message\n"
     "\n"
-    "Zap this bot to add sats to your credit balance."
+    "Zap me to add service credits."
 )
 
 
@@ -63,6 +63,16 @@ async def _cmd_status(user_id: UUID, user_status: str = "active") -> str:
 
     if info["next_service"]:
         lines.append(f"Next: {info['next_service']}")
+
+    if user_status == "auto_paused":
+        try:
+            req = await db.get_required_balance(user_id)
+            if req:
+                shortfall = req["total_sats"] - info["credit_sats"]
+                if shortfall > 0:
+                    lines.append(f"Zap me {shortfall:,} sats to keep things moving.")
+        except Exception:
+            pass  # Non-critical, skip if price fetch fails
 
     return "\n".join(lines)
 

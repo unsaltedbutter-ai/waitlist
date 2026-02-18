@@ -49,9 +49,9 @@ beforeEach(() => {
 
 describe("POST /api/unpause", () => {
   it("activates paused user with sufficient balance", async () => {
-    // SELECT status
+    // SELECT status, onboarded_at
     vi.mocked(query).mockResolvedValueOnce(
-      mockQueryResult([{ status: "paused" }])
+      mockQueryResult([{ status: "paused", onboarded_at: "2025-01-01" }])
     );
     // SELECT rotation_queue (next service)
     vi.mocked(query).mockResolvedValueOnce(
@@ -84,21 +84,17 @@ describe("POST /api/unpause", () => {
   });
 
   it("returns 402 with shortfall when insufficient balance", async () => {
-    // SELECT status
     vi.mocked(query).mockResolvedValueOnce(
-      mockQueryResult([{ status: "paused" }])
+      mockQueryResult([{ status: "paused", onboarded_at: "2025-01-01" }])
     );
-    // SELECT rotation_queue
     vi.mocked(query).mockResolvedValueOnce(
       mockQueryResult([{ service_id: "netflix" }])
     );
-    // getRequiredBalance
     vi.mocked(getRequiredBalance).mockResolvedValueOnce({
       platformFeeSats: 4400,
       giftCardCostSats: 20000,
       totalSats: 24400,
     });
-    // SELECT service_credits (insufficient)
     vi.mocked(query).mockResolvedValueOnce(
       mockQueryResult([{ credit_sats: "5000" }])
     );
@@ -120,7 +116,7 @@ describe("POST /api/unpause", () => {
 
   it("does not notify orchestrator when active sub exists", async () => {
     vi.mocked(query).mockResolvedValueOnce(
-      mockQueryResult([{ status: "paused" }])
+      mockQueryResult([{ status: "paused", onboarded_at: "2025-01-01" }])
     );
     vi.mocked(query).mockResolvedValueOnce(
       mockQueryResult([{ service_id: "hulu" }])
@@ -151,7 +147,7 @@ describe("POST /api/unpause", () => {
 
   it("rejects unpause from non-paused state", async () => {
     vi.mocked(query).mockResolvedValueOnce(
-      mockQueryResult([{ status: "active" }])
+      mockQueryResult([{ status: "active", onboarded_at: "2025-01-01" }])
     );
 
     const res = await POST(
@@ -160,6 +156,52 @@ describe("POST /api/unpause", () => {
     );
 
     expect(res.status).toBe(409);
+  });
+
+  it("activates auto_paused user with sufficient balance", async () => {
+    vi.mocked(query).mockResolvedValueOnce(
+      mockQueryResult([{ status: "auto_paused", onboarded_at: "2025-01-01" }])
+    );
+    vi.mocked(query).mockResolvedValueOnce(
+      mockQueryResult([{ service_id: "netflix" }])
+    );
+    vi.mocked(getRequiredBalance).mockResolvedValueOnce({
+      platformFeeSats: 4400,
+      giftCardCostSats: 25000,
+      totalSats: 29400,
+    });
+    vi.mocked(query).mockResolvedValueOnce(
+      mockQueryResult([{ credit_sats: "35000" }])
+    );
+    // UPDATE users to active
+    vi.mocked(query).mockResolvedValueOnce(mockQueryResult([]));
+    // SELECT subscriptions
+    vi.mocked(query).mockResolvedValueOnce(mockQueryResult([]));
+
+    const res = await POST(
+      makeRequest() as any,
+      { params: Promise.resolve({}) }
+    );
+    const data = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(data.ok).toBe(true);
+    expect(notifyOrchestrator).toHaveBeenCalledWith("user-1");
+  });
+
+  it("rejects auto_paused user who has not completed onboarding", async () => {
+    vi.mocked(query).mockResolvedValueOnce(
+      mockQueryResult([{ status: "auto_paused", onboarded_at: null }])
+    );
+
+    const res = await POST(
+      makeRequest() as any,
+      { params: Promise.resolve({}) }
+    );
+    const data = await res.json();
+
+    expect(res.status).toBe(409);
+    expect(data.error).toBe("Complete onboarding first");
   });
 
   it("requires auth", async () => {

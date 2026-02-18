@@ -208,7 +208,10 @@ export default function OnboardingPage() {
 
   // Step 4 state (payment)
   const [platformFeeSats, setPlatformFeeSats] = useState(0);
+  const [giftCardCostSats, setGiftCardCostSats] = useState(0);
   const [creditSats, setCreditSats] = useState(0);
+  const [totalNeededSats, setTotalNeededSats] = useState(0);
+  const [shortfallSats, setShortfallSats] = useState(0);
   const [balanceLoaded, setBalanceLoaded] = useState(false);
   const [invoice, setInvoice] = useState<{
     invoiceId: string;
@@ -240,17 +243,18 @@ export default function OnboardingPage() {
       .catch(() => {});
   }, []);
 
-  // Fetch platform config + balance when reaching step 4
+  // Fetch required balance breakdown when reaching step 4
   useEffect(() => {
     if (step !== 4) return;
     setBalanceLoaded(false);
-    Promise.all([
-      fetch("/api/platform-config").then((r) => r.json()),
-      authFetch("/api/credits").then((r) => r.json()),
-    ])
-      .then(([configData, creditsData]) => {
-        setPlatformFeeSats(configData.platform_fee_sats);
-        setCreditSats(creditsData.credit_sats);
+    authFetch("/api/required-balance")
+      .then((r) => r.json())
+      .then((data) => {
+        setPlatformFeeSats(data.platform_fee_sats);
+        setGiftCardCostSats(data.gift_card_cost_sats);
+        setCreditSats(data.credit_sats);
+        setTotalNeededSats(data.total_sats);
+        setShortfallSats(data.shortfall_sats);
         setBalanceLoaded(true);
       })
       .catch(() => {
@@ -356,11 +360,7 @@ export default function OnboardingPage() {
   const minPrice = selectedPrices.length > 0 ? Math.min(...selectedPrices) : 0;
   const maxPrice = selectedPrices.length > 0 ? Math.max(...selectedPrices) : 0;
 
-  // Estimate first gift card cost in sats (rough: 1 cent ~ 10 sats)
-  const firstServiceCostSats = queue.length > 0 ? queue[0].priceCents * 10 : 0;
-  const totalNeededSats = platformFeeSats + firstServiceCostSats;
   const hasSufficientBalance = balanceLoaded && creditSats >= totalNeededSats;
-  const shortfallSats = totalNeededSats > creditSats ? totalNeededSats - creditSats : 0;
 
   // --- Consent capture ---
   async function recordConsent(consentType: "authorization" | "confirmation") {
@@ -1312,7 +1312,7 @@ export default function OnboardingPage() {
                   First gift card ({queue[0]?.groupLabel})
                 </span>
                 <span className="text-foreground">
-                  ~{formatSats(firstServiceCostSats)} sats
+                  ~{formatSats(giftCardCostSats)} sats
                 </span>
               </div>
             </div>
@@ -1366,7 +1366,7 @@ export default function OnboardingPage() {
                 First gift card ({queue[0]?.groupLabel})
               </span>
               <span className="text-foreground">
-                ~{formatSats(firstServiceCostSats)} sats
+                ~{formatSats(giftCardCostSats)} sats
               </span>
             </div>
             {creditSats > 0 && (

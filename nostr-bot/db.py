@@ -5,11 +5,14 @@ as parameters. We keep UUIDs native throughout — only convert to str for displ
 """
 
 import logging
+import math
 import os
 import secrets
+import time
 from uuid import UUID
 
 import asyncpg
+import httpx
 
 log = logging.getLogger(__name__)
 
@@ -322,8 +325,60 @@ async def get_platform_fee() -> int:
     return int(row["value"]) if row else 4400
 
 
+_btc_price_cache: dict = {"price": None, "at": 0.0}
+_BTC_CACHE_TTL = 300  # 5 minutes
+
+
+async def _fetch_btc_price_usd() -> float:
+    """Fetch BTC/USD from BTCPay (preferred) or CoinGecko fallback."""
+    btcpay_url = os.environ.get("BTCPAY_URL", "")
+    async with httpx.AsyncClient(timeout=10) as client:
+        if btcpay_url:
+            try:
+                r = await client.get(f"{btcpay_url}/api/rates?currencyPair=BTC_USD")
+                if r.status_code == 200:
+                    data = r.json()
+                    if data and data[0].get("rate"):
+                        return float(data[0]["rate"])
+            except Exception:
+                pass
+        r = await client.get(
+            "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd"
+        )
+        r.raise_for_status()
+        return float(r.json()["bitcoin"]["usd"])
+
+
+async def _usd_cents_to_sats(cents: int) -> int:
+    """Convert USD cents to sats at live BTC price (cached 5 min)."""
+    now = time.monotonic()
+    if _btc_price_cache["price"] and now - _btc_price_cache["at"] < _BTC_CACHE_TTL:
+        price = _btc_price_cache["price"]
+    else:
+        price = await _fetch_btc_price_usd()
+        _btc_price_cache["price"] = price
+        _btc_price_cache["at"] = now
+    sats_per_cent = 100_000_000 / (price * 100)
+    return math.ceil(cents * sats_per_cent)
+
+
+def _select_denomination(
+    monthly_price_cents: int, denominations: list[int] | None
+) -> int:
+    """Pick the smallest gift card denomination covering at least 28 days."""
+    if not denominations:
+        return monthly_price_cents
+    min_amount = math.ceil((monthly_price_cents / 30) * 28)
+    sorted_denoms = sorted(denominations)
+    pick = next((d for d in sorted_denoms if d >= min_amount), None)
+    return pick if pick is not None else sorted_denoms[-1]
+
+
 async def get_required_balance(user_id: UUID) -> dict | None:
     """Get the required balance for the user's next rotation.
+
+    Picks the smallest gift card denomination covering 28 days,
+    converts to sats at live BTC price.
 
     Returns {"platform_fee_sats", "gift_card_cost_sats", "total_sats"} or None if no queue.
     """
@@ -332,11 +387,11 @@ async def get_required_balance(user_id: UUID) -> dict | None:
 
     row = await pool.fetchrow(
         """
-        SELECT sp.monthly_price_cents
+        SELECT ss.monthly_price_cents, ss.gift_card_denominations_cents
         FROM rotation_queue rq
-        JOIN service_plans sp ON sp.service_id = rq.service_id
-        WHERE rq.user_id = $1 AND rq.position = 1
-        ORDER BY sp.monthly_price_cents ASC
+        JOIN streaming_services ss ON ss.id = rq.service_id
+        WHERE rq.user_id = $1
+        ORDER BY rq.position
         LIMIT 1
         """,
         user_id,
@@ -344,7 +399,11 @@ async def get_required_balance(user_id: UUID) -> dict | None:
     if row is None:
         return None
 
-    gift_card_cost_sats = row["monthly_price_cents"] * 10
+    denomination_cents = _select_denomination(
+        row["monthly_price_cents"], row["gift_card_denominations_cents"]
+    )
+    gift_card_cost_sats = await _usd_cents_to_sats(denomination_cents)
+
     return {
         "platform_fee_sats": platform_fee,
         "gift_card_cost_sats": gift_card_cost_sats,
