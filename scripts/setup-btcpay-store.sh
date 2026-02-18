@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-# setup-btcpay-store.sh — Configure BTCPay store, Lightning, API key, webhook
+# setup-btcpay-store.sh: Configure BTCPay store, Lightning, API key, webhook
 #
 # Run ON THE VPS as butter:
 #   ./setup-btcpay-store.sh --password YOUR_BTCPAY_PASSWORD
@@ -105,7 +105,7 @@ else
     DOCKER_GATEWAY="172.18.0.1"
     echo "  WARNING: Could not detect BTCPay container. Defaulting to ${DOCKER_GATEWAY}"
 fi
-WEBHOOK_URL="http://${DOCKER_GATEWAY}:3000/api/credits/webhook"
+WEBHOOK_URL="http://${DOCKER_GATEWAY}:3000/api/btcpay/webhook"
 
 WH_RAW=$(curl -sf -u "${BTCPAY_EMAIL}:${PASSWORD}" \
     -X POST \

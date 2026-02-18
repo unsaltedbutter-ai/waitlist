@@ -95,17 +95,12 @@ fi
 validate_hex "$NPUB_HEX"
 echo "npub hex: ${NPUB_HEX}"
 
-# ── Check if already a paid member ───────────────────────────
+# -- Check if user already exists --------------------------------
 
 EXISTING_USER=$(run_sql "SELECT id FROM users WHERE nostr_npub = '${NPUB_HEX}'" || true)
 if [[ -n "$EXISTING_USER" ]]; then
     validate_uuid "$EXISTING_USER"
-    HAS_PAID=$(run_sql "SELECT COUNT(*) FROM membership_payments WHERE user_id = '${EXISTING_USER}' AND status = 'paid'" || true)
-    if [[ "${HAS_PAID:-0}" -gt 0 ]]; then
-        echo "User ${NPUB_HEX:0:16}... is already a paid member (${EXISTING_USER}). Nothing to do."
-        exit 0
-    fi
-    echo "User exists but hasn't paid: ${EXISTING_USER}"
+    echo "User exists: ${EXISTING_USER}"
 fi
 
 # ── Waitlist logic ───────────────────────────────────────────
@@ -130,29 +125,18 @@ else
     echo "Created waitlist invite (code: ${INVITE_CODE})"
 fi
 
-# ── Operator mode ────────────────────────────────────────────
+# -- Operator mode -----------------------------------------------
 
 if $OPERATOR; then
-    # Create user row if not exists
+    # Create user row if not exists (v4 schema: nostr_npub, onboarded_at)
     if [[ -z "$EXISTING_USER" ]]; then
-        EXISTING_USER=$(run_sql "INSERT INTO users (nostr_npub, status, membership_plan, billing_period) VALUES ('${NPUB_HEX}', 'active', 'solo', 'monthly') RETURNING id")
+        EXISTING_USER=$(run_sql "INSERT INTO users (nostr_npub, onboarded_at) VALUES ('${NPUB_HEX}', NOW()) RETURNING id")
         if [[ -z "$EXISTING_USER" ]]; then
             echo "ERROR: Failed to create user row"
             exit 1
         fi
         validate_uuid "$EXISTING_USER"
         echo "Created user row: ${EXISTING_USER}"
-    fi
-
-    # Bootstrap membership so operator skips onboarding
-    HAS_BOOTSTRAP=$(run_sql "SELECT COUNT(*) FROM membership_payments WHERE user_id = '${EXISTING_USER}' AND btcpay_invoice_id = 'OPERATOR_BOOTSTRAP'" || true)
-    if [[ "${HAS_BOOTSTRAP:-0}" -eq 0 ]]; then
-        run_sql "INSERT INTO membership_payments (user_id, btcpay_invoice_id, amount_sats, amount_usd_cents, period_start, period_end, status) VALUES ('${EXISTING_USER}', 'OPERATOR_BOOTSTRAP', 0, 0, NOW(), '2099-12-31', 'paid') ON CONFLICT (btcpay_invoice_id) DO NOTHING" >/dev/null
-        run_sql "UPDATE users SET membership_expires_at = '2099-12-31' WHERE id = '${EXISTING_USER}'" >/dev/null
-        run_sql "INSERT INTO service_credits (user_id, credit_sats) VALUES ('${EXISTING_USER}', 0) ON CONFLICT (user_id) DO NOTHING" >/dev/null
-        echo "Bootstrapped operator membership (expires 2099-12-31)"
-    else
-        echo "Operator membership already bootstrapped."
     fi
 
     # Check current OPERATOR_USER_ID
