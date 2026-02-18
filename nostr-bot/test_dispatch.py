@@ -169,10 +169,12 @@ async def test_invites_operator(handler, mock_api):
 @pytest.mark.asyncio
 async def test_invites_non_operator_unregistered(handler, mock_api):
     mock_api.get_user.return_value = None
+    mock_api.add_to_waitlist.return_value = {"status": "added", "invite_code": None}
 
     result = await handler._dispatch_command(UNREGISTERED_NPUB_HEX, "invites")
 
-    assert result == "Join the waitlist"
+    assert "on the waitlist" in result.lower()
+    mock_api.add_to_waitlist.assert_awaited_once_with(UNREGISTERED_NPUB_HEX)
 
 
 @pytest.mark.asyncio
@@ -191,10 +193,12 @@ async def test_invites_non_operator_registered(handler, mock_api, mock_commands)
 @pytest.mark.asyncio
 async def test_unknown_command_unregistered(handler, mock_api):
     mock_api.get_user.return_value = None
+    mock_api.add_to_waitlist.return_value = {"status": "added", "invite_code": None}
 
     result = await handler._dispatch_command(UNREGISTERED_NPUB_HEX, "gibberish")
 
-    assert result == "Join the waitlist"
+    assert "on the waitlist" in result.lower()
+    mock_api.add_to_waitlist.assert_awaited_once_with(UNREGISTERED_NPUB_HEX)
 
 
 @pytest.mark.asyncio

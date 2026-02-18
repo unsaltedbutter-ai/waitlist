@@ -38,14 +38,14 @@ describe("GET /api/operator/waitlist", () => {
     const entries = [
       {
         id: "wl-1",
-        nostr_npub: "npub1first",
+        nostr_npub: "aabb".repeat(16),
         invited: false,
         invited_at: null,
         created_at: "2025-01-01T00:00:00Z",
       },
       {
         id: "wl-2",
-        nostr_npub: "npub1second",
+        nostr_npub: "ccdd".repeat(16),
         invited: true,
         invited_at: "2025-01-15T00:00:00Z",
         created_at: "2025-01-10T00:00:00Z",
@@ -65,7 +65,7 @@ describe("GET /api/operator/waitlist", () => {
     expect(data.entries).toHaveLength(2);
     expect(data.entries[0].id).toBe("wl-1");
     expect(data.entries[1].id).toBe("wl-2");
-    expect(data.entries[0].nostr_npub).toBe("npub1first");
+    expect(data.entries[0].nostr_npub).toBe("aabb".repeat(16));
   });
 
   it("includes capacity stats correctly", async () => {

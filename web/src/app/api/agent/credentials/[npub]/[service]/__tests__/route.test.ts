@@ -90,7 +90,7 @@ describe("GET /api/agent/credentials/[npub]/[service]", () => {
     mockActiveJob();
     mockCredentialsFound();
 
-    const res = await callGET("npub1abc123", "netflix");
+    const res = await callGET("aabb".repeat(16), "netflix");
     expect(res.status).toBe(200);
 
     const data = await res.json();
@@ -104,7 +104,7 @@ describe("GET /api/agent/credentials/[npub]/[service]", () => {
     mockActiveJob();
     mockCredentialsFound();
 
-    const res = await callGET("npub1abc123", "apple_tv");
+    const res = await callGET("aabb".repeat(16), "apple_tv");
     expect(res.status).toBe(200);
 
     const data = await res.json();
@@ -118,7 +118,7 @@ describe("GET /api/agent/credentials/[npub]/[service]", () => {
     mockActiveJob();
     mockCredentialsFound();
 
-    const res = await callGET("npub1abc123", "netflix");
+    const res = await callGET("aabb".repeat(16), "netflix");
     expect(res.status).toBe(200);
 
     const data = await res.json();
@@ -132,7 +132,7 @@ describe("GET /api/agent/credentials/[npub]/[service]", () => {
     mockUserFound();
     mockNoActiveJob(); // pending jobs won't match the IN ('active','awaiting_otp') filter
 
-    const res = await callGET("npub1abc123", "netflix");
+    const res = await callGET("aabb".repeat(16), "netflix");
     expect(res.status).toBe(403);
 
     const data = await res.json();
@@ -143,7 +143,7 @@ describe("GET /api/agent/credentials/[npub]/[service]", () => {
     mockUserFound();
     mockNoActiveJob(); // completed_paid won't match the filter
 
-    const res = await callGET("npub1abc123", "hulu");
+    const res = await callGET("aabb".repeat(16), "hulu");
     expect(res.status).toBe(403);
 
     const data = await res.json();
@@ -154,7 +154,7 @@ describe("GET /api/agent/credentials/[npub]/[service]", () => {
     mockUserFound();
     mockNoActiveJob();
 
-    const res = await callGET("npub1abc123", "disney_plus");
+    const res = await callGET("aabb".repeat(16), "disney_plus");
     expect(res.status).toBe(403);
 
     const data = await res.json();
@@ -164,7 +164,7 @@ describe("GET /api/agent/credentials/[npub]/[service]", () => {
   it("user not found (bad npub): returns 404", async () => {
     mockUserNotFound();
 
-    const res = await callGET("npub1nonexistent", "netflix");
+    const res = await callGET("eeff".repeat(16), "netflix");
     expect(res.status).toBe(404);
 
     const data = await res.json();
@@ -178,7 +178,7 @@ describe("GET /api/agent/credentials/[npub]/[service]", () => {
     mockActiveJob();
     mockNoCredentials();
 
-    const res = await callGET("npub1abc123", "peacock");
+    const res = await callGET("aabb".repeat(16), "peacock");
     expect(res.status).toBe(404);
 
     const data = await res.json();
@@ -193,7 +193,7 @@ describe("GET /api/agent/credentials/[npub]/[service]", () => {
     mockActiveJob();
     mockCredentialsFound("email-data", "pass-data");
 
-    const res = await callGET("npub1abc123", "netflix");
+    const res = await callGET("aabb".repeat(16), "netflix");
     expect(res.status).toBe(200);
 
     const data = await res.json();
@@ -201,9 +201,9 @@ describe("GET /api/agent/credentials/[npub]/[service]", () => {
     expect(data.password).toBe("decrypted-pass-data");
   });
 
-  it("npub with special characters in URL: proper decoding", async () => {
-    const npubWithSpecial = "npub1abc+def/ghi";
-    const encoded = encodeURIComponent(npubWithSpecial);
+  it("URL-encoded hex npub: proper decoding", async () => {
+    const hexNpub = "aabb".repeat(16);
+    const encoded = encodeURIComponent(hexNpub);
 
     mockUserFound();
     mockActiveJob();
@@ -219,9 +219,9 @@ describe("GET /api/agent/credentials/[npub]/[service]", () => {
     });
     expect(res.status).toBe(200);
 
-    // Verify the user lookup used the decoded npub
+    // Verify the user lookup used the decoded hex npub
     const userQuery = vi.mocked(query).mock.calls[0];
-    expect(userQuery[1]).toEqual([npubWithSpecial]);
+    expect(userQuery[1]).toEqual([hexNpub]);
   });
 
   it("service_id that doesn't match any streaming_services: returns 404 (no user or 403)", async () => {
@@ -229,7 +229,7 @@ describe("GET /api/agent/credentials/[npub]/[service]", () => {
     mockUserFound();
     mockNoActiveJob();
 
-    const res = await callGET("npub1abc123", "nonexistent_service");
+    const res = await callGET("aabb".repeat(16), "nonexistent_service");
     expect(res.status).toBe(403);
 
     const data = await res.json();
@@ -239,7 +239,7 @@ describe("GET /api/agent/credentials/[npub]/[service]", () => {
   // --- Service ID format validation ---
 
   it("rejects service ID with uppercase letters (400)", async () => {
-    const res = await callGET("npub1abc123", "Netflix");
+    const res = await callGET("aabb".repeat(16), "Netflix");
     expect(res.status).toBe(400);
 
     const data = await res.json();
@@ -248,7 +248,7 @@ describe("GET /api/agent/credentials/[npub]/[service]", () => {
   });
 
   it("rejects service ID with SQL injection attempt (400)", async () => {
-    const res = await callGET("npub1abc123", "x' OR '1'='1");
+    const res = await callGET("aabb".repeat(16), "x' OR '1'='1");
     expect(res.status).toBe(400);
 
     const data = await res.json();
@@ -257,7 +257,7 @@ describe("GET /api/agent/credentials/[npub]/[service]", () => {
   });
 
   it("rejects service ID starting with a digit (400)", async () => {
-    const res = await callGET("npub1abc123", "1netflix");
+    const res = await callGET("aabb".repeat(16), "1netflix");
     expect(res.status).toBe(400);
 
     const data = await res.json();
@@ -267,7 +267,7 @@ describe("GET /api/agent/credentials/[npub]/[service]", () => {
 
   it("rejects service ID that is too long (400)", async () => {
     const longId = "a" + "b".repeat(31); // 32 chars, exceeds max of 31
-    const res = await callGET("npub1abc123", longId);
+    const res = await callGET("aabb".repeat(16), longId);
     expect(res.status).toBe(400);
 
     const data = await res.json();
@@ -276,7 +276,7 @@ describe("GET /api/agent/credentials/[npub]/[service]", () => {
   });
 
   it("rejects single-character service ID (400)", async () => {
-    const res = await callGET("npub1abc123", "a");
+    const res = await callGET("aabb".repeat(16), "a");
     expect(res.status).toBe(400);
 
     const data = await res.json();
@@ -289,7 +289,7 @@ describe("GET /api/agent/credentials/[npub]/[service]", () => {
     mockActiveJob();
     mockCredentialsFound();
 
-    const res = await callGET("npub1abc123", "apple_tv");
+    const res = await callGET("aabb".repeat(16), "apple_tv");
     expect(res.status).toBe(200);
   });
 
@@ -300,11 +300,11 @@ describe("GET /api/agent/credentials/[npub]/[service]", () => {
     mockActiveJob();
     mockCredentialsFound();
 
-    await callGET("npub1xyz789", "hulu");
+    await callGET("ccdd".repeat(16), "hulu");
 
     const userCall = vi.mocked(query).mock.calls[0];
     expect(userCall[0]).toContain("nostr_npub");
-    expect(userCall[1]).toEqual(["npub1xyz789"]);
+    expect(userCall[1]).toEqual(["ccdd".repeat(16)]);
   });
 
   it("passes correct params to job lookup query", async () => {
@@ -312,7 +312,7 @@ describe("GET /api/agent/credentials/[npub]/[service]", () => {
     mockActiveJob();
     mockCredentialsFound();
 
-    await callGET("npub1xyz789", "paramount");
+    await callGET("ccdd".repeat(16), "paramount");
 
     const jobCall = vi.mocked(query).mock.calls[1];
     expect(jobCall[0]).toContain("dispatched");
@@ -326,7 +326,7 @@ describe("GET /api/agent/credentials/[npub]/[service]", () => {
     mockActiveJob();
     mockCredentialsFound();
 
-    await callGET("npub1xyz789", "paramount");
+    await callGET("ccdd".repeat(16), "paramount");
 
     const credCall = vi.mocked(query).mock.calls[2];
     expect(credCall[0]).toContain("streaming_credentials");
@@ -338,7 +338,7 @@ describe("GET /api/agent/credentials/[npub]/[service]", () => {
     mockActiveJob();
     mockCredentialsFound("raw-email-bytes", "raw-password-bytes");
 
-    await callGET("npub1abc123", "netflix");
+    await callGET("aabb".repeat(16), "netflix");
 
     expect(decrypt).toHaveBeenCalledTimes(2);
     expect(decrypt).toHaveBeenCalledWith(Buffer.from("raw-email-bytes"));

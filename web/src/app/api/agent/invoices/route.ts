@@ -3,6 +3,7 @@ import { withAgentAuth } from "@/lib/agent-auth";
 import { query, transaction } from "@/lib/db";
 import { createLightningInvoice } from "@/lib/btcpay-invoice";
 import { parseJsonBody } from "@/lib/parse-json-body";
+import { npubToHex } from "@/lib/nostr";
 
 export const POST = withAgentAuth(async (_req: NextRequest, { body: rawBody }) => {
   const { data: parsed, error } = parseJsonBody<{
@@ -28,11 +29,21 @@ export const POST = withAgentAuth(async (_req: NextRequest, { body: rawBody }) =
     );
   }
 
+  let npubHex: string;
+  try {
+    npubHex = npubToHex(user_npub);
+  } catch {
+    return NextResponse.json(
+      { error: "Invalid user_npub" },
+      { status: 400 }
+    );
+  }
+
   try {
     // Verify user exists
     const userResult = await query<{ id: string }>(
       "SELECT id FROM users WHERE nostr_npub = $1",
-      [user_npub]
+      [npubHex]
     );
 
     if (userResult.rows.length === 0) {
@@ -74,7 +85,7 @@ export const POST = withAgentAuth(async (_req: NextRequest, { body: rawBody }) =
     try {
       invoice = await createLightningInvoice({
         amountSats: amount_sats,
-        metadata: { job_id, user_npub },
+        metadata: { job_id, user_npub: npubHex },
       });
     } catch {
       return NextResponse.json(

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { query } from "@/lib/db";
 import { createRateLimiter, getClientIp } from "@/lib/rate-limit";
+import { npubToHex } from "@/lib/nostr";
 
 const limiter = createRateLimiter(5, 15 * 60 * 1000); // 5 attempts per 15 minutes
 
@@ -34,8 +35,11 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  // Validate npub format (basic check)
-  if (!nostrNpub.startsWith("npub1")) {
+  // Validate and normalize npub to hex
+  let npubHex: string;
+  try {
+    npubHex = npubToHex(nostrNpub);
+  } catch {
     return NextResponse.json(
       { error: "Invalid npub format" },
       { status: 400 }
@@ -46,7 +50,7 @@ export async function POST(req: NextRequest) {
     // Check for duplicate
     const existing = await query(
       "SELECT id FROM waitlist WHERE nostr_npub = $1",
-      [nostrNpub]
+      [npubHex]
     );
     if (existing.rows.length > 0) {
       return NextResponse.json(
@@ -57,7 +61,7 @@ export async function POST(req: NextRequest) {
 
     await query(
       "INSERT INTO waitlist (nostr_npub) VALUES ($1)",
-      [nostrNpub]
+      [npubHex]
     );
 
     return NextResponse.json(

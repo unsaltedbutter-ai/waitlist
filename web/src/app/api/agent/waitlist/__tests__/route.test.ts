@@ -19,6 +19,8 @@ vi.mock("@/lib/agent-auth", () => ({
 import { query } from "@/lib/db";
 import { POST } from "../route";
 
+const VALID_HEX = "aabb".repeat(16);
+
 function makeRequest(body: unknown): Request {
   return new Request("http://localhost/api/agent/waitlist", {
     method: "POST",
@@ -38,7 +40,7 @@ describe("POST /api/agent/waitlist", () => {
     // INSERT succeeds
     vi.mocked(query).mockResolvedValueOnce(mockQueryResult([]));
 
-    const req = makeRequest({ npub_hex: "aabb" });
+    const req = makeRequest({ npub_hex: VALID_HEX });
     const res = await POST(req as any, { params: Promise.resolve({}) });
 
     expect(res.status).toBe(200);
@@ -52,7 +54,7 @@ describe("POST /api/agent/waitlist", () => {
       mockQueryResult([{ invited: true, invite_code: "ABC123" }])
     );
 
-    const req = makeRequest({ npub_hex: "aabb" });
+    const req = makeRequest({ npub_hex: VALID_HEX });
     const res = await POST(req as any, { params: Promise.resolve({}) });
 
     expect(res.status).toBe(200);
@@ -66,7 +68,7 @@ describe("POST /api/agent/waitlist", () => {
       mockQueryResult([{ invited: false, invite_code: null }])
     );
 
-    const req = makeRequest({ npub_hex: "aabb" });
+    const req = makeRequest({ npub_hex: VALID_HEX });
     const res = await POST(req as any, { params: Promise.resolve({}) });
 
     expect(res.status).toBe(200);
@@ -95,7 +97,7 @@ describe("POST /api/agent/waitlist", () => {
   it("returns 500 on db error", async () => {
     vi.mocked(query).mockRejectedValueOnce(new Error("db down"));
 
-    const req = makeRequest({ npub_hex: "aabb" });
+    const req = makeRequest({ npub_hex: VALID_HEX });
     const res = await POST(req as any, { params: Promise.resolve({}) });
 
     expect(res.status).toBe(500);

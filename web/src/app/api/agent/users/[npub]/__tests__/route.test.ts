@@ -18,8 +18,11 @@ vi.mock("@/lib/agent-auth", () => ({
 import { query } from "@/lib/db";
 import { GET } from "../route";
 
+const VALID_HEX = "aabb".repeat(16);
+const UNKNOWN_HEX = "eeff".repeat(16);
+
 function makeRequest(): Request {
-  return new Request("http://localhost/api/agent/users/npub1abc", {
+  return new Request(`http://localhost/api/agent/users/${VALID_HEX}`, {
     method: "GET",
   });
 }
@@ -32,7 +35,7 @@ function mockUser(overrides: Record<string, unknown> = {}) {
   vi.mocked(query).mockResolvedValueOnce(
     mockQueryResult([{
       id: "user-uuid-1",
-      nostr_npub: "npub1abc",
+      nostr_npub: VALID_HEX,
       debt_sats: 0,
       onboarded_at: "2026-01-01T00:00:00Z",
       created_at: "2025-12-15T00:00:00Z",
@@ -69,13 +72,13 @@ describe("GET /api/agent/users/[npub]", () => {
     ]);
 
     const req = makeRequest();
-    const res = await GET(req as any, { params: Promise.resolve({ npub: "npub1abc" }) });
+    const res = await GET(req as any, { params: Promise.resolve({ npub: VALID_HEX }) });
 
     expect(res.status).toBe(200);
     const data = await res.json();
 
     expect(data.user.id).toBe("user-uuid-1");
-    expect(data.user.nostr_npub).toBe("npub1abc");
+    expect(data.user.nostr_npub).toBe(VALID_HEX);
     expect(data.user.debt_sats).toBe(0);
     expect(data.user.onboarded_at).toBe("2026-01-01T00:00:00Z");
 
@@ -95,7 +98,7 @@ describe("GET /api/agent/users/[npub]", () => {
     vi.mocked(query).mockResolvedValueOnce(mockQueryResult([]));
 
     const req = makeRequest();
-    const res = await GET(req as any, { params: Promise.resolve({ npub: "npub1unknown" }) });
+    const res = await GET(req as any, { params: Promise.resolve({ npub: UNKNOWN_HEX }) });
 
     expect(res.status).toBe(404);
     const data = await res.json();
@@ -109,7 +112,7 @@ describe("GET /api/agent/users/[npub]", () => {
     mockActiveJobs([]);
 
     const req = makeRequest();
-    const res = await GET(req as any, { params: Promise.resolve({ npub: "npub1abc" }) });
+    const res = await GET(req as any, { params: Promise.resolve({ npub: VALID_HEX }) });
 
     expect(res.status).toBe(200);
     const data = await res.json();
@@ -125,7 +128,7 @@ describe("GET /api/agent/users/[npub]", () => {
     mockActiveJobs([]);
 
     const req = makeRequest();
-    const res = await GET(req as any, { params: Promise.resolve({ npub: "npub1abc" }) });
+    const res = await GET(req as any, { params: Promise.resolve({ npub: VALID_HEX }) });
 
     expect(res.status).toBe(200);
     const data = await res.json();
@@ -148,7 +151,7 @@ describe("GET /api/agent/users/[npub]", () => {
     ]);
 
     const req = makeRequest();
-    const res = await GET(req as any, { params: Promise.resolve({ npub: "npub1abc" }) });
+    const res = await GET(req as any, { params: Promise.resolve({ npub: VALID_HEX }) });
 
     expect(res.status).toBe(200);
     const data = await res.json();

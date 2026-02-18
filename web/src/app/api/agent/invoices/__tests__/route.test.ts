@@ -24,6 +24,9 @@ import { query, transaction } from "@/lib/db";
 import { createLightningInvoice } from "@/lib/btcpay-invoice";
 import { POST } from "../route";
 
+const VALID_HEX = "aabb".repeat(16);
+const UNKNOWN_HEX = "eeff".repeat(16);
+
 function makeRequest(body: object): Request {
   return new Request("http://localhost/api/agent/invoices", {
     method: "POST",
@@ -61,7 +64,7 @@ describe("POST /api/agent/invoices", () => {
     const req = makeRequest({
       job_id: jobId,
       amount_sats: 3000,
-      user_npub: "npub1abc",
+      user_npub: VALID_HEX,
     });
     const res = await POST(req as any, { params: Promise.resolve({}) });
 
@@ -74,7 +77,7 @@ describe("POST /api/agent/invoices", () => {
     // Verify createLightningInvoice was called with the exact request amount
     expect(createLightningInvoice).toHaveBeenCalledWith({
       amountSats: 3000,
-      metadata: { job_id: jobId, user_npub: "npub1abc" },
+      metadata: { job_id: jobId, user_npub: VALID_HEX },
     });
 
     // Verify both writes happened inside the transaction
@@ -108,7 +111,7 @@ describe("POST /api/agent/invoices", () => {
   });
 
   it("missing amount_sats: returns 400", async () => {
-    const req = makeRequest({ job_id: "abc", user_npub: "npub1abc" });
+    const req = makeRequest({ job_id: "abc", user_npub: VALID_HEX });
     const res = await POST(req as any, { params: Promise.resolve({}) });
     expect(res.status).toBe(400);
   });
@@ -120,7 +123,7 @@ describe("POST /api/agent/invoices", () => {
   });
 
   it("amount_sats = 0: returns 400", async () => {
-    const req = makeRequest({ job_id: "abc", amount_sats: 0, user_npub: "npub1abc" });
+    const req = makeRequest({ job_id: "abc", amount_sats: 0, user_npub: VALID_HEX });
     const res = await POST(req as any, { params: Promise.resolve({}) });
     expect(res.status).toBe(400);
     const data = await res.json();
@@ -128,7 +131,7 @@ describe("POST /api/agent/invoices", () => {
   });
 
   it("negative amount_sats: returns 400", async () => {
-    const req = makeRequest({ job_id: "abc", amount_sats: -100, user_npub: "npub1abc" });
+    const req = makeRequest({ job_id: "abc", amount_sats: -100, user_npub: VALID_HEX });
     const res = await POST(req as any, { params: Promise.resolve({}) });
     expect(res.status).toBe(400);
     const data = await res.json();
@@ -137,20 +140,20 @@ describe("POST /api/agent/invoices", () => {
 
   it("NaN amount_sats (serializes to null): returns 400", async () => {
     // JSON.stringify(NaN) produces null, so amount_sats becomes null after round-trip
-    const req = makeRequest({ job_id: "abc", amount_sats: NaN, user_npub: "npub1abc" });
+    const req = makeRequest({ job_id: "abc", amount_sats: NaN, user_npub: VALID_HEX });
     const res = await POST(req as any, { params: Promise.resolve({}) });
     expect(res.status).toBe(400);
   });
 
   it("Infinity amount_sats (serializes to null): returns 400", async () => {
     // JSON.stringify(Infinity) produces null, so amount_sats becomes null after round-trip
-    const req = makeRequest({ job_id: "abc", amount_sats: Infinity, user_npub: "npub1abc" });
+    const req = makeRequest({ job_id: "abc", amount_sats: Infinity, user_npub: VALID_HEX });
     const res = await POST(req as any, { params: Promise.resolve({}) });
     expect(res.status).toBe(400);
   });
 
   it("string amount_sats: returns 400", async () => {
-    const req = makeRequest({ job_id: "abc", amount_sats: "3000", user_npub: "npub1abc" });
+    const req = makeRequest({ job_id: "abc", amount_sats: "3000", user_npub: VALID_HEX });
     const res = await POST(req as any, { params: Promise.resolve({}) });
     expect(res.status).toBe(400);
     const data = await res.json();
@@ -158,7 +161,7 @@ describe("POST /api/agent/invoices", () => {
   });
 
   it("float amount_sats: returns 400", async () => {
-    const req = makeRequest({ job_id: "abc", amount_sats: 3000.5, user_npub: "npub1abc" });
+    const req = makeRequest({ job_id: "abc", amount_sats: 3000.5, user_npub: VALID_HEX });
     const res = await POST(req as any, { params: Promise.resolve({}) });
     expect(res.status).toBe(400);
     const data = await res.json();
@@ -168,7 +171,7 @@ describe("POST /api/agent/invoices", () => {
   it("user not found: returns 404", async () => {
     vi.mocked(query).mockResolvedValueOnce(mockQueryResult([]));
 
-    const req = makeRequest({ job_id: "abc", amount_sats: 3000, user_npub: "npub1unknown" });
+    const req = makeRequest({ job_id: "abc", amount_sats: 3000, user_npub: UNKNOWN_HEX });
     const res = await POST(req as any, { params: Promise.resolve({}) });
     expect(res.status).toBe(404);
     const data = await res.json();
@@ -179,7 +182,7 @@ describe("POST /api/agent/invoices", () => {
     vi.mocked(query).mockResolvedValueOnce(mockQueryResult([{ id: "user-1" }]));
     vi.mocked(query).mockResolvedValueOnce(mockQueryResult([]));
 
-    const req = makeRequest({ job_id: "nonexistent", amount_sats: 3000, user_npub: "npub1abc" });
+    const req = makeRequest({ job_id: "nonexistent", amount_sats: 3000, user_npub: VALID_HEX });
     const res = await POST(req as any, { params: Promise.resolve({}) });
     expect(res.status).toBe(404);
     const data = await res.json();
@@ -195,7 +198,7 @@ describe("POST /api/agent/invoices", () => {
       new Error("BTCPay unreachable")
     );
 
-    const req = makeRequest({ job_id: "job-1", amount_sats: 3000, user_npub: "npub1abc" });
+    const req = makeRequest({ job_id: "job-1", amount_sats: 3000, user_npub: VALID_HEX });
     const res = await POST(req as any, { params: Promise.resolve({}) });
     expect(res.status).toBe(502);
     const data = await res.json();
@@ -218,7 +221,7 @@ describe("POST /api/agent/invoices", () => {
       mockQueryResult([{ id: "job-1", service_id: "netflix", action: "cancel", status: "active", invoice_id: "existing-inv" }])
     );
 
-    const req = makeRequest({ job_id: "job-1", amount_sats: 3000, user_npub: "npub1abc" });
+    const req = makeRequest({ job_id: "job-1", amount_sats: 3000, user_npub: VALID_HEX });
     const res = await POST(req as any, { params: Promise.resolve({}) });
     expect(res.status).toBe(409);
     const data = await res.json();
@@ -231,7 +234,7 @@ describe("POST /api/agent/invoices", () => {
       mockQueryResult([{ id: "job-1", service_id: "netflix", action: "cancel", status: "completed_paid", invoice_id: null }])
     );
 
-    const req = makeRequest({ job_id: "job-1", amount_sats: 3000, user_npub: "npub1abc" });
+    const req = makeRequest({ job_id: "job-1", amount_sats: 3000, user_npub: VALID_HEX });
     const res = await POST(req as any, { params: Promise.resolve({}) });
     expect(res.status).toBe(409);
     const data = await res.json();
@@ -244,7 +247,7 @@ describe("POST /api/agent/invoices", () => {
       mockQueryResult([{ id: "job-1", service_id: "netflix", action: "cancel", status: "completed_eventual", invoice_id: null }])
     );
 
-    const req = makeRequest({ job_id: "job-1", amount_sats: 3000, user_npub: "npub1abc" });
+    const req = makeRequest({ job_id: "job-1", amount_sats: 3000, user_npub: VALID_HEX });
     const res = await POST(req as any, { params: Promise.resolve({}) });
     expect(res.status).toBe(409);
     const data = await res.json();

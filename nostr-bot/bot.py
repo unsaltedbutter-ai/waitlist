@@ -224,7 +224,7 @@ class BotNotificationHandler(HandleNotification):
 
         # Everything else requires registration
         if user is None:
-            return "Join the waitlist"
+            return await self._auto_waitlist(sender_hex)
 
         # Registered but hasn't completed onboarding
         if user["onboarded_at"] is None:
@@ -232,6 +232,20 @@ class BotNotificationHandler(HandleNotification):
             return f"Complete your setup first.\n\n{base_url}/login"
 
         return await commands.handle_dm(sender_hex, message)
+
+    # -- Auto-waitlist for unregistered users ----------------------------------
+
+    async def _auto_waitlist(self, sender_hex: str) -> str:
+        """Add unregistered user to waitlist automatically and return a message."""
+        result = await api_client.add_to_waitlist(sender_hex)
+        if result["status"] == "added":
+            return "You're on the waitlist. We'll DM you when a spot opens."
+        elif result["status"] == "already_invited":
+            base_url = os.getenv("BASE_URL", "https://unsaltedbutter.ai")
+            link = f"{base_url}/login?code={result['invite_code']}"
+            return f"You've already been invited:\n\n{link}"
+        else:
+            return "You're already on the waitlist. We'll DM you when a spot opens."
 
     # -- Invite DM sending -----------------------------------------------------
 

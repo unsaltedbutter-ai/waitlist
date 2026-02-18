@@ -1,4 +1,5 @@
 import { query } from "@/lib/db";
+import { npubToHex } from "@/lib/nostr";
 
 export interface UserRow {
   id: string;
@@ -16,9 +17,10 @@ export async function getUserByNpub(
   npub: string
 ): Promise<UserRow | null> {
   const decoded = decodeURIComponent(npub);
+  const hex = npubToHex(decoded);
   const result = await query<UserRow>(
     "SELECT id, nostr_npub, debt_sats, onboarded_at, created_at FROM users WHERE nostr_npub = $1",
-    [decoded]
+    [hex]
   );
   return result.rows[0] ?? null;
 }

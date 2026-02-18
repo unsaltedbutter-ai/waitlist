@@ -23,8 +23,11 @@ import { query } from "@/lib/db";
 import { checkEmailBlocklist } from "@/lib/reneged";
 import { POST } from "../route";
 
+const VALID_HEX = "aabb".repeat(16);
+const UNKNOWN_HEX = "eeff".repeat(16);
+
 function makeRequest(body: object): Request {
-  return new Request("http://localhost/api/agent/users/npub1abc/on-demand", {
+  return new Request(`http://localhost/api/agent/users/${VALID_HEX}/on-demand`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(body),
@@ -81,7 +84,7 @@ describe("POST /api/agent/users/[npub]/on-demand", () => {
     mockJobCreated("new-job-1");
 
     const req = makeRequest({ service: "netflix", action: "cancel" });
-    const res = await POST(req as any, { params: Promise.resolve({ npub: "npub1abc" }) });
+    const res = await POST(req as any, { params: Promise.resolve({ npub: VALID_HEX }) });
 
     expect(res.status).toBe(200);
     const data = await res.json();
@@ -102,7 +105,7 @@ describe("POST /api/agent/users/[npub]/on-demand", () => {
     mockJobCreated("resume-job-1");
 
     const req = makeRequest({ service: "netflix", action: "resume" });
-    const res = await POST(req as any, { params: Promise.resolve({ npub: "npub1abc" }) });
+    const res = await POST(req as any, { params: Promise.resolve({ npub: VALID_HEX }) });
 
     expect(res.status).toBe(200);
     const data = await res.json();
@@ -116,7 +119,7 @@ describe("POST /api/agent/users/[npub]/on-demand", () => {
     mockUser({ debt_sats: 3000 });
 
     const req = makeRequest({ service: "netflix", action: "cancel" });
-    const res = await POST(req as any, { params: Promise.resolve({ npub: "npub1abc" }) });
+    const res = await POST(req as any, { params: Promise.resolve({ npub: VALID_HEX }) });
 
     expect(res.status).toBe(403);
     const data = await res.json();
@@ -128,7 +131,7 @@ describe("POST /api/agent/users/[npub]/on-demand", () => {
     vi.mocked(query).mockResolvedValueOnce(mockQueryResult([]));
 
     const req = makeRequest({ service: "netflix", action: "cancel" });
-    const res = await POST(req as any, { params: Promise.resolve({ npub: "npub1unknown" }) });
+    const res = await POST(req as any, { params: Promise.resolve({ npub: UNKNOWN_HEX }) });
 
     expect(res.status).toBe(404);
     const data = await res.json();
@@ -137,7 +140,7 @@ describe("POST /api/agent/users/[npub]/on-demand", () => {
 
   it("invalid action (not cancel/resume): returns 400", async () => {
     const req = makeRequest({ service: "netflix", action: "pause" });
-    const res = await POST(req as any, { params: Promise.resolve({ npub: "npub1abc" }) });
+    const res = await POST(req as any, { params: Promise.resolve({ npub: VALID_HEX }) });
 
     expect(res.status).toBe(400);
     const data = await res.json();
@@ -149,7 +152,7 @@ describe("POST /api/agent/users/[npub]/on-demand", () => {
     mockServiceNotFound();
 
     const req = makeRequest({ service: "fakestreamingco", action: "cancel" });
-    const res = await POST(req as any, { params: Promise.resolve({ npub: "npub1abc" }) });
+    const res = await POST(req as any, { params: Promise.resolve({ npub: VALID_HEX }) });
 
     expect(res.status).toBe(400);
     const data = await res.json();
@@ -163,7 +166,7 @@ describe("POST /api/agent/users/[npub]/on-demand", () => {
     mockJobConflict();
 
     const req = makeRequest({ service: "netflix", action: "cancel" });
-    const res = await POST(req as any, { params: Promise.resolve({ npub: "npub1abc" }) });
+    const res = await POST(req as any, { params: Promise.resolve({ npub: VALID_HEX }) });
 
     expect(res.status).toBe(409);
     const data = await res.json();
@@ -176,7 +179,7 @@ describe("POST /api/agent/users/[npub]/on-demand", () => {
     mockNoCredentials();
 
     const req = makeRequest({ service: "netflix", action: "cancel" });
-    const res = await POST(req as any, { params: Promise.resolve({ npub: "npub1abc" }) });
+    const res = await POST(req as any, { params: Promise.resolve({ npub: VALID_HEX }) });
 
     expect(res.status).toBe(400);
     const data = await res.json();
@@ -185,7 +188,7 @@ describe("POST /api/agent/users/[npub]/on-demand", () => {
 
   it("missing body fields: returns 400", async () => {
     const req = makeRequest({});
-    const res = await POST(req as any, { params: Promise.resolve({ npub: "npub1abc" }) });
+    const res = await POST(req as any, { params: Promise.resolve({ npub: VALID_HEX }) });
 
     expect(res.status).toBe(400);
     const data = await res.json();
@@ -194,25 +197,25 @@ describe("POST /api/agent/users/[npub]/on-demand", () => {
 
   it("missing service field: returns 400", async () => {
     const req = makeRequest({ action: "cancel" });
-    const res = await POST(req as any, { params: Promise.resolve({ npub: "npub1abc" }) });
+    const res = await POST(req as any, { params: Promise.resolve({ npub: VALID_HEX }) });
 
     expect(res.status).toBe(400);
   });
 
   it("missing action field: returns 400", async () => {
     const req = makeRequest({ service: "netflix" });
-    const res = await POST(req as any, { params: Promise.resolve({ npub: "npub1abc" }) });
+    const res = await POST(req as any, { params: Promise.resolve({ npub: VALID_HEX }) });
 
     expect(res.status).toBe(400);
   });
 
   it("invalid JSON body: returns 400", async () => {
-    const req = new Request("http://localhost/api/agent/users/npub1abc/on-demand", {
+    const req = new Request(`http://localhost/api/agent/users/${VALID_HEX}/on-demand`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: "not json",
     });
-    const res = await POST(req as any, { params: Promise.resolve({ npub: "npub1abc" }) });
+    const res = await POST(req as any, { params: Promise.resolve({ npub: VALID_HEX }) });
 
     expect(res.status).toBe(400);
   });
@@ -224,7 +227,7 @@ describe("POST /api/agent/users/[npub]/on-demand", () => {
     vi.mocked(checkEmailBlocklist).mockResolvedValue({ blocked: true, debt_sats: 6000 });
 
     const req = makeRequest({ service: "netflix", action: "cancel" });
-    const res = await POST(req as any, { params: Promise.resolve({ npub: "npub1abc" }) });
+    const res = await POST(req as any, { params: Promise.resolve({ npub: VALID_HEX }) });
 
     expect(res.status).toBe(403);
     const data = await res.json();
@@ -240,7 +243,7 @@ describe("POST /api/agent/users/[npub]/on-demand", () => {
     mockJobCreated("clean-job-1");
 
     const req = makeRequest({ service: "netflix", action: "cancel" });
-    const res = await POST(req as any, { params: Promise.resolve({ npub: "npub1abc" }) });
+    const res = await POST(req as any, { params: Promise.resolve({ npub: VALID_HEX }) });
 
     expect(res.status).toBe(200);
     const data = await res.json();

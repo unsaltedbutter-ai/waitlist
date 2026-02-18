@@ -19,6 +19,8 @@ vi.mock("@/lib/agent-auth", () => ({
 import { query } from "@/lib/db";
 import { POST } from "../route";
 
+const VALID_HEX = "aabb".repeat(16);
+
 function makeRequest(body: unknown): Request {
   return new Request("http://localhost/api/agent/otp", {
     method: "POST",
@@ -37,7 +39,7 @@ describe("POST /api/agent/otp", () => {
       mockQueryResult([{ code: "123456789012" }])
     );
 
-    const req = makeRequest({ npub_hex: "aabb" });
+    const req = makeRequest({ npub_hex: VALID_HEX });
     const res = await POST(req as any, { params: Promise.resolve({}) });
 
     expect(res.status).toBe(200);
@@ -47,7 +49,7 @@ describe("POST /api/agent/otp", () => {
     expect(vi.mocked(query)).toHaveBeenCalledOnce();
     const [sql, params] = vi.mocked(query).mock.calls[0];
     expect(sql).toContain("INSERT INTO nostr_otp");
-    expect(params![0]).toBe("aabb");
+    expect(params![0]).toBe(VALID_HEX);
   });
 
   it("returns 400 for missing npub_hex", async () => {
@@ -74,7 +76,7 @@ describe("POST /api/agent/otp", () => {
   it("returns 500 on db error", async () => {
     vi.mocked(query).mockRejectedValueOnce(new Error("db down"));
 
-    const req = makeRequest({ npub_hex: "aabb" });
+    const req = makeRequest({ npub_hex: VALID_HEX });
     const res = await POST(req as any, { params: Promise.resolve({}) });
 
     expect(res.status).toBe(500);
