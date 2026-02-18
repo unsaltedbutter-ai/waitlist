@@ -14,7 +14,7 @@
 # What this does:
 #   1. rsync web/ to VPS
 #   2. rsync scripts/ (for schema + nginx config)
-#   3. rsync handoff docs (SCHEMA.sql)
+#   3. [--init] scp SCHEMA.sql to VPS
 #   4. [--init] Generate .env.production with real secrets
 #   5. [--init] Apply database schema (v4) + migrations
 #   6. [--setup-bots] Install update-checker (cron) + daily cron timer (systemd)
@@ -129,15 +129,6 @@ rsync -avz \
     "${VPS_USER}@${VPS_IP}:${REMOTE_DIR}/scripts/"
 
 # =============================================================================
-# 3. rsync handoff docs (SCHEMA.sql lives here)
-# =============================================================================
-log "Syncing handoff docs..."
-rsync -avz \
-    -e "${RSYNC_SSH}" \
-    "${PROJECT_ROOT}/unsalted-butter-handoff/docs/" \
-    "${VPS_USER}@${VPS_IP}:${REMOTE_DIR}/unsalted-butter-handoff/docs/"
-
-# =============================================================================
 # (removed: nostr-bot rsync, bot now runs on home network orchestrator)
 # =============================================================================
 
@@ -195,6 +186,11 @@ fi
 # 5. [init] Apply database schema + migrations
 # =============================================================================
 if $INIT_MODE; then
+    log "Copying SCHEMA.sql to VPS..."
+    scp ${SSH_OPTS} \
+        "${PROJECT_ROOT}/unsalted-butter-handoff/docs/SCHEMA.sql" \
+        "${VPS_USER}@${VPS_IP}:${REMOTE_DIR}/scripts/SCHEMA.sql"
+
     log "Applying database schema..."
 
     ${SSH_CMD} bash << 'REMOTE_SCHEMA'
@@ -205,7 +201,7 @@ DB_PASS=$(cat /home/butter/.unsaltedbutter/db_password)
 export PGPASSWORD="${DB_PASS}"
 
 echo "Applying SCHEMA.sql (v4 pay-per-action)..."
-psql -h localhost -U butter -d unsaltedbutter -f "${REMOTE_DIR}/unsalted-butter-handoff/docs/SCHEMA.sql"
+psql -h localhost -U butter -d unsaltedbutter -f "${REMOTE_DIR}/scripts/SCHEMA.sql"
 
 # Apply incremental migrations in sorted order. On a fresh DB these may
 # already be included in SCHEMA.sql, so failures are non-fatal.
