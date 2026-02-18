@@ -65,3 +65,31 @@ export async function createLightningInvoice(
     bolt11,
   };
 }
+
+export async function verifyInvoicePaid(invoiceId: string): Promise<boolean> {
+  const btcpayUrl = process.env.BTCPAY_URL;
+  const storeId = process.env.BTCPAY_STORE_ID;
+  const apiKey = process.env.BTCPAY_API_KEY;
+
+  if (!btcpayUrl || !storeId || !apiKey) {
+    return false;
+  }
+
+  try {
+    const res = await fetch(
+      `${btcpayUrl}/api/v1/stores/${storeId}/invoices/${invoiceId}`,
+      {
+        headers: {
+          Authorization: `token ${apiKey}`,
+        },
+      }
+    );
+
+    if (!res.ok) return false;
+
+    const data = await res.json();
+    return data.status === "Settled" || data.status === "Processing";
+  } catch {
+    return false;
+  }
+}

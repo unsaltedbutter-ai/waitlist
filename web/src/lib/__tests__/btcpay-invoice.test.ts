@@ -3,7 +3,7 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 const mockFetch = vi.fn();
 vi.stubGlobal("fetch", mockFetch);
 
-import { createLightningInvoice } from "@/lib/btcpay-invoice";
+import { createLightningInvoice, verifyInvoicePaid } from "@/lib/btcpay-invoice";
 
 beforeEach(() => {
   vi.unstubAllEnvs();
@@ -208,6 +208,74 @@ describe("createLightningInvoice", () => {
     await expect(
       createLightningInvoice({ amountSats: 3000 })
     ).rejects.toThrow("BTCPay Server not configured");
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+});
+
+describe("verifyInvoicePaid", () => {
+  it("returns true for Settled status", async () => {
+    mockFetch.mockResolvedValue(
+      btcpayResponse({ status: "Settled" })
+    );
+
+    const result = await verifyInvoicePaid("inv-001");
+    expect(result).toBe(true);
+
+    const [url] = mockFetch.mock.calls[0];
+    expect(url).toBe(
+      "https://btcpay.example.com/api/v1/stores/store-abc123/invoices/inv-001"
+    );
+  });
+
+  it("returns true for Processing status", async () => {
+    mockFetch.mockResolvedValue(
+      btcpayResponse({ status: "Processing" })
+    );
+
+    const result = await verifyInvoicePaid("inv-002");
+    expect(result).toBe(true);
+  });
+
+  it("returns false for New status", async () => {
+    mockFetch.mockResolvedValue(
+      btcpayResponse({ status: "New" })
+    );
+
+    const result = await verifyInvoicePaid("inv-003");
+    expect(result).toBe(false);
+  });
+
+  it("returns false for Expired status", async () => {
+    mockFetch.mockResolvedValue(
+      btcpayResponse({ status: "Expired" })
+    );
+
+    const result = await verifyInvoicePaid("inv-004");
+    expect(result).toBe(false);
+  });
+
+  it("returns false on fetch error", async () => {
+    mockFetch.mockRejectedValue(new TypeError("fetch failed"));
+
+    const result = await verifyInvoicePaid("inv-005");
+    expect(result).toBe(false);
+  });
+
+  it("returns false on non-200 response", async () => {
+    mockFetch.mockResolvedValue({
+      ok: false,
+      status: 404,
+    });
+
+    const result = await verifyInvoicePaid("inv-006");
+    expect(result).toBe(false);
+  });
+
+  it("returns false when env vars are not set", async () => {
+    vi.stubEnv("BTCPAY_URL", "");
+
+    const result = await verifyInvoicePaid("inv-007");
+    expect(result).toBe(false);
     expect(mockFetch).not.toHaveBeenCalled();
   });
 });
