@@ -389,7 +389,7 @@ REMOTE_NGINX
 # 9. [init] SSL with certbot (skipped if certs already exist)
 # =============================================================================
 if $INIT_MODE; then
-    CERT_EXISTS=$(${SSH_CMD} "test -f /etc/letsencrypt/live/unsaltedbutter.ai/fullchain.pem && echo yes || echo no")
+    CERT_EXISTS=$(${SSH_CMD} "sudo test -f /etc/letsencrypt/live/unsaltedbutter.ai/fullchain.pem && echo yes || echo no")
     if [[ "${CERT_EXISTS}" == "yes" ]]; then
         log "SSL certificates already exist, skipping certbot"
     else
