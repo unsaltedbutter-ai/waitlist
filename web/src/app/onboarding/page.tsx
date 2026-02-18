@@ -25,6 +25,22 @@ import {
   type QueueItem,
 } from "./_components";
 
+interface Plan {
+  id: string;
+  service_id: string;
+  display_name: string;
+  monthly_price_cents: number;
+  has_ads: boolean;
+  is_bundle: boolean;
+}
+
+interface ServiceGroup {
+  id: string;
+  label: string;
+  serviceId: string;
+  plans: Plan[];
+}
+
 interface ServiceOption {
   service_id: string;
   service_name: string;
@@ -41,7 +57,10 @@ export default function OnboardingPage() {
 
   // Step 1 state: services + credentials
   const [services, setServices] = useState<ServiceOption[]>([]);
+  const [serviceGroups, setServiceGroups] = useState<ServiceGroup[]>([]);
   const [selectedServiceIds, setSelectedServiceIds] = useState<Set<string>>(new Set());
+  const [selectedPlans, setSelectedPlans] = useState<Record<string, string>>({});
+  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
   const [creds, setCreds] = useState<Record<string, { email: string; password: string }>>({});
   const [useSameCreds, setUseSameCreds] = useState(false);
   const [sharedCreds, setSharedCreds] = useState({ email: "", password: "" });
@@ -52,12 +71,11 @@ export default function OnboardingPage() {
 
   // Fetch available services on mount
   useEffect(() => {
-    // TODO: Fetch from GET /api/services (list of available services).
-    // For now, use the service-plans endpoint and extract unique services.
     fetch("/api/service-plans")
       .then((r) => r.json())
       .then((data) => {
         if (data.groups) {
+          setServiceGroups(data.groups);
           const svcList: ServiceOption[] = data.groups.map((g: { serviceId: string; label: string }) => ({
             service_id: g.serviceId,
             service_name: g.label,
@@ -86,6 +104,18 @@ export default function OnboardingPage() {
 
   // --- Helpers ---
 
+  function toggleAccordion(serviceId: string) {
+    setExpandedGroups((prev) => {
+      const next = new Set(prev);
+      if (next.has(serviceId)) {
+        next.delete(serviceId);
+      } else {
+        next.add(serviceId);
+      }
+      return next;
+    });
+  }
+
   function toggleService(serviceId: string) {
     setSelectedServiceIds((prev) => {
       const next = new Set(prev);
@@ -96,11 +126,43 @@ export default function OnboardingPage() {
           delete n[serviceId];
           return n;
         });
+        setSelectedPlans((p) => {
+          const n = { ...p };
+          delete n[serviceId];
+          return n;
+        });
       } else {
         next.add(serviceId);
+        // Auto-select single plan for services with only one option
+        const group = serviceGroups.find((g) => g.serviceId === serviceId);
+        if (group && group.plans.length === 1) {
+          setSelectedPlans((p) => ({ ...p, [serviceId]: group.plans[0].id }));
+        }
       }
       return next;
     });
+  }
+
+  function selectPlan(serviceId: string, planId: string) {
+    setSelectedPlans((prev) => {
+      if (prev[serviceId] === planId) {
+        const next = { ...prev };
+        delete next[serviceId];
+        return next;
+      }
+      return { ...prev, [serviceId]: planId };
+    });
+  }
+
+  function getGroupForService(serviceId: string): ServiceGroup | undefined {
+    return serviceGroups.find((g) => g.serviceId === serviceId);
+  }
+
+  function getSelectedPlanForService(serviceId: string): Plan | undefined {
+    const planId = selectedPlans[serviceId];
+    if (!planId) return undefined;
+    const group = getGroupForService(serviceId);
+    return group?.plans.find((p) => p.id === planId);
   }
 
   function updateCred(serviceId: string, field: "email" | "password", value: string) {
@@ -195,6 +257,33 @@ export default function OnboardingPage() {
         };
       });
       setQueue(savedQueue);
+
+      if (selectedIds.length === 1) {
+        // Only 1 service: save queue order and skip to consent
+        const plansPayload: Record<string, string> = {};
+        for (const sid of selectedIds) {
+          if (selectedPlans[sid]) {
+            plansPayload[sid] = selectedPlans[sid];
+          }
+        }
+        const qRes = await authFetch("/api/queue", {
+          method: "PUT",
+          body: JSON.stringify({
+            order: selectedIds,
+            plans: Object.keys(plansPayload).length > 0 ? plansPayload : undefined,
+          }),
+        });
+        if (!qRes.ok) {
+          const qData = await qRes.json();
+          setError(qData.error || "Failed to save queue order.");
+          setSubmitting(false);
+          return;
+        }
+        setSubmitting(false);
+        setStep(3);
+        return;
+      }
+
       setSubmitting(false);
       setStep(2);
     } catch {
@@ -269,16 +358,27 @@ export default function OnboardingPage() {
           )}
         </div>
 
-        {/* Service list */}
+        {/* Service accordion */}
         <div className="space-y-2">
           {services.map((svc) => {
             const isSelected = selectedServiceIds.has(svc.service_id);
+            const isExpanded = expandedGroups.has(svc.service_id);
+            const group = getGroupForService(svc.service_id);
+            const selectedPlan = getSelectedPlanForService(svc.service_id);
+            const hasMultiplePlans = group && group.plans.length > 1;
 
             return (
               <div key={svc.service_id}>
+                {/* Service header */}
                 <button
                   type="button"
-                  onClick={() => toggleService(svc.service_id)}
+                  onClick={() => {
+                    if (hasMultiplePlans) {
+                      toggleAccordion(svc.service_id);
+                    } else {
+                      toggleService(svc.service_id);
+                    }
+                  }}
                   className={`flex items-center justify-between w-full px-4 py-3 rounded-lg border text-sm transition-colors ${
                     isSelected
                       ? "bg-surface border-accent/60"
@@ -288,16 +388,59 @@ export default function OnboardingPage() {
                   <span className="font-medium text-foreground">
                     {svc.service_name}
                   </span>
-                  {isSelected && (
+                  {isSelected && selectedPlan ? (
+                    <span className="flex items-center gap-2 text-accent text-xs">
+                      {!useSameCreds && (!creds[svc.service_id]?.email || !creds[svc.service_id]?.password) && (
+                        <span className="w-2 h-2 rounded-full bg-amber-500 shrink-0" title="Needs credentials" />
+                      )}
+                      {selectedPlan.display_name} - ${(selectedPlan.monthly_price_cents / 100).toFixed(2)}/mo
+                    </span>
+                  ) : isSelected ? (
                     <span className="flex items-center gap-2 text-accent text-xs">
                       {!useSameCreds && (!creds[svc.service_id]?.email || !creds[svc.service_id]?.password) && (
                         <span className="w-2 h-2 rounded-full bg-amber-500 shrink-0" title="Needs credentials" />
                       )}
                       Selected
                     </span>
-                  )}
+                  ) : hasMultiplePlans ? (
+                    <span className="text-muted/60 text-xs">
+                      {group.plans.length} plans
+                    </span>
+                  ) : null}
                 </button>
 
+                {/* Expanded: plan options */}
+                {isExpanded && hasMultiplePlans && (
+                  <div className="mt-1 ml-8 space-y-1">
+                    {group.plans.map((plan) => {
+                      const isPlanSelected = selectedPlans[svc.service_id] === plan.id;
+                      return (
+                        <button
+                          key={plan.id}
+                          type="button"
+                          onClick={() => {
+                            if (!isSelected) {
+                              toggleService(svc.service_id);
+                            }
+                            selectPlan(svc.service_id, plan.id);
+                          }}
+                          className={`w-full flex items-center justify-between py-2 px-3 rounded text-sm border transition-colors ${
+                            isPlanSelected
+                              ? "bg-accent/10 text-accent border-accent/40"
+                              : "bg-surface text-muted border-border hover:border-muted"
+                          }`}
+                        >
+                          <span>{plan.display_name}</span>
+                          <span className={isPlanSelected ? "text-accent" : "text-muted/60"}>
+                            ${(plan.monthly_price_cents / 100).toFixed(2)}/mo
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+
+                {/* Credentials inputs */}
                 {isSelected && !useSameCreds && (
                   <div className="grid grid-cols-2 gap-3 mt-1 ml-8 pb-2">
                     <input
@@ -372,10 +515,17 @@ export default function OnboardingPage() {
     setSubmitting(true);
 
     try {
+      const plansPayload: Record<string, string> = {};
+      for (const q of queue) {
+        if (selectedPlans[q.serviceId]) {
+          plansPayload[q.serviceId] = selectedPlans[q.serviceId];
+        }
+      }
       const res = await authFetch("/api/queue", {
         method: "PUT",
         body: JSON.stringify({
           order: queue.map((q) => q.serviceId),
+          plans: Object.keys(plansPayload).length > 0 ? plansPayload : undefined,
         }),
       });
 
@@ -501,7 +651,7 @@ export default function OnboardingPage() {
       <div className="space-y-8">
         <button
           type="button"
-          onClick={() => setStep(queue.length > 0 ? 2 : 1)}
+          onClick={() => setStep(queue.length > 1 ? 2 : 1)}
           className="text-sm text-muted hover:text-foreground transition-colors"
         >
           &larr; Back
@@ -524,7 +674,7 @@ export default function OnboardingPage() {
               <span className="text-muted/60 shrink-0">&bull;</span>
               <span>
                 You keep your own streaming accounts. We cancel and resume
-                subscriptions on your behalf when you ask, for 3,000 sats each.
+                subscriptions on your behalf when you ask.
               </span>
             </li>
             <li className="flex gap-2">

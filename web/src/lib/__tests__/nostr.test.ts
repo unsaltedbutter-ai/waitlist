@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { npubToHex } from "@/lib/nostr";
+import { npubToHex, hexToNpub } from "@/lib/nostr";
 
 // Known test vector: a real npub/hex pair
 const TEST_HEX =
@@ -45,5 +45,41 @@ describe("npubToHex", () => {
   it("returns consistent hex for all-zero key", () => {
     const zeroHex = "0".repeat(64);
     expect(npubToHex(zeroHex)).toBe(zeroHex);
+  });
+});
+
+describe("hexToNpub", () => {
+  it("encodes a 64-char hex string to bech32 npub", () => {
+    expect(hexToNpub(TEST_HEX)).toBe(TEST_NPUB);
+  });
+
+  it("returns npub as-is when given an npub1 string", () => {
+    expect(hexToNpub(TEST_NPUB)).toBe(TEST_NPUB);
+  });
+
+  it("handles uppercase hex by lowercasing first", () => {
+    const upper = TEST_HEX.toUpperCase();
+    expect(hexToNpub(upper)).toBe(TEST_NPUB);
+  });
+
+  it("trims whitespace", () => {
+    expect(hexToNpub(`  ${TEST_HEX}  `)).toBe(TEST_NPUB);
+  });
+
+  it("roundtrips with npubToHex", () => {
+    const npub = hexToNpub(TEST_HEX);
+    expect(npubToHex(npub)).toBe(TEST_HEX);
+  });
+
+  it("throws for hex that is not 64 chars", () => {
+    expect(() => hexToNpub("abcdef")).toThrow(/Invalid hex pubkey/);
+  });
+
+  it("throws for an empty string", () => {
+    expect(() => hexToNpub("")).toThrow(/Invalid hex pubkey/);
+  });
+
+  it("throws for a random non-hex string", () => {
+    expect(() => hexToNpub("hello-world-not-hex-at-all")).toThrow(/Invalid hex pubkey/);
   });
 });

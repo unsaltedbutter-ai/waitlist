@@ -20,6 +20,7 @@ import {
 import { SortableQueueItem } from "@/components/sortable-queue-item";
 import { ServiceCredentialForm } from "@/components/service-credential-form";
 import { DebtBanner } from "@/components/debt-banner";
+import { hexToNpub } from "@/lib/nostr";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -573,7 +574,7 @@ export default function DashboardPage() {
               )}
 
               <p className="text-xs text-muted/60 mt-4">
-                Each cancel or resume costs 3,000 sats. Drag to reorder queued services.
+                Drag to reorder queued services. We&apos;ll use this order to remind you when it is time to rotate.
               </p>
             </section>
 
@@ -584,6 +585,10 @@ export default function DashboardPage() {
               <h2 className="text-sm font-medium text-muted mb-4">
                 Recent jobs
               </h2>
+
+              <p className="text-xs text-muted/60 mb-4">
+                When you request a cancel or resume, it will show up here. Each cancel or resume costs 3,000 sats.
+              </p>
 
               {jobs.length > 0 ? (
                 <div className="overflow-x-auto">
@@ -620,7 +625,7 @@ export default function DashboardPage() {
                 </div>
               ) : (
                 <p className="text-muted text-sm">
-                  No jobs yet. When you request a cancel or resume, it will show up here.
+                  No jobs yet.
                 </p>
               )}
             </section>
@@ -636,7 +641,7 @@ export default function DashboardPage() {
                 <div className="flex items-center gap-3">
                   <span className="text-sm text-muted">Nostr:</span>
                   <span className="text-sm text-foreground font-mono truncate max-w-xs">
-                    {user.nostr_npub}
+                    {(() => { try { return hexToNpub(user.nostr_npub); } catch { return user.nostr_npub; } })()}
                   </span>
                 </div>
                 {user.onboarded_at && (
