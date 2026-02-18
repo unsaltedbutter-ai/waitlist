@@ -138,7 +138,7 @@ main() {
     # 7. Run tests
     echo ""
     echo "Running tests..."
-    if "$VENV_DIR/bin/python" -m pytest "$BOT_DIR/test_commands.py" "$BOT_DIR/test_zap_validation.py" -v --tb=short 2>&1; then
+    if "$VENV_DIR/bin/python" -m pytest "$BOT_DIR" -v --tb=short 2>&1; then
         echo ""
         echo "All tests passed."
     else
@@ -168,10 +168,11 @@ main() {
     if [ "$NEEDS_CONFIG" = true ]; then
         echo "NEXT STEPS:"
         echo "  1. Edit $BOT_DIR/.env with your real values:"
-        echo "     - NOSTR_NSEC        (bot's private key)"
-        echo "     - DATABASE_URL      (PostgreSQL connection string)"
+        echo "     - NOSTR_NSEC          (bot's private key)"
+        echo "     - API_BASE_URL       (VPS URL, e.g. https://unsaltedbutter.ai)"
+        echo "     - AGENT_HMAC_SECRET  (shared HMAC secret with VPS)"
         echo "     - ZAP_PROVIDER_PUBKEY (Lightning provider's nostr pubkey)"
-        echo "     - BOT_LUD16         (Lightning address for zaps)"
+        echo "     - BOT_LUD16          (Lightning address for zaps)"
         echo "  2. Run the bot:"
         echo "     cd $BOT_DIR && venv/bin/python bot.py"
     else
