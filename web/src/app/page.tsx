@@ -53,8 +53,10 @@ export default function WaitlistPage() {
             You&apos;re on the list.
           </h1>
           <p className="text-muted text-lg">
-            The first rule about UnsaltedButter: you do not talk about
-            UnsaltedButter.
+            The first rule about UnsaltedButter:
+            <br />
+            you do not talk about UnsaltedButter.
+            <br />
             <br />
             We&apos;ll reach out when it&apos;s your turn.
           </p>

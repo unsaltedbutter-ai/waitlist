@@ -450,23 +450,23 @@ export default function OnboardingPage() {
           <li className="flex gap-2">
             <span className="text-muted/60 shrink-0">&bull;</span>
             <span>
-              Your credentials are encrypted at rest and destroyed immediately
-              if your membership ends.
+              Your credentials are destroyed immediately if you delete your
+              account.
             </span>
           </li>
           <li className="flex gap-2">
             <span className="text-muted/60 shrink-0">&bull;</span>
             <span>
-              We do not share your data with anyone. There is no one to share
-              it with.
+              We do not share your data with anyone.
             </span>
           </li>
         </ul>
 
         <div className="border-l-4 border-amber-500 bg-amber-500/[0.08] rounded-r-lg px-5 py-4">
           <p className="text-amber-200 text-sm font-medium leading-relaxed">
-            If you have active streaming subscriptions, cancel them before we
-            start. Anything you leave running means you&apos;re paying twice.
+            If you&apos;re going to have us rotate your existing accounts,
+            cancel them before we start. Anything you leave running means
+            you&apos;re paying them twice.
           </p>
         </div>
 
