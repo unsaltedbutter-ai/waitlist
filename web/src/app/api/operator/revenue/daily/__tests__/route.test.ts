@@ -157,7 +157,13 @@ describe("GET /api/operator/revenue/daily", () => {
   it("returns correct sats and jobs for a day with data", async () => {
     const today = todayStr();
     vi.mocked(query).mockResolvedValueOnce(
-      mockQueryResult([{ date: today, sats: "48000", jobs: "16" }])
+      mockQueryResult([{
+        date: today,
+        total_sats: "48000",
+        job_count: "16",
+        paid_sats: "42000",
+        eventual_sats: "6000",
+      }])
     );
 
     const res = await GET(makeRequest(3) as any, {
@@ -172,6 +178,8 @@ describe("GET /api/operator/revenue/daily", () => {
     expect(todayEntry).toBeDefined();
     expect(todayEntry.sats).toBe(48000);
     expect(todayEntry.jobs).toBe(16);
+    expect(todayEntry.paid_sats).toBe(42000);
+    expect(todayEntry.eventual_sats).toBe(6000);
   });
 
   // --- Cumulative calculation ---
@@ -183,9 +191,9 @@ describe("GET /api/operator/revenue/daily", () => {
 
     vi.mocked(query).mockResolvedValueOnce(
       mockQueryResult([
-        { date: day1, sats: "10000", jobs: "3" },
-        { date: day2, sats: "20000", jobs: "5" },
-        { date: day3, sats: "15000", jobs: "4" },
+        { date: day1, total_sats: "10000", job_count: "3", paid_sats: "10000", eventual_sats: "0" },
+        { date: day2, total_sats: "20000", job_count: "5", paid_sats: "15000", eventual_sats: "5000" },
+        { date: day3, total_sats: "15000", job_count: "4", paid_sats: "15000", eventual_sats: "0" },
       ])
     );
 
@@ -211,15 +219,15 @@ describe("GET /api/operator/revenue/daily", () => {
 
   // --- Zero-fill ---
 
-  it("days with no transactions still appear in output", async () => {
+  it("days with no ledger entries still appear in output", async () => {
     // Only day 1 and day 3 have data, day 2 should be zero-filled
     const day1 = daysAgo(3);
     const day3 = daysAgo(1);
 
     vi.mocked(query).mockResolvedValueOnce(
       mockQueryResult([
-        { date: day1, sats: "10000", jobs: "2" },
-        { date: day3, sats: "5000", jobs: "1" },
+        { date: day1, total_sats: "10000", job_count: "2", paid_sats: "10000", eventual_sats: "0" },
+        { date: day3, total_sats: "5000", job_count: "1", paid_sats: "5000", eventual_sats: "0" },
       ])
     );
 
@@ -247,7 +255,7 @@ describe("GET /api/operator/revenue/daily", () => {
 
   // --- Only paid/eventual counted ---
 
-  it("query filters for paid and eventual status only", async () => {
+  it("query targets revenue_ledger table", async () => {
     vi.mocked(query).mockResolvedValueOnce(mockQueryResult([]));
 
     await GET(makeRequest(7) as any, {
@@ -255,11 +263,8 @@ describe("GET /api/operator/revenue/daily", () => {
     });
 
     const sql = vi.mocked(query).mock.calls[0][0] as string;
-    expect(sql).toContain("paid");
-    expect(sql).toContain("eventual");
-    // Should not count reneged
-    expect(sql).not.toContain("reneged");
-    expect(sql).not.toContain("invoice_sent");
+    expect(sql).toContain("revenue_ledger");
+    expect(sql).toContain("payment_status");
   });
 
   // --- Output order ---
@@ -298,5 +303,43 @@ describe("GET /api/operator/revenue/daily", () => {
     });
     const data = await res.json();
     expect(data[data.length - 1].date).toBe(todayStr());
+  });
+
+  // -- Ledger-specific fields --
+
+  it("zero-filled days have zero paid_sats and eventual_sats", async () => {
+    vi.mocked(query).mockResolvedValueOnce(mockQueryResult([]));
+
+    const res = await GET(makeRequest(3) as any, {
+      params: Promise.resolve({}),
+    });
+    const data = await res.json();
+
+    for (const entry of data) {
+      expect(entry.paid_sats).toBe(0);
+      expect(entry.eventual_sats).toBe(0);
+    }
+  });
+
+  it("returns paid_sats and eventual_sats breakdown per day", async () => {
+    const today = todayStr();
+    vi.mocked(query).mockResolvedValueOnce(
+      mockQueryResult([{
+        date: today,
+        total_sats: "6000",
+        job_count: "2",
+        paid_sats: "3000",
+        eventual_sats: "3000",
+      }])
+    );
+
+    const res = await GET(makeRequest(1) as any, {
+      params: Promise.resolve({}),
+    });
+    const data = await res.json();
+    const todayEntry = data.find((e: { date: string }) => e.date === today);
+    expect(todayEntry.paid_sats).toBe(3000);
+    expect(todayEntry.eventual_sats).toBe(3000);
+    expect(todayEntry.sats).toBe(6000);
   });
 });

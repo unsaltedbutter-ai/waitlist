@@ -43,6 +43,7 @@ function makeJobRow(
     status,
     amount_sats: 3000,
     invoice_id: "inv-123",
+    email_hash: null as string | null,
     billing_date: "2026-03-01",
     access_end_date: "2026-03-15",
     outreach_count: 1,
@@ -300,6 +301,57 @@ describe("POST /api/agent/jobs/[id]/paid", () => {
     expect(txnCall!.params).toContain("paid");
   });
 
+  // -- Revenue ledger tests --
+
+  it("inserts into revenue_ledger with status 'paid' on invoice payment", async () => {
+    const jobRow = makeJobRow("active", { invoice_id: "inv-456", amount_sats: 3000, service_id: "netflix", action: "cancel" });
+    const captured = mockTx(jobRow, { status: "completed_paid" });
+
+    const res = await POST(
+      makeRequest({}) as any,
+      { params: Promise.resolve({ id: JOB_ID }) }
+    );
+    expect(res.status).toBe(200);
+
+    const ledgerCall = captured.find((c) => c.sql.includes("INSERT INTO revenue_ledger"));
+    expect(ledgerCall).toBeTruthy();
+    expect(ledgerCall!.params).toContain("netflix");
+    expect(ledgerCall!.params).toContain("cancel");
+    expect(ledgerCall!.params).toContain(3000);
+    expect(ledgerCall!.params).toContain("paid");
+  });
+
+  it("inserts into revenue_ledger with status 'eventual' on reneged payment", async () => {
+    const jobRow = makeJobRow("completed_reneged", { amount_sats: 3000, service_id: "hulu", action: "resume" });
+    const captured = mockTx(jobRow, { status: "completed_eventual" });
+
+    const res = await POST(
+      makeRequest({}) as any,
+      { params: Promise.resolve({ id: JOB_ID }) }
+    );
+    expect(res.status).toBe(200);
+
+    const ledgerCall = captured.find((c) => c.sql.includes("INSERT INTO revenue_ledger"));
+    expect(ledgerCall).toBeTruthy();
+    expect(ledgerCall!.params).toContain("hulu");
+    expect(ledgerCall!.params).toContain("resume");
+    expect(ledgerCall!.params).toContain(3000);
+    expect(ledgerCall!.params).toContain("eventual");
+  });
+
+  it("skips revenue_ledger insert when amount_sats is null", async () => {
+    const jobRow = makeJobRow("completed_reneged", { amount_sats: null });
+    const captured = mockTx(jobRow, { status: "completed_eventual" });
+
+    await POST(
+      makeRequest({}) as any,
+      { params: Promise.resolve({ id: JOB_ID }) }
+    );
+
+    const ledgerCall = captured.find((c) => c.sql.includes("revenue_ledger"));
+    expect(ledgerCall).toBeUndefined();
+  });
+
   it("invalid JSON returns 400", async () => {
     const req = new Request(`http://localhost/api/agent/jobs/${JOB_ID}/paid`, {
       method: "POST",
@@ -308,6 +360,72 @@ describe("POST /api/agent/jobs/[id]/paid", () => {
     });
     const res = await POST(req as any, { params: Promise.resolve({ id: JOB_ID }) });
     expect(res.status).toBe(400);
+  });
+
+  it("clears reneged_emails when paying a reneged job with email_hash", async () => {
+    const jobRow = makeJobRow("completed_reneged", {
+      amount_sats: 3000,
+      email_hash: "abc123hash",
+    });
+    const captured = mockTx(jobRow, { status: "completed_eventual" });
+
+    const res = await POST(
+      makeRequest({}) as any,
+      { params: Promise.resolve({ id: JOB_ID }) }
+    );
+    expect(res.status).toBe(200);
+
+    // Verify reneged_emails UPDATE was called
+    const renegedUpdate = captured.find(
+      (c) => c.sql.includes("UPDATE reneged_emails")
+    );
+    expect(renegedUpdate).toBeTruthy();
+    expect(renegedUpdate!.sql).toContain("GREATEST(0, total_debt_sats - $2)");
+    expect(renegedUpdate!.params).toContain("abc123hash");
+    expect(renegedUpdate!.params).toContain(3000);
+
+    // Verify DELETE for zero-balance cleanup
+    const renegedDelete = captured.find(
+      (c) => c.sql.includes("DELETE FROM reneged_emails")
+    );
+    expect(renegedDelete).toBeTruthy();
+    expect(renegedDelete!.params).toContain("abc123hash");
+  });
+
+  it("skips reneged_emails clear when email_hash is null", async () => {
+    const jobRow = makeJobRow("completed_reneged", {
+      amount_sats: 3000,
+      email_hash: null,
+    });
+    const captured = mockTx(jobRow, { status: "completed_eventual" });
+
+    await POST(
+      makeRequest({}) as any,
+      { params: Promise.resolve({ id: JOB_ID }) }
+    );
+
+    const renegedCall = captured.find(
+      (c) => c.sql.includes("reneged_emails")
+    );
+    expect(renegedCall).toBeUndefined();
+  });
+
+  it("skips reneged_emails clear when amount_sats is null", async () => {
+    const jobRow = makeJobRow("completed_reneged", {
+      amount_sats: null,
+      email_hash: "abc123hash",
+    });
+    const captured = mockTx(jobRow, { status: "completed_eventual" });
+
+    await POST(
+      makeRequest({}) as any,
+      { params: Promise.resolve({ id: JOB_ID }) }
+    );
+
+    const renegedCall = captured.find(
+      (c) => c.sql.includes("reneged_emails")
+    );
+    expect(renegedCall).toBeUndefined();
   });
 
   // Finding 4.2: transaction rollback when second query (UPDATE transactions) throws

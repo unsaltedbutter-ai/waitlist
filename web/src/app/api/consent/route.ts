@@ -31,6 +31,13 @@ export const POST = withAuth(async (req: NextRequest, { userId }) => {
       [userId, consentType, ip, userAgent]
     );
 
+    if (consentType === "confirmation") {
+      await query(
+        "UPDATE users SET onboarded_at = NOW(), updated_at = NOW() WHERE id = $1 AND onboarded_at IS NULL",
+        [userId]
+      );
+    }
+
     return NextResponse.json({ success: true }, { status: 201 });
   } catch (err) {
     console.error("Consent POST error:", err);

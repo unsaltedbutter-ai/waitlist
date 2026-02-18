@@ -1,4 +1,4 @@
-import { createCipheriv, createDecipheriv, randomBytes } from "crypto";
+import { createCipheriv, createDecipheriv, createHash, randomBytes } from "crypto";
 import { readFileSync } from "fs";
 
 const IV_LENGTH = 12;
@@ -49,6 +49,11 @@ export function decrypt(data: Buffer): string {
   const decipher = createDecipheriv(ALGORITHM, key, iv);
   decipher.setAuthTag(tag);
   return decipher.update(ciphertext, undefined, "utf8") + decipher.final("utf8");
+}
+
+export function hashEmail(email: string): string {
+  const normalized = email.trim().toLowerCase();
+  return createHash("sha256").update(normalized).digest("hex");
 }
 
 /** Clear cached key (for testing or key rotation) */

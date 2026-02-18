@@ -25,30 +25,40 @@ export const GET = withOperator(async (req: NextRequest) => {
   );
   const startStr = startDate.toISOString().slice(0, 10);
 
-  // Get daily revenue from paid/eventual transactions
+  // Get daily revenue from the append-only ledger (survives user deletion)
   const result = await query<{
     date: string;
-    sats: string;
-    jobs: string;
+    total_sats: string;
+    job_count: string;
+    paid_sats: string;
+    eventual_sats: string;
   }>(
     `SELECT
-       created_at::date::text AS date,
-       COALESCE(SUM(amount_sats), 0)::bigint AS sats,
-       COUNT(*)::int AS jobs
-     FROM transactions
-     WHERE status IN ('paid', 'eventual')
-       AND created_at >= $1::date
-     GROUP BY created_at::date
-     ORDER BY created_at::date ASC`,
+       DATE(recorded_at)::text AS date,
+       COALESCE(SUM(amount_sats), 0)::bigint AS total_sats,
+       COUNT(*)::int AS job_count,
+       COALESCE(SUM(CASE WHEN payment_status = 'paid' THEN amount_sats ELSE 0 END), 0)::bigint AS paid_sats,
+       COALESCE(SUM(CASE WHEN payment_status = 'eventual' THEN amount_sats ELSE 0 END), 0)::bigint AS eventual_sats
+     FROM revenue_ledger
+     WHERE recorded_at >= $1::date
+     GROUP BY DATE(recorded_at)
+     ORDER BY DATE(recorded_at) ASC`,
     [startStr]
   );
 
-  // Build a map of date -> { sats, jobs }
-  const dataByDate = new Map<string, { sats: number; jobs: number }>();
+  // Build a map of date -> daily data
+  const dataByDate = new Map<string, {
+    sats: number;
+    jobs: number;
+    paid_sats: number;
+    eventual_sats: number;
+  }>();
   for (const row of result.rows) {
     dataByDate.set(row.date, {
-      sats: Number(row.sats),
-      jobs: Number(row.jobs),
+      sats: Number(row.total_sats),
+      jobs: Number(row.job_count),
+      paid_sats: Number(row.paid_sats),
+      eventual_sats: Number(row.eventual_sats),
     });
   }
 
@@ -58,6 +68,8 @@ export const GET = withOperator(async (req: NextRequest) => {
     sats: number;
     cumulative_sats: number;
     jobs: number;
+    paid_sats: number;
+    eventual_sats: number;
   }> = [];
 
   let cumulative = 0;
@@ -66,13 +78,15 @@ export const GET = withOperator(async (req: NextRequest) => {
 
   while (current <= today) {
     const dateStr = current.toISOString().slice(0, 10);
-    const entry = dataByDate.get(dateStr) ?? { sats: 0, jobs: 0 };
+    const entry = dataByDate.get(dateStr) ?? { sats: 0, jobs: 0, paid_sats: 0, eventual_sats: 0 };
     cumulative += entry.sats;
     output.push({
       date: dateStr,
       sats: entry.sats,
       cumulative_sats: cumulative,
       jobs: entry.jobs,
+      paid_sats: entry.paid_sats,
+      eventual_sats: entry.eventual_sats,
     });
     current.setDate(current.getDate() + 1);
   }

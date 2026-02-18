@@ -15,10 +15,10 @@ import {
   arrayMove,
   SortableContext,
   sortableKeyboardCoordinates,
-  useSortable,
   verticalListSortingStrategy,
 } from "@dnd-kit/sortable";
-import { CSS } from "@dnd-kit/utilities";
+import { SortableQueueItem } from "@/components/sortable-queue-item";
+import { ServiceCredentialForm } from "@/components/service-credential-form";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -39,8 +39,13 @@ interface JobRecord {
   service_name: string;
   flow_type: string;
   status: string;
-  completed_at: string | null; // status_updated_at from the DB
+  completed_at: string | null;
   created_at: string;
+}
+
+interface ServiceOption {
+  serviceId: string;
+  label: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -123,7 +128,6 @@ function flowTypeLabel(flowType: string): string {
   }
 }
 
-/** Human-readable label for v4 job statuses. */
 function jobStatusLabel(status: string): string {
   switch (status) {
     case "pending":
@@ -155,103 +159,11 @@ function jobStatusLabel(status: string): string {
   }
 }
 
-/** Whether a queue item is "pinned" (not draggable). */
 function isItemPinned(item: QueueItem): boolean {
   return (
     item.subscription_status === "active" ||
     item.subscription_status === "cancel_scheduled" ||
     item.subscription_status === "signup_scheduled"
-  );
-}
-
-
-// ---------------------------------------------------------------------------
-// SortableItem (draggable queue item)
-// ---------------------------------------------------------------------------
-
-interface SortableItemProps {
-  item: QueueItem;
-}
-
-function SortableItem({ item }: SortableItemProps) {
-  const {
-    attributes,
-    listeners,
-    setNodeRef,
-    transform,
-    transition,
-    isDragging,
-  } = useSortable({ id: item.service_id });
-
-  const style = {
-    transform: CSS.Transform.toString(transform),
-    transition,
-    opacity: isDragging ? 0.5 : 1,
-  };
-
-  return (
-    <div
-      ref={setNodeRef}
-      style={style}
-      className="flex items-center gap-3 bg-surface border border-border rounded px-4 py-3"
-    >
-      <button
-        type="button"
-        className="cursor-grab text-muted hover:text-foreground transition-colors text-lg leading-none select-none"
-        {...attributes}
-        {...listeners}
-        aria-label={`Reorder ${item.service_name}`}
-      >
-        &#8801;
-      </button>
-      <span className="flex-1 text-foreground font-medium min-w-0 truncate">
-        {item.service_name}
-      </span>
-      {item.subscription_status && (
-        <span
-          className={`text-xs font-medium px-2 py-0.5 rounded shrink-0 ${statusColor(item.subscription_status)}`}
-        >
-          {statusLabel(item.subscription_status)}
-        </span>
-      )}
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// PinnedItem (non-draggable, active/scheduled queue item)
-// ---------------------------------------------------------------------------
-
-interface PinnedItemProps {
-  item: QueueItem;
-}
-
-function PinnedItem({ item }: PinnedItemProps) {
-  const borderColor =
-    item.subscription_status === "active"
-      ? "border-green-600"
-      : item.subscription_status === "cancel_scheduled"
-        ? "border-amber-600"
-        : "border-blue-600";
-
-  return (
-    <div
-      className={`flex items-center gap-3 bg-surface border ${borderColor} rounded px-4 py-3`}
-    >
-      <span className="text-muted/40 text-lg leading-none select-none">
-        &#8801;
-      </span>
-      <span className="flex-1 text-foreground font-medium min-w-0 truncate">
-        {item.service_name}
-      </span>
-      {item.subscription_status && (
-        <span
-          className={`text-xs font-medium px-2 py-0.5 rounded shrink-0 ${statusColor(item.subscription_status)}`}
-        >
-          {statusLabel(item.subscription_status)}
-        </span>
-      )}
-    </div>
   );
 }
 
@@ -274,6 +186,16 @@ export default function DashboardPage() {
   // Delete account
   const [deleteInput, setDeleteInput] = useState("");
   const [deleteLoading, setDeleteLoading] = useState(false);
+
+  // Add service panel
+  const [showAddPanel, setShowAddPanel] = useState(false);
+  const [allServices, setAllServices] = useState<ServiceOption[]>([]);
+  const [selectedAddService, setSelectedAddService] = useState<string | null>(null);
+  const [addSubmitting, setAddSubmitting] = useState(false);
+
+  // Remove confirmation
+  const [removeConfirm, setRemoveConfirm] = useState<string | null>(null);
+  const [removeLoading, setRemoveLoading] = useState(false);
 
   // ---------- Data fetching ----------
 
@@ -307,16 +229,38 @@ export default function DashboardPage() {
     }
   }, []);
 
+  const fetchAllServices = useCallback(async () => {
+    try {
+      const res = await fetch("/api/service-plans");
+      if (!res.ok) return;
+      const data = await res.json();
+      if (data.groups) {
+        setAllServices(
+          data.groups.map((g: { serviceId: string; label: string }) => ({
+            serviceId: g.serviceId,
+            label: g.label,
+          }))
+        );
+      }
+    } catch {
+      // silent
+    }
+  }, []);
+
   useEffect(() => {
     if (!authLoading && user) {
       fetchData();
+      fetchAllServices();
     }
-  }, [authLoading, user, fetchData]);
+  }, [authLoading, user, fetchData, fetchAllServices]);
 
   // ---------- Derived data ----------
 
   const pinnedItems = queue.filter(isItemPinned);
   const sortableItems = queue.filter((q) => !isItemPinned(q));
+
+  const queueServiceIds = new Set(queue.map((q) => q.service_id));
+  const availableToAdd = allServices.filter((s) => !queueServiceIds.has(s.serviceId));
 
   // ---------- Drag and drop ----------
 
@@ -362,6 +306,77 @@ export default function DashboardPage() {
     [queue, pinnedItems, sortableItems]
   );
 
+  // ---------- Add service ----------
+
+  async function handleAddService(data: { serviceId: string; email: string; password: string }) {
+    setAddSubmitting(true);
+    setError("");
+
+    try {
+      // 1. Save credentials
+      const credRes = await authFetch("/api/credentials", {
+        method: "POST",
+        body: JSON.stringify({
+          serviceId: data.serviceId,
+          email: data.email,
+          password: data.password,
+        }),
+      });
+
+      if (!credRes.ok) {
+        const credData = await credRes.json();
+        throw new Error(credData.error || "Failed to save credentials.");
+      }
+
+      // 2. Update queue with the new service appended
+      const newOrder = [...queue.map((q) => q.service_id), data.serviceId];
+      const queueRes = await authFetch("/api/queue", {
+        method: "PUT",
+        body: JSON.stringify({ order: newOrder }),
+      });
+
+      if (!queueRes.ok) {
+        const queueData = await queueRes.json();
+        throw new Error(queueData.error || "Failed to update queue.");
+      }
+
+      // 3. Refresh and close panel
+      setShowAddPanel(false);
+      setSelectedAddService(null);
+      await fetchData();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to add service.");
+    } finally {
+      setAddSubmitting(false);
+    }
+  }
+
+  // ---------- Remove service ----------
+
+  async function handleRemoveService(serviceId: string) {
+    setRemoveLoading(true);
+    setError("");
+
+    try {
+      const res = await authFetch(`/api/queue/${serviceId}`, {
+        method: "DELETE",
+      });
+
+      if (!res.ok) {
+        const data = await res.json();
+        setError(data.error || "Failed to remove service.");
+        return;
+      }
+
+      setRemoveConfirm(null);
+      await fetchData();
+    } catch {
+      setError("Failed to remove service.");
+    } finally {
+      setRemoveLoading(false);
+    }
+  }
+
   // ---------- Delete account ----------
 
   const handleDeleteAccount = useCallback(async () => {
@@ -394,6 +409,19 @@ export default function DashboardPage() {
 
   if (!user) return null;
 
+  // ---------- Helpers for rendering ----------
+
+  function renderStatusBadge(item: QueueItem) {
+    if (!item.subscription_status) return null;
+    return (
+      <span
+        className={`text-xs font-medium px-2 py-0.5 rounded shrink-0 ${statusColor(item.subscription_status)}`}
+      >
+        {statusLabel(item.subscription_status)}
+      </span>
+    );
+  }
+
   // ---------- Render ----------
 
   return (
@@ -423,40 +451,110 @@ export default function DashboardPage() {
             {/* 1. Rotation Queue                                         */}
             {/* --------------------------------------------------------- */}
             <section className="bg-surface border border-border rounded p-6">
-              <h2 className="text-sm font-medium text-muted mb-4">
-                Your queue
-              </h2>
+              <div className="flex items-center justify-between mb-4">
+                <h2 className="text-sm font-medium text-muted">
+                  Your queue
+                </h2>
+                {availableToAdd.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowAddPanel(!showAddPanel);
+                      setSelectedAddService(null);
+                    }}
+                    className="text-xs font-medium text-accent hover:text-accent/80 transition-colors"
+                  >
+                    {showAddPanel ? "Cancel" : "+ Add service"}
+                  </button>
+                )}
+              </div>
+
+              {/* Remove confirmation dialog */}
+              {removeConfirm && (
+                <div className="bg-red-900/20 border border-red-700 rounded p-4 mb-4">
+                  <p className="text-sm text-red-300 mb-3">
+                    Remove{" "}
+                    <span className="font-medium text-red-200">
+                      {queue.find((q) => q.service_id === removeConfirm)?.service_name}
+                    </span>
+                    ? This will also delete your saved credentials for this service.
+                  </p>
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      onClick={() => handleRemoveService(removeConfirm)}
+                      disabled={removeLoading}
+                      className="py-1.5 px-3 bg-red-800 text-red-200 text-sm font-medium rounded hover:bg-red-700 transition-colors disabled:opacity-50"
+                    >
+                      {removeLoading ? "Removing..." : "Remove"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setRemoveConfirm(null)}
+                      disabled={removeLoading}
+                      className="py-1.5 px-3 bg-surface border border-border text-foreground text-sm rounded hover:border-muted transition-colors"
+                    >
+                      Keep
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* Add service panel */}
+              {showAddPanel && (
+                <div className="bg-surface border border-accent/30 rounded p-4 mb-4 space-y-3">
+                  <p className="text-sm font-medium text-foreground">
+                    Add a service
+                  </p>
+                  {!selectedAddService ? (
+                    <div className="space-y-2">
+                      {availableToAdd.map((svc) => (
+                        <button
+                          key={svc.serviceId}
+                          type="button"
+                          onClick={() => setSelectedAddService(svc.serviceId)}
+                          className="flex items-center justify-between w-full px-4 py-3 rounded-lg border border-border bg-surface hover:border-amber-500/40 text-sm transition-colors"
+                        >
+                          <span className="font-medium text-foreground">{svc.label}</span>
+                          <span className="text-muted text-xs">Select</span>
+                        </button>
+                      ))}
+                    </div>
+                  ) : (
+                    <div>
+                      <button
+                        type="button"
+                        onClick={() => setSelectedAddService(null)}
+                        className="text-xs text-muted hover:text-foreground transition-colors mb-2"
+                      >
+                        &larr; Pick a different service
+                      </button>
+                      <ServiceCredentialForm
+                        serviceId={selectedAddService}
+                        serviceName={availableToAdd.find((s) => s.serviceId === selectedAddService)?.label ?? selectedAddService}
+                        onSubmit={handleAddService}
+                        submitting={addSubmitting}
+                        submitLabel="Add to queue"
+                      />
+                    </div>
+                  )}
+                </div>
+              )}
 
               {queue.length === 0 ? (
                 <p className="text-muted text-sm">
-                  No services in your queue. Add services from settings.
+                  No services in your queue. Add services above.
                 </p>
-              ) : queue.length === 1 ? (
-                <>
-                  <div className="flex items-center gap-3 bg-surface border border-border rounded px-4 py-3 mb-3">
-                    <span className="text-muted text-lg leading-none select-none">
-                      &#8801;
-                    </span>
-                    <span className="flex-1 text-foreground font-medium min-w-0 truncate">
-                      {queue[0].service_name}
-                    </span>
-                    {queue[0].subscription_status && (
-                      <span
-                        className={`text-xs font-medium px-2 py-0.5 rounded shrink-0 ${statusColor(queue[0].subscription_status)}`}
-                      >
-                        {statusLabel(queue[0].subscription_status)}
-                      </span>
-                    )}
-                  </div>
-                  <p className="text-muted text-sm">
-                    You only have one service. Add another to enable rotation.
-                  </p>
-                </>
               ) : (
                 <div className="space-y-2">
                   {/* Pinned items (active/scheduled) */}
                   {pinnedItems.map((item) => (
-                    <PinnedItem key={item.service_id} item={item} />
+                    <SortableQueueItem
+                      key={item.service_id}
+                      item={{ serviceId: item.service_id, serviceName: item.service_name }}
+                      pinned
+                      statusBadge={renderStatusBadge(item)}
+                    />
                   ))}
 
                   {/* Sortable items (queued) */}
@@ -472,7 +570,12 @@ export default function DashboardPage() {
                       >
                         <div className="space-y-2">
                           {sortableItems.map((item) => (
-                            <SortableItem key={item.service_id} item={item} />
+                            <SortableQueueItem
+                              key={item.service_id}
+                              item={{ serviceId: item.service_id, serviceName: item.service_name }}
+                              statusBadge={renderStatusBadge(item)}
+                              onRemove={() => setRemoveConfirm(item.service_id)}
+                            />
                           ))}
                         </div>
                       </SortableContext>

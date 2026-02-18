@@ -122,15 +122,14 @@ export default function OnboardingPage() {
   const selectedIds = Array.from(selectedServiceIds);
 
   const canSaveStep1 = (() => {
-    if (selectedIds.length < 2) return false;
+    if (selectedIds.length === 0) return true;
     if (useSameCreds) {
       return !!sharedCreds.email && !!sharedCreds.password;
     }
-    const complete = selectedIds.filter((sid) => {
+    return selectedIds.every((sid) => {
       const c = creds[sid];
       return c?.email && c?.password;
     });
-    return complete.length >= 2;
   })();
 
   // --- Step 1: Add Services + Credentials ---
@@ -138,31 +137,21 @@ export default function OnboardingPage() {
   async function saveCredentials() {
     setError("");
 
-    if (useSameCreds) {
-      if (!sharedCreds.email || !sharedCreds.password) {
-        setError("Enter the shared email and password.");
-        return;
-      }
-      if (selectedIds.length < 2) {
-        setError("Select at least two services.");
-        return;
-      }
-    } else {
-      const complete = selectedIds.filter((sid) => {
-        const c = creds[sid];
-        return c?.email && c?.password;
-      });
-      if (complete.length < 2) {
-        setError("Select and provide credentials for at least two services.");
-        return;
-      }
-
-      for (const sid of selectedIds) {
-        const c = creds[sid];
-        if (!c?.email || !c?.password) {
-          const svc = services.find((s) => s.service_id === sid);
-          setError(`Enter credentials for ${svc?.service_name ?? sid}.`);
+    // If services are selected, validate credentials are filled in
+    if (selectedIds.length > 0) {
+      if (useSameCreds) {
+        if (!sharedCreds.email || !sharedCreds.password) {
+          setError("Enter the shared email and password.");
           return;
+        }
+      } else {
+        for (const sid of selectedIds) {
+          const c = creds[sid];
+          if (!c?.email || !c?.password) {
+            const svc = services.find((s) => s.service_id === sid);
+            setError(`Enter credentials for ${svc?.service_name ?? sid}.`);
+            return;
+          }
         }
       }
     }
@@ -190,6 +179,13 @@ export default function OnboardingPage() {
         }
       }
 
+      if (selectedIds.length === 0) {
+        // No services selected: skip queue ordering, go straight to consent
+        setSubmitting(false);
+        setStep(3);
+        return;
+      }
+
       // Build queue from selected services
       const savedQueue: QueueItem[] = selectedIds.map((sid) => {
         const svc = services.find((s) => s.service_id === sid)!;
@@ -215,8 +211,9 @@ export default function OnboardingPage() {
             Add your services
           </h1>
           <p className="text-muted leading-relaxed text-sm">
-            Select the streaming services you want us to manage. Provide the
-            login credentials for each. We need at least two for rotation.
+            Select the streaming services you want us to manage and provide
+            the login credentials for each. You can skip this step and add
+            services later from your dashboard.
           </p>
         </div>
 
@@ -339,12 +336,18 @@ export default function OnboardingPage() {
           disabled={submitting || !canSaveStep1}
           className="w-full py-3 px-4 rounded-lg font-medium text-sm transition-colors bg-accent text-background hover:bg-accent/90 disabled:bg-accent/20 disabled:text-accent/40 disabled:cursor-not-allowed"
         >
-          {submitting ? "Saving..." : "Save credentials"}
+          {submitting ? "Saving..." : selectedIds.length === 0 ? "Skip for now" : "Save credentials"}
         </button>
 
-        {!canSaveStep1 && (
+        {selectedIds.length === 0 && (
           <p className="text-xs text-muted/60 text-center -mt-3">
-            Select at least two services and provide credentials for each.
+            You can add services later from your dashboard.
+          </p>
+        )}
+
+        {selectedIds.length > 0 && !canSaveStep1 && (
+          <p className="text-xs text-muted/60 text-center -mt-3">
+            Provide credentials for each selected service to continue.
           </p>
         )}
       </div>
@@ -498,7 +501,7 @@ export default function OnboardingPage() {
       <div className="space-y-8">
         <button
           type="button"
-          onClick={() => setStep(2)}
+          onClick={() => setStep(queue.length > 0 ? 2 : 1)}
           className="text-sm text-muted hover:text-foreground transition-colors"
         >
           &larr; Back

@@ -3,6 +3,11 @@ import { mockQueryResult } from "@/__test-utils__/fixtures";
 
 vi.mock("@/lib/db", () => ({
   query: vi.fn(),
+  transaction: vi.fn(),
+}));
+vi.mock("@/lib/crypto", () => ({
+  decrypt: vi.fn((buf: Buffer) => buf.toString().replace("enc:", "")),
+  hashEmail: vi.fn((email: string) => "hash_" + email.trim().toLowerCase()),
 }));
 vi.mock("@/lib/agent-auth", () => ({
   withAgentAuth: vi.fn((handler: Function) => {
@@ -16,7 +21,7 @@ vi.mock("@/lib/agent-auth", () => ({
   }),
 }));
 
-import { query } from "@/lib/db";
+import { query, transaction } from "@/lib/db";
 import { PATCH } from "../route";
 
 const JOB_ID = "a1b2c3d4-e5f6-7890-abcd-ef1234567890";
@@ -67,6 +72,7 @@ function mockAtomicUpdateEmpty() {
 
 beforeEach(() => {
   vi.mocked(query).mockReset();
+  vi.mocked(transaction).mockReset();
 });
 
 describe("PATCH /api/agent/jobs/[id]/status", () => {
@@ -587,6 +593,12 @@ describe("PATCH /api/agent/jobs/[id]/status", () => {
     mockJobLookup("active");
     mockAtomicUpdate("completed_reneged", { amount_sats: 3000 });
 
+    // Mock transaction for the reneg path
+    vi.mocked(transaction).mockImplementationOnce(async (cb) => {
+      const txQuery = vi.fn().mockResolvedValue(mockQueryResult([]));
+      return cb(txQuery as any);
+    });
+
     const res = await PATCH(
       makeRequest({ status: "completed_reneged", amount_sats: 3000 }) as any,
       { params: Promise.resolve({ id: JOB_ID }) }
@@ -634,5 +646,111 @@ describe("PATCH /api/agent/jobs/[id]/status", () => {
     expect(res.status).toBe(400);
     const data = await res.json();
     expect(data.error).toContain("Missing status");
+  });
+
+  // -- Reneg path: completed_reneged with amount_sats inserts into reneged_emails --
+
+  it("completed_reneged with amount_sats triggers reneg transaction", async () => {
+    mockJobLookup("active");
+    mockAtomicUpdate("completed_reneged", { amount_sats: 3000, user_id: "user-1", service_id: "netflix" });
+
+    const capturedCalls: { sql: string; params: unknown[] }[] = [];
+    vi.mocked(transaction).mockImplementationOnce(async (cb) => {
+      const txQuery = vi.fn().mockImplementation((sql: string, params: unknown[]) => {
+        capturedCalls.push({ sql, params });
+        if (sql.includes("streaming_credentials")) {
+          return mockQueryResult([{ email_enc: Buffer.from("enc:attacker@***REDACTED***.com") }]);
+        }
+        return mockQueryResult([]);
+      });
+      return cb(txQuery as any);
+    });
+
+    const res = await PATCH(
+      makeRequest({ status: "completed_reneged", amount_sats: 3000 }) as any,
+      { params: Promise.resolve({ id: JOB_ID }) }
+    );
+    expect(res.status).toBe(200);
+    expect(transaction).toHaveBeenCalledOnce();
+
+    // Verify email_hash stored on job
+    const jobHashCall = capturedCalls.find((c) => c.sql.includes("UPDATE jobs SET email_hash"));
+    expect(jobHashCall).toBeTruthy();
+    expect(jobHashCall!.params[0]).toBe(JOB_ID);
+    expect(jobHashCall!.params[1]).toBe("hash_attacker@***REDACTED***.com");
+
+    // Verify debt_sats incremented
+    const debtCall = capturedCalls.find((c) => c.sql.includes("UPDATE users SET debt_sats"));
+    expect(debtCall).toBeTruthy();
+    expect(debtCall!.sql).toContain("debt_sats + $2");
+    expect(debtCall!.params).toContain(3000);
+
+    // Verify reneged_emails upsert
+    const renegedCall = capturedCalls.find((c) => c.sql.includes("INSERT INTO reneged_emails"));
+    expect(renegedCall).toBeTruthy();
+    expect(renegedCall!.params[0]).toBe("hash_attacker@***REDACTED***.com");
+    expect(renegedCall!.params[1]).toBe(3000);
+  });
+
+  it("completed_reneged without amount_sats skips reneg transaction", async () => {
+    mockJobLookup("active");
+    mockAtomicUpdate("completed_reneged", { amount_sats: null });
+
+    const res = await PATCH(
+      makeRequest({ status: "completed_reneged" }) as any,
+      { params: Promise.resolve({ id: JOB_ID }) }
+    );
+    expect(res.status).toBe(200);
+    expect(transaction).not.toHaveBeenCalled();
+  });
+
+  it("completed_reneged does NOT insert into revenue_ledger (debt, not income)", async () => {
+    mockJobLookup("active");
+    mockAtomicUpdate("completed_reneged", { amount_sats: 3000, user_id: "user-1", service_id: "netflix" });
+
+    const capturedCalls: { sql: string; params: unknown[] }[] = [];
+    vi.mocked(transaction).mockImplementationOnce(async (cb) => {
+      const txQuery = vi.fn().mockImplementation((sql: string, params: unknown[]) => {
+        capturedCalls.push({ sql, params });
+        if (sql.includes("streaming_credentials")) {
+          return mockQueryResult([{ email_enc: Buffer.from("enc:test@example.com") }]);
+        }
+        return mockQueryResult([]);
+      });
+      return cb(txQuery as any);
+    });
+
+    const res = await PATCH(
+      makeRequest({ status: "completed_reneged", amount_sats: 3000 }) as any,
+      { params: Promise.resolve({ id: JOB_ID }) }
+    );
+    expect(res.status).toBe(200);
+
+    const ledgerCall = capturedCalls.find((c) => c.sql.includes("revenue_ledger"));
+    expect(ledgerCall).toBeUndefined();
+  });
+
+  it("completed_reneged skips reneg when no credentials found", async () => {
+    mockJobLookup("active");
+    mockAtomicUpdate("completed_reneged", { amount_sats: 3000, user_id: "user-1", service_id: "netflix" });
+
+    const capturedCalls: { sql: string; params: unknown[] }[] = [];
+    vi.mocked(transaction).mockImplementationOnce(async (cb) => {
+      const txQuery = vi.fn().mockImplementation((sql: string, params: unknown[]) => {
+        capturedCalls.push({ sql, params });
+        return mockQueryResult([]);
+      });
+      return cb(txQuery as any);
+    });
+
+    const res = await PATCH(
+      makeRequest({ status: "completed_reneged", amount_sats: 3000 }) as any,
+      { params: Promise.resolve({ id: JOB_ID }) }
+    );
+    expect(res.status).toBe(200);
+
+    // Only the credential lookup should have been called (no debt/reneged queries)
+    expect(capturedCalls).toHaveLength(1);
+    expect(capturedCalls[0].sql).toContain("streaming_credentials");
   });
 });

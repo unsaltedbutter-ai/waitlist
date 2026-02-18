@@ -3,6 +3,7 @@ import { withAgentAuth } from "@/lib/agent-auth";
 import { query } from "@/lib/db";
 import { getUserByNpub } from "@/lib/queries";
 import { parseJsonBody } from "@/lib/parse-json-body";
+import { checkEmailBlocklist } from "@/lib/reneged";
 
 const VALID_ACTIONS = ["cancel", "resume"];
 
@@ -71,6 +72,15 @@ export const POST = withAgentAuth(async (_req: NextRequest, { body: rawBody, par
       return NextResponse.json(
         { error: `No credentials for service: ${service}` },
         { status: 400 }
+      );
+    }
+
+    // Check email blocklist (catches npub-hopping with same email)
+    const blocklist = await checkEmailBlocklist(user.id, service);
+    if (blocklist.blocked) {
+      return NextResponse.json(
+        { error: "Email blocked due to outstanding debt", debt_sats: blocklist.debt_sats },
+        { status: 403 }
       );
     }
 

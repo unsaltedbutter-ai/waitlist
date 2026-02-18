@@ -29,6 +29,7 @@ export const POST = withAgentAuth(async (_req: NextRequest, { body, params }) =>
         status: string;
         amount_sats: number | null;
         invoice_id: string | null;
+        email_hash: string | null;
         billing_date: string | null;
         access_end_date: string | null;
         outreach_count: number;
@@ -96,6 +97,30 @@ export const POST = withAgentAuth(async (_req: NextRequest, { body, params }) =>
           `UPDATE users SET debt_sats = GREATEST(0, debt_sats - $2), updated_at = NOW()
            WHERE id = $1`,
           [job.user_id, job.amount_sats]
+        );
+      }
+
+      // Record income in the append-only revenue ledger
+      if (job.amount_sats && job.amount_sats > 0) {
+        await txQuery(
+          `INSERT INTO revenue_ledger (service_id, action, amount_sats, payment_status, job_completed_at)
+           VALUES ($1, $2, $3, $4, NOW())`,
+          [job.service_id, job.action, job.amount_sats, txnStatus]
+        );
+      }
+
+      // Clear reneged_emails entry if this job had a tracked email hash
+      if (job.email_hash && job.amount_sats && job.amount_sats > 0) {
+        await txQuery(
+          `UPDATE reneged_emails
+           SET total_debt_sats = GREATEST(0, total_debt_sats - $2),
+               last_seen_at = NOW()
+           WHERE email_hash = $1`,
+          [job.email_hash, job.amount_sats]
+        );
+        await txQuery(
+          "DELETE FROM reneged_emails WHERE email_hash = $1 AND total_debt_sats <= 0",
+          [job.email_hash]
         );
       }
 

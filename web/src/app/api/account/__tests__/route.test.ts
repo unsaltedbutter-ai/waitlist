@@ -122,12 +122,12 @@ describe("GET /api/account", () => {
 });
 
 describe("DELETE /api/account", () => {
-  it("successful delete -> 200", async () => {
+  it("successful delete -> 200 when debt is zero", async () => {
     mockAuthenticateRequest.mockResolvedValueOnce("user-123");
 
-    // SELECT user exists
+    // SELECT user exists with zero debt
     vi.mocked(query).mockResolvedValueOnce(
-      mockQueryResult([{ id: "user-123" }])
+      mockQueryResult([{ id: "user-123", debt_sats: 0 }])
     );
     // DELETE users (CASCADE)
     vi.mocked(query).mockResolvedValueOnce(mockQueryResult([]));
@@ -144,6 +144,27 @@ describe("DELETE /api/account", () => {
     const deleteCall = vi.mocked(query).mock.calls[1];
     expect(deleteCall[0]).toContain("DELETE FROM users");
     expect(deleteCall[1]).toEqual(["user-123"]);
+  });
+
+  it("blocks deletion when debt > 0 -> 402", async () => {
+    mockAuthenticateRequest.mockResolvedValueOnce("user-123");
+
+    vi.mocked(query).mockResolvedValueOnce(
+      mockQueryResult([{ id: "user-123", debt_sats: 6000 }])
+    );
+
+    const res = await DELETE(
+      makeDeleteRequest() as any,
+      { params: Promise.resolve({}) }
+    );
+    expect(res.status).toBe(402);
+    const data = await res.json();
+    expect(data.error).toContain("Outstanding balance");
+    expect(data.error).toContain("6000");
+    expect(data.debt_sats).toBe(6000);
+
+    // Verify DELETE was never called
+    expect(vi.mocked(query).mock.calls).toHaveLength(1);
   });
 
   it("user not found -> 404", async () => {

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { withAuth } from "@/lib/auth";
 import { query } from "@/lib/db";
-import { encrypt, decrypt } from "@/lib/crypto";
+import { encrypt, decrypt, hashEmail } from "@/lib/crypto";
 
 export const POST = withAuth(async (req: NextRequest, { userId }) => {
   let body: { serviceId: string; email: string; password: string };
@@ -21,6 +21,22 @@ export const POST = withAuth(async (req: NextRequest, { userId }) => {
   }
 
   try {
+    // Check if this email is on the reneged blocklist
+    const emailHash = hashEmail(email);
+    const renegedCheck = await query<{ total_debt_sats: number }>(
+      "SELECT total_debt_sats FROM reneged_emails WHERE email_hash = $1",
+      [emailHash]
+    );
+    if (renegedCheck.rows.length > 0 && renegedCheck.rows[0].total_debt_sats > 0) {
+      return NextResponse.json(
+        {
+          error: "Outstanding balance of " + renegedCheck.rows[0].total_debt_sats + " sats must be paid before adding credentials",
+          debt_sats: renegedCheck.rows[0].total_debt_sats,
+        },
+        { status: 403 }
+      );
+    }
+
     // Verify service exists
     const svc = await query(
       "SELECT id FROM streaming_services WHERE id = $1 AND supported = TRUE",

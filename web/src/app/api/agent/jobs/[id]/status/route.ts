@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { withAgentAuth } from "@/lib/agent-auth";
-import { query } from "@/lib/db";
+import { query, transaction } from "@/lib/db";
 import { UUID_REGEX } from "@/lib/constants";
 import { parseJsonBody } from "@/lib/parse-json-body";
+import { decrypt, hashEmail } from "@/lib/crypto";
 
 // Valid status transitions: from -> [allowed targets]
 const VALID_TRANSITIONS: Record<string, string[]> = {
@@ -137,7 +138,43 @@ export const PATCH = withAgentAuth(async (_req: NextRequest, { body, params }) =
       );
     }
 
-    return NextResponse.json({ job: updateResult.rows[0] });
+    const updatedJob = updateResult.rows[0];
+
+    if (newStatus === "completed_reneged" && updatedJob.amount_sats) {
+      await transaction(async (txQuery) => {
+        const credResult = await txQuery<{ email_enc: Buffer }>(
+          "SELECT email_enc FROM streaming_credentials WHERE user_id = $1 AND service_id = $2",
+          [updatedJob.user_id, updatedJob.service_id]
+        );
+
+        if (credResult.rows.length > 0) {
+          const email = decrypt(credResult.rows[0].email_enc);
+          const hash = hashEmail(email);
+
+          await txQuery(
+            "UPDATE jobs SET email_hash = $2 WHERE id = $1",
+            [updatedJob.id, hash]
+          );
+
+          await txQuery(
+            `UPDATE users SET debt_sats = debt_sats + $2, updated_at = NOW()
+             WHERE id = $1`,
+            [updatedJob.user_id, updatedJob.amount_sats]
+          );
+
+          await txQuery(
+            `INSERT INTO reneged_emails (email_hash, total_debt_sats, last_seen_at)
+             VALUES ($1, $2, NOW())
+             ON CONFLICT (email_hash) DO UPDATE
+             SET total_debt_sats = reneged_emails.total_debt_sats + $2,
+                 last_seen_at = NOW()`,
+            [hash, updatedJob.amount_sats]
+          );
+        }
+      });
+    }
+
+    return NextResponse.json({ job: updatedJob });
   } catch (err) {
     console.error("Agent job status update error:", err);
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });

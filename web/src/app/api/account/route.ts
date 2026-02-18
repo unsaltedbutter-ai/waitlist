@@ -33,14 +33,25 @@ export const GET = withAuth(async (_req: NextRequest, { userId }) => {
 
 export const DELETE = withAuth(async (_req: NextRequest, { userId }) => {
   try {
-    // Verify user exists before deleting
-    const userResult = await query(
-      "SELECT id FROM users WHERE id = $1",
+    // Verify user exists and check debt before deleting
+    const userResult = await query<{ id: string; debt_sats: number }>(
+      "SELECT id, debt_sats FROM users WHERE id = $1",
       [userId]
     );
 
     if (userResult.rows.length === 0) {
       return NextResponse.json({ error: "User not found" }, { status: 404 });
+    }
+
+    const debtSats = userResult.rows[0].debt_sats;
+    if (debtSats > 0) {
+      return NextResponse.json(
+        {
+          error: `Outstanding balance of ${debtSats} sats must be paid before account deletion`,
+          debt_sats: debtSats,
+        },
+        { status: 402 }
+      );
     }
 
     // CASCADE delete: wipes credentials, queue, consents, jobs, transactions, action_logs

@@ -7,6 +7,7 @@ vi.mock("@/lib/db", () => ({
 vi.mock("@/lib/crypto", () => ({
   encrypt: vi.fn((val: string) => Buffer.from(`enc:${val}`)),
   decrypt: vi.fn((buf: Buffer) => buf.toString().replace("enc:", "")),
+  hashEmail: vi.fn((email: string) => "hash_" + email.trim().toLowerCase()),
 }));
 vi.mock("@/lib/auth", () => ({
   withAuth: vi.fn((handler: Function) => {
@@ -36,8 +37,13 @@ beforeEach(() => {
   vi.mocked(encrypt).mockClear();
 });
 
+function mockRenegedClean() {
+  vi.mocked(query).mockResolvedValueOnce(mockQueryResult([]));
+}
+
 describe("POST /api/credentials", () => {
   it("saves credentials for a valid service → 201", async () => {
+    mockRenegedClean();
     // Service exists
     vi.mocked(query).mockResolvedValueOnce(mockQueryResult([{ id: "netflix" }]));
     // INSERT succeeds
@@ -56,7 +62,7 @@ describe("POST /api/credentials", () => {
     expect(encrypt).toHaveBeenCalledWith("hunter2");
 
     // Finding 2.2: Verify the INSERT query received encrypt() return values, not plaintext
-    const insertCall = vi.mocked(query).mock.calls[1];
+    const insertCall = vi.mocked(query).mock.calls[2];
     const params = insertCall[1] as unknown[];
     // The mock encrypt returns Buffer.from("enc:<val>"), so params must be those Buffers
     expect(params[2]).toEqual(Buffer.from("enc:user@example.com"));
@@ -67,6 +73,7 @@ describe("POST /api/credentials", () => {
   });
 
   it("stores the exact credentials passed, not stale values", async () => {
+    mockRenegedClean();
     vi.mocked(query).mockResolvedValueOnce(mockQueryResult([{ id: "netflix" }]));
     vi.mocked(query).mockResolvedValueOnce(mockQueryResult([]));
 
@@ -78,7 +85,7 @@ describe("POST /api/credentials", () => {
     await POST(req as any, { params: Promise.resolve({}) });
 
     // The INSERT query should receive the encrypted shared creds
-    const insertCall = vi.mocked(query).mock.calls[1];
+    const insertCall = vi.mocked(query).mock.calls[2];
     const params = insertCall[1] as unknown[];
     expect(params[0]).toBe("test-user");
     expect(params[1]).toBe("netflix");
@@ -89,6 +96,7 @@ describe("POST /api/credentials", () => {
 
   it("upserts on conflict — second POST overwrites first", async () => {
     // First save
+    mockRenegedClean();
     vi.mocked(query).mockResolvedValueOnce(mockQueryResult([{ id: "netflix" }]));
     vi.mocked(query).mockResolvedValueOnce(mockQueryResult([]));
 
@@ -102,6 +110,7 @@ describe("POST /api/credentials", () => {
     );
 
     // Second save with different creds (simulates "use same" toggle overwrite)
+    mockRenegedClean();
     vi.mocked(query).mockResolvedValueOnce(mockQueryResult([{ id: "netflix" }]));
     vi.mocked(query).mockResolvedValueOnce(mockQueryResult([]));
 
@@ -114,8 +123,8 @@ describe("POST /api/credentials", () => {
       { params: Promise.resolve({}) }
     );
 
-    // The second INSERT's params should have the new creds
-    const lastInsert = vi.mocked(query).mock.calls[3];
+    // The second INSERT's params should have the new creds (6 calls total: 3 per POST)
+    const lastInsert = vi.mocked(query).mock.calls[5];
     const params = lastInsert[1] as unknown[];
     expect(Buffer.from(params[2] as Buffer).toString()).toBe("enc:shared@example.com");
     expect(Buffer.from(params[3] as Buffer).toString()).toBe("enc:shared-pass");
@@ -140,6 +149,7 @@ describe("POST /api/credentials", () => {
   });
 
   it("unsupported service → 400", async () => {
+    mockRenegedClean();
     vi.mocked(query).mockResolvedValueOnce(mockQueryResult([]));
 
     const req = makePostRequest({
@@ -153,6 +163,24 @@ describe("POST /api/credentials", () => {
     expect(data.error).toMatch(/unsupported/i);
   });
 
+  it("rejects reneged email with 403 and debt amount", async () => {
+    vi.mocked(query).mockResolvedValueOnce(
+      mockQueryResult([{ total_debt_sats: 6000 }])
+    );
+
+    const req = makePostRequest({
+      serviceId: "netflix",
+      email: "deadbeat@example.com",
+      password: "pass",
+    });
+    const res = await POST(req as any, { params: Promise.resolve({}) });
+    expect(res.status).toBe(403);
+    const data = await res.json();
+    expect(data.error).toContain("Outstanding balance");
+    expect(data.error).toContain("6000");
+    expect(data.debt_sats).toBe(6000);
+  });
+
   it("invalid JSON → 400", async () => {
     const req = new Request("http://localhost/api/credentials", {
       method: "POST",
@@ -163,8 +191,8 @@ describe("POST /api/credentials", () => {
     expect(res.status).toBe(400);
   });
 
-  // Finding 4.1: database error on POST service lookup (no outer try/catch)
-  it("returns 500 when database query throws during service lookup", async () => {
+  // Finding 4.1: database error on POST (reneged check throws)
+  it("returns 500 when database query throws during reneged check", async () => {
     vi.mocked(query).mockRejectedValueOnce(new Error("Connection refused"));
 
     const req = makePostRequest({

@@ -26,21 +26,29 @@ function makeRequest(period?: string): Request {
   return new Request(url, { method: "GET" });
 }
 
-/** Mock all four queries returning empty results */
+/** Mock all seven queries returning empty results */
 function mockEmptyQueries() {
-  // jobs
+  // 1. jobs
   vi.mocked(query).mockResolvedValueOnce(mockQueryResult([]));
-  // revenue
+  // 2. revenue (transactions)
   vi.mocked(query).mockResolvedValueOnce(mockQueryResult([]));
-  // by_service
+  // 3. by_service (transactions)
   vi.mocked(query).mockResolvedValueOnce(mockQueryResult([]));
-  // users
+  // 4. ledger total
+  vi.mocked(query).mockResolvedValueOnce(
+    mockQueryResult([{ total_sats: "0" }])
+  );
+  // 5. ledger period
+  vi.mocked(query).mockResolvedValueOnce(mockQueryResult([]));
+  // 6. ledger by_service
+  vi.mocked(query).mockResolvedValueOnce(mockQueryResult([]));
+  // 7. users
   vi.mocked(query).mockResolvedValueOnce(
     mockQueryResult([{ total: "0", active: "0", with_debt: "0" }])
   );
 }
 
-/** Mock all four queries with provided data */
+/** Mock all seven queries with provided data */
 function mockQueries(opts: {
   jobs?: Array<{ status: string; count: string }>;
   revenue?: Array<{ status: string; total_sats: string }>;
@@ -50,17 +58,41 @@ function mockQueries(opts: {
     count: string;
     sats: string;
   }>;
+  ledgerTotal?: { total_sats: string };
+  ledgerPeriod?: Array<{ payment_status: string; total_sats: string }>;
+  ledgerByService?: Array<{
+    service_id: string;
+    action: string;
+    count: string;
+    sats: string;
+  }>;
   users?: { total: string; active: string; with_debt: string };
 }) {
+  // 1. jobs
   vi.mocked(query).mockResolvedValueOnce(
     mockQueryResult(opts.jobs ?? [])
   );
+  // 2. revenue (transactions)
   vi.mocked(query).mockResolvedValueOnce(
     mockQueryResult(opts.revenue ?? [])
   );
+  // 3. by_service (transactions)
   vi.mocked(query).mockResolvedValueOnce(
     mockQueryResult(opts.byService ?? [])
   );
+  // 4. ledger total
+  vi.mocked(query).mockResolvedValueOnce(
+    mockQueryResult([opts.ledgerTotal ?? { total_sats: "0" }])
+  );
+  // 5. ledger period
+  vi.mocked(query).mockResolvedValueOnce(
+    mockQueryResult(opts.ledgerPeriod ?? [])
+  );
+  // 6. ledger by_service
+  vi.mocked(query).mockResolvedValueOnce(
+    mockQueryResult(opts.ledgerByService ?? [])
+  );
+  // 7. users
   vi.mocked(query).mockResolvedValueOnce(
     mockQueryResult([
       opts.users ?? { total: "0", active: "0", with_debt: "0" },
@@ -173,6 +205,13 @@ describe("GET /api/operator/stats", () => {
     expect(data.revenue).toEqual({
       earned_sats: 0,
       outstanding_sats: 0,
+    });
+    expect(data.ledger).toEqual({
+      all_time_sats: 0,
+      period_paid_sats: 0,
+      period_eventual_sats: 0,
+      period_total_sats: 0,
+      by_service: {},
     });
     expect(data.by_service).toEqual({});
     expect(data.users).toEqual({
@@ -364,6 +403,15 @@ describe("GET /api/operator/stats", () => {
           sats: "75000",
         },
       ],
+      ledgerTotal: { total_sats: "500000" },
+      ledgerPeriod: [
+        { payment_status: "paid", total_sats: "350000" },
+        { payment_status: "eventual", total_sats: "24000" },
+      ],
+      ledgerByService: [
+        { service_id: "netflix", action: "cancel", count: "28", sats: "84000" },
+        { service_id: "netflix", action: "resume", count: "25", sats: "75000" },
+      ],
       users: { total: "104", active: "89", with_debt: "2" },
     });
 
@@ -390,6 +438,15 @@ describe("GET /api/operator/stats", () => {
       revenue: {
         earned_sats: 378000,
         outstanding_sats: 9000,
+      },
+      ledger: {
+        all_time_sats: 500000,
+        period_paid_sats: 350000,
+        period_eventual_sats: 24000,
+        period_total_sats: 374000,
+        by_service: {
+          netflix: { cancels: 28, resumes: 25, sats: 159000 },
+        },
       },
       by_service: {
         netflix: { cancels: 28, resumes: 25, sats: 159000 },
@@ -426,5 +483,54 @@ describe("GET /api/operator/stats", () => {
     expect(firstCall[1]).toHaveLength(1);
     // Should be a valid date string
     expect(firstCall[1]![0]).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+  });
+
+  // -- Ledger-specific tests --
+
+  it("ledger returns all_time_sats and period breakdown", async () => {
+    mockQueries({
+      ledgerTotal: { total_sats: "250000" },
+      ledgerPeriod: [
+        { payment_status: "paid", total_sats: "80000" },
+        { payment_status: "eventual", total_sats: "12000" },
+      ],
+    });
+
+    const res = await GET(makeRequest("week") as any, {
+      params: Promise.resolve({}),
+    });
+    expect(res.status).toBe(200);
+    const data = await res.json();
+
+    expect(data.ledger.all_time_sats).toBe(250000);
+    expect(data.ledger.period_paid_sats).toBe(80000);
+    expect(data.ledger.period_eventual_sats).toBe(12000);
+    expect(data.ledger.period_total_sats).toBe(92000);
+  });
+
+  it("ledger by_service groups correctly", async () => {
+    mockQueries({
+      ledgerByService: [
+        { service_id: "netflix", action: "cancel", count: "10", sats: "30000" },
+        { service_id: "netflix", action: "resume", count: "5", sats: "15000" },
+        { service_id: "hulu", action: "cancel", count: "3", sats: "9000" },
+      ],
+    });
+
+    const res = await GET(makeRequest() as any, {
+      params: Promise.resolve({}),
+    });
+    const data = await res.json();
+
+    expect(data.ledger.by_service.netflix).toEqual({
+      cancels: 10,
+      resumes: 5,
+      sats: 45000,
+    });
+    expect(data.ledger.by_service.hulu).toEqual({
+      cancels: 3,
+      resumes: 0,
+      sats: 9000,
+    });
   });
 });

@@ -4,6 +4,9 @@ import { mockQueryResult } from "@/__test-utils__/fixtures";
 vi.mock("@/lib/db", () => ({
   query: vi.fn(),
 }));
+vi.mock("@/lib/reneged", () => ({
+  checkEmailBlocklist: vi.fn(),
+}));
 vi.mock("@/lib/agent-auth", () => ({
   withAgentAuth: vi.fn((handler: Function) => {
     return async (req: Request, segmentData: any) => {
@@ -17,6 +20,7 @@ vi.mock("@/lib/agent-auth", () => ({
 }));
 
 import { query } from "@/lib/db";
+import { checkEmailBlocklist } from "@/lib/reneged";
 import { POST } from "../route";
 
 function makeRequest(body: object): Request {
@@ -29,6 +33,8 @@ function makeRequest(body: object): Request {
 
 beforeEach(() => {
   vi.mocked(query).mockReset();
+  vi.mocked(checkEmailBlocklist).mockReset();
+  vi.mocked(checkEmailBlocklist).mockResolvedValue({ blocked: false, debt_sats: 0 });
 });
 
 function mockUser(overrides: Record<string, unknown> = {}) {
@@ -209,5 +215,35 @@ describe("POST /api/agent/users/[npub]/on-demand", () => {
     const res = await POST(req as any, { params: Promise.resolve({ npub: "npub1abc" }) });
 
     expect(res.status).toBe(400);
+  });
+
+  it("blocks email with outstanding reneged debt: returns 403", async () => {
+    mockUser();
+    mockServiceExists();
+    mockCredentials();
+    vi.mocked(checkEmailBlocklist).mockResolvedValue({ blocked: true, debt_sats: 6000 });
+
+    const req = makeRequest({ service: "netflix", action: "cancel" });
+    const res = await POST(req as any, { params: Promise.resolve({ npub: "npub1abc" }) });
+
+    expect(res.status).toBe(403);
+    const data = await res.json();
+    expect(data.error).toContain("blocked");
+    expect(data.debt_sats).toBe(6000);
+  });
+
+  it("allows email with no reneged debt", async () => {
+    mockUser();
+    mockServiceExists();
+    mockCredentials();
+    vi.mocked(checkEmailBlocklist).mockResolvedValue({ blocked: false, debt_sats: 0 });
+    mockJobCreated("clean-job-1");
+
+    const req = makeRequest({ service: "netflix", action: "cancel" });
+    const res = await POST(req as any, { params: Promise.resolve({ npub: "npub1abc" }) });
+
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data.job_id).toBe("clean-job-1");
   });
 });

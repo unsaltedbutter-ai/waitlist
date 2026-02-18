@@ -18,10 +18,22 @@ interface DailyRevenue {
   sats: number;
   cumulative_sats: number;
   jobs: number;
+  paid_sats: number;
+  eventual_sats: number;
+}
+
+// Ledger stats from GET /api/operator/stats
+interface LedgerStats {
+  all_time_sats: number;
+  period_paid_sats: number;
+  period_eventual_sats: number;
+  period_total_sats: number;
+  by_service: Record<string, { cancels: number; resumes: number; sats: number }>;
 }
 
 export default function BusinessPage() {
   const [metrics, setMetrics] = useState<Metrics | null>(null);
+  const [ledger, setLedger] = useState<LedgerStats | null>(null);
   const [dailyRevenue, setDailyRevenue] = useState<DailyRevenue[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -30,8 +42,9 @@ export default function BusinessPage() {
     setLoading(true);
     setError("");
     try {
-      const [mRes, rRes] = await Promise.all([
+      const [mRes, sRes, rRes] = await Promise.all([
         authFetch("/api/operator/metrics"),
+        authFetch("/api/operator/stats?period=month"),
         authFetch("/api/operator/revenue/daily?days=90"),
       ]);
       if (mRes.status === 403) {
@@ -43,6 +56,10 @@ export default function BusinessPage() {
         return;
       }
       setMetrics(await mRes.json());
+      if (sRes.ok) {
+        const statsData = await sRes.json();
+        setLedger(statsData.ledger ?? null);
+      }
       if (rRes.ok) {
         setDailyRevenue(await rRes.json());
       }
@@ -81,9 +98,14 @@ export default function BusinessPage() {
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
           <StatCard label="Total Users" value={biz.total_users} />
           <StatCard
-            label="Sats Earned (30d)"
-            value={`${formatSats(biz.sats_in_30d)} sats`}
-            sub="paid cancel/resume invoices"
+            label="Lifetime Income"
+            value={`${formatSats(ledger?.all_time_sats ?? 0)} sats`}
+            sub="from revenue ledger (survives deletion)"
+          />
+          <StatCard
+            label="Income (30d)"
+            value={`${formatSats(ledger?.period_total_sats ?? biz.sats_in_30d)} sats`}
+            sub={`${formatSats(ledger?.period_paid_sats ?? 0)} paid, ${formatSats(ledger?.period_eventual_sats ?? 0)} eventual`}
           />
           <StatCard
             label="Outstanding Debt"
@@ -98,6 +120,37 @@ export default function BusinessPage() {
         </div>
       </section>
 
+      {/* Ledger by-service breakdown */}
+      {ledger && Object.keys(ledger.by_service).length > 0 && (
+        <section>
+          <SectionHeader>Income by Service (30d, from Ledger)</SectionHeader>
+          <div className="overflow-x-auto">
+            <table className="w-full">
+              <thead>
+                <tr className="border-b border-border">
+                  <th className={thClass}>Service</th>
+                  <th className={thClass}>Cancels</th>
+                  <th className={thClass}>Resumes</th>
+                  <th className={thClass}>Sats</th>
+                </tr>
+              </thead>
+              <tbody>
+                {Object.entries(ledger.by_service).map(([svc, data]) => (
+                  <tr key={svc} className="border-b border-border/50">
+                    <td className={tdClass}>{svc}</td>
+                    <td className={tdMuted}>{data.cancels}</td>
+                    <td className={tdMuted}>{data.resumes}</td>
+                    <td className="px-3 py-2 text-sm text-green-400">
+                      {formatSats(data.sats)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      )}
+
       {/* Daily Revenue Table */}
       <section>
         <SectionHeader>Daily Revenue (Last 90 Days)</SectionHeader>
@@ -109,6 +162,8 @@ export default function BusinessPage() {
                   <th className={thClass}>Date</th>
                   <th className={thClass}>Jobs</th>
                   <th className={thClass}>Sats</th>
+                  <th className={thClass}>Paid</th>
+                  <th className={thClass}>Eventual</th>
                   <th className={thClass}>Cumulative</th>
                 </tr>
               </thead>
@@ -120,6 +175,8 @@ export default function BusinessPage() {
                     <td className="px-3 py-2 text-sm text-green-400">
                       {formatSats(d.sats)}
                     </td>
+                    <td className={tdMuted}>{formatSats(d.paid_sats)}</td>
+                    <td className={tdMuted}>{formatSats(d.eventual_sats)}</td>
                     <td className={tdMuted}>
                       {formatSats(d.cumulative_sats)}
                     </td>

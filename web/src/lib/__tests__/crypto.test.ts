@@ -8,6 +8,7 @@ import {
 let encrypt: typeof import("@/lib/crypto").encrypt;
 let decrypt: typeof import("@/lib/crypto").decrypt;
 let clearKeyCache: typeof import("@/lib/crypto").clearKeyCache;
+let hashEmail: typeof import("@/lib/crypto").hashEmail;
 
 beforeEach(async () => {
   vi.unstubAllEnvs();
@@ -16,6 +17,7 @@ beforeEach(async () => {
   encrypt = mod.encrypt;
   decrypt = mod.decrypt;
   clearKeyCache = mod.clearKeyCache;
+  hashEmail = mod.hashEmail;
   clearKeyCache();
 });
 
@@ -90,5 +92,40 @@ describe("crypto", () => {
     vi.stubEnv("ENCRYPTION_KEY_PATH", badPath);
     clearKeyCache();
     expect(() => encrypt("test")).toThrow("32 bytes");
+  });
+});
+
+describe("hashEmail", () => {
+  it("produces consistent hash for same email", () => {
+    const a = hashEmail("user@example.com");
+    const b = hashEmail("user@example.com");
+    expect(a).toBe(b);
+  });
+
+  it("normalizes to lowercase", () => {
+    const lower = hashEmail("user@example.com");
+    const upper = hashEmail("USER@EXAMPLE.COM");
+    const mixed = hashEmail("User@Example.Com");
+    expect(lower).toBe(upper);
+    expect(lower).toBe(mixed);
+  });
+
+  it("trims whitespace", () => {
+    const clean = hashEmail("user@example.com");
+    const padded = hashEmail("  user@example.com  ");
+    const tabbed = hashEmail("\tuser@example.com\n");
+    expect(clean).toBe(padded);
+    expect(clean).toBe(tabbed);
+  });
+
+  it("returns a 64-character hex string", () => {
+    const hash = hashEmail("test@test.com");
+    expect(hash).toMatch(/^[0-9a-f]{64}$/);
+  });
+
+  it("different emails produce different hashes", () => {
+    const a = hashEmail("alice@example.com");
+    const b = hashEmail("bob@example.com");
+    expect(a).not.toBe(b);
   });
 });

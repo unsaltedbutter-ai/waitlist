@@ -122,6 +122,68 @@ export const GET = withOperator(async (req: NextRequest) => {
     entry.sats += sats;
   }
 
+  // Ledger revenue: earned income that survives user deletion
+  const ledgerDateFilter =
+    period === "all" ? "" : "WHERE recorded_at >= $1::date";
+  const ledgerDateParam = period === "all" ? [] : [range.start];
+
+  const ledgerTotalResult = await query<{ total_sats: string }>(
+    `SELECT COALESCE(SUM(amount_sats), 0)::bigint AS total_sats FROM revenue_ledger`,
+  );
+
+  const ledgerPeriodResult = await query<{ payment_status: string; total_sats: string }>(
+    `SELECT payment_status, COALESCE(SUM(amount_sats), 0)::bigint AS total_sats
+     FROM revenue_ledger
+     ${ledgerDateFilter}
+     GROUP BY payment_status`,
+    ledgerDateParam
+  );
+
+  const ledgerByServiceResult = await query<{
+    service_id: string;
+    action: string;
+    count: string;
+    sats: string;
+  }>(
+    `SELECT
+       service_id,
+       action,
+       COUNT(*)::int AS count,
+       COALESCE(SUM(amount_sats), 0)::bigint AS sats
+     FROM revenue_ledger
+     ${ledgerDateFilter}
+     GROUP BY service_id, action`,
+    ledgerDateParam
+  );
+
+  let ledgerAllTimeSats = Number(ledgerTotalResult.rows[0]?.total_sats ?? 0);
+  let ledgerPaidSats = 0;
+  let ledgerEventualSats = 0;
+  for (const row of ledgerPeriodResult.rows) {
+    const sats = Number(row.total_sats);
+    if (row.payment_status === "paid") ledgerPaidSats = sats;
+    if (row.payment_status === "eventual") ledgerEventualSats = sats;
+  }
+
+  const ledgerByService: Record<
+    string,
+    { cancels: number; resumes: number; sats: number }
+  > = {};
+  for (const row of ledgerByServiceResult.rows) {
+    if (!ledgerByService[row.service_id]) {
+      ledgerByService[row.service_id] = { cancels: 0, resumes: 0, sats: 0 };
+    }
+    const entry = ledgerByService[row.service_id];
+    const count = Number(row.count);
+    const sats = Number(row.sats);
+    if (row.action === "cancel") {
+      entry.cancels = count;
+    } else {
+      entry.resumes = count;
+    }
+    entry.sats += sats;
+  }
+
   // User counts (not date-filtered, these are current state)
   const usersResult = await query<{
     total: string;
@@ -151,6 +213,13 @@ export const GET = withOperator(async (req: NextRequest) => {
     revenue: {
       earned_sats: earnedSats,
       outstanding_sats: outstandingSats,
+    },
+    ledger: {
+      all_time_sats: ledgerAllTimeSats,
+      period_paid_sats: ledgerPaidSats,
+      period_eventual_sats: ledgerEventualSats,
+      period_total_sats: ledgerPaidSats + ledgerEventualSats,
+      by_service: ledgerByService,
     },
     by_service: byService,
     users: {
