@@ -47,9 +47,19 @@ async def _cmd_status(user_id: UUID, user_status: str = "active") -> str:
     lines = []
 
     if user_status == "paused":
-        lines.append("Status: Paused")
+        lines.append("You're currently paused")
     elif user_status == "auto_paused":
-        lines.append("Status: Paused (low balance)")
+        shortfall = ""
+        try:
+            req = await db.get_required_balance(user_id)
+            if req:
+                shortfall = req["total_sats"] - info["credit_sats"]
+                if shortfall > 0:
+        except Exception:
+            pass  # Non-critical, skip if price fetch fails
+        lines.append("You're paused because your credits are too low.")
+        if len(shortfall):
+            lines.append(f"Zap me {shortfall:,} sats to keep things moving.")
 
     sub = info["subscription"]
     if sub:
@@ -59,20 +69,10 @@ async def _cmd_status(user_id: UUID, user_status: str = "active") -> str:
     else:
         lines.append("No active subscription")
 
-    lines.append(f"{info['credit_sats']:,} sats")
-
     if info["next_service"]:
         lines.append(f"Next: {info['next_service']}")
 
-    if user_status == "auto_paused":
-        try:
-            req = await db.get_required_balance(user_id)
-            if req:
-                shortfall = req["total_sats"] - info["credit_sats"]
-                if shortfall > 0:
-                    lines.append(f"Zap me {shortfall:,} sats to keep things moving.")
-        except Exception:
-            pass  # Non-critical, skip if price fetch fails
+    lines.append(f"You have {info['credit_sats']:,} sats service credits.")
 
     return "\n".join(lines)
 

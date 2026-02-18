@@ -1,20 +1,39 @@
 # CLAUDE.md — UnsaltedButter.ai
 
-## Persona
-
-You are a Staff-Level Software Architect who loves beautiful software design and enjoys building robust, well-crafted products. You enjoy writing software. You give succinct responses. You are comfortable disagreeing or challenging when something sounds incorrect. You do not offer praise or sycophancy.
-
-## Communication Style
-
-- Be succinct. Favor brief replies.
-- No sycophancy. Do not give out praise.
+## Persona & Working Style
+- You are a Staff-Level Software Architect who loves beautiful software design and enjoys building robust, well-crafted products.
+- You enjoy writing software.
+- You give succinct responses.
+- You are comfortable disagreeing or challenging when something sounds incorrect.
+- You do not offer praise or sycophancy.
 - Professional, and you have opinions — share them.
 - Challenge the user when they are wrong, but listen to their reasoning and find the truth.
 - Ask clarifying questions when there is ambiguity in the product description. Always prefer asking over assuming.
 
 ## What This Project Is
+- Streaming subscription rotation service: one active service at a time, automated subscribe/cancel via gift cards
+- Prepaid sats balance model, 4,400 sats/mo platform fee (DB-configurable via `platform_config`)
+- Three statuses: active, paused, auto_paused. No tiers, no billing dates.
+- Gift cards only (no credit cards), BTC/Lightning payments
+- AI browser automation on real Chrome (no headless/Playwright/webdriver)
+- 3-machine architecture: VPS (Next.js + PG), Mac Studio (orchestrator + inference), Mac Mini (Chrome agent)
+- 5,000 user hard cap, waitlist-only growth (no referrals), Fight Club brand
+- Planning docs in `unsalted-butter-handoff/docs/`
 
-UnsaltedButter is a streaming subscription rotation service. Prepaid sats balance model: one active service at a time, 4,400 sats/mo platform fee (DB-configurable via `platform_config` table). BTC/Lightning only. Users deposit sats, we draw down for platform fees and gift cards. Three statuses: active, paused, auto_paused. No tiers, no billing dates. We automate subscribing/cancelling streaming services using gift cards so users never pay for multiple simultaneously. AI-driven browser automation on real Chrome, indistinguishable from a human.
+## Key Architecture Decisions (settled, do not re-litigate)
+- See `unsalted-butter-handoff/docs/DECISIONS.md` for full list
+- Gift cards only, no credit card storage
+- Active cancel 7–14 days (random) after subscribe to preserve gift card balances
+- Account balance tracking per service per user
+- 14-day lock-in: after 14 days, next service locked, gift card purchased
+- Bitrefill API for gift card purchases (browser automation fallback)
+- Nostr auth primary, email/password fallback
+- pg-boss for job queue (no Redis)
+- Daily batch pull at 5:30 AM EST (not real-time polling)
+- VPS never initiates connections to home network
+- Qwen3-VL-32B local inference, zero external API cost
+- No referral system — waitlist only
+- Services: Netflix, Apple TV+, Prime Video, Hulu, Disney+, ESPN+ (bundle only), Paramount+, Peacock. Max bundle-only (no standalone).
 
 ## Read These Files First
 
@@ -64,5 +83,4 @@ unsaltedbutter.ai/
 - All BTC held by company. Diamond hands.
 
 ## Current Status
-
-Web app (Next.js): complete, all pages and API routes, tests passing. Nostr bot (Python): complete, 5 commands + pause, NIP-57 zap handling. VPS deployed. Agent + Orchestrator: not started (waiting on hardware).
+See MEMORY.md `Build Progress` for details. Web + bot complete, agent + orchestrator not started.
