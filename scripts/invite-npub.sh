@@ -114,10 +114,12 @@ if [[ -n "$WAITLIST_ROW" ]]; then
     validate_uuid "$WL_ID"
     WL_INVITED=$(echo "$WAITLIST_ROW" | cut -d'|' -f2)
     if [[ "$WL_INVITED" == "t" ]]; then
+        # Clear redeemed_at in case user destroyed their account and is being re-invited
+        run_sql "UPDATE waitlist SET redeemed_at = NULL WHERE id = '${WL_ID}' AND redeemed_at IS NOT NULL" >/dev/null
         EXISTING_CODE=$(run_sql "SELECT invite_code FROM waitlist WHERE id = '${WL_ID}'" || true)
-        echo "Already invited (code: ${EXISTING_CODE}). Skipping waitlist update."
+        echo "Already invited (code: ${EXISTING_CODE}). Cleared redeemed_at if stale."
     else
-        run_sql "UPDATE waitlist SET invited = TRUE, invite_code = '${INVITE_CODE}', invite_dm_pending = TRUE WHERE id = '${WL_ID}'" >/dev/null
+        run_sql "UPDATE waitlist SET invited = TRUE, invite_code = '${INVITE_CODE}', invite_dm_pending = TRUE, redeemed_at = NULL WHERE id = '${WL_ID}'" >/dev/null
         echo "Promoted waitlist entry to invited (code: ${INVITE_CODE})"
     fi
 else
