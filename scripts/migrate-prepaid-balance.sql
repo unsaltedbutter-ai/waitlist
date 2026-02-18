@@ -35,6 +35,9 @@ ALTER TABLE users DROP CONSTRAINT IF EXISTS users_status_check;
 ALTER TABLE users ADD CONSTRAINT users_status_check
     CHECK (status IN ('active', 'paused', 'auto_paused'));
 
+-- Change default status for new users
+ALTER TABLE users ALTER COLUMN status SET DEFAULT 'auto_paused';
+
 -- Migrate existing active users to auto_paused (they need to re-onboard or deposit)
 UPDATE users SET status = 'auto_paused' WHERE status IN ('active', 'expiring', 'churned');
 
@@ -63,6 +66,16 @@ ALTER TABLE notification_log ADD CONSTRAINT notification_log_notification_type_c
 -- Migrate old membership_due entries (historical, just update type)
 UPDATE notification_log SET notification_type = 'low_balance'
     WHERE notification_type = 'membership_due';
+
+-- ============================================================
+-- 4b. ALTER credit_transactions: rename membership_fee to platform_fee
+-- ============================================================
+
+ALTER TABLE credit_transactions DROP CONSTRAINT IF EXISTS credit_transactions_type_check;
+ALTER TABLE credit_transactions ADD CONSTRAINT credit_transactions_type_check
+    CHECK (type IN ('prepayment', 'zap_topup', 'lock_in_debit', 'platform_fee', 'refund'));
+
+UPDATE credit_transactions SET type = 'platform_fee' WHERE type = 'membership_fee';
 
 -- ============================================================
 -- 5. CREATE platform_config table
