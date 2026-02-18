@@ -32,6 +32,7 @@ interface QueueItem {
   position: number;
   subscription_status: "active" | "cancel_scheduled" | "signup_scheduled" | null;
   subscription_end_date: string | null;
+  plan_id: string | null;
   plan_name: string | null;
   plan_price_cents: number | null;
 }
@@ -45,9 +46,19 @@ interface JobRecord {
   created_at: string;
 }
 
+interface ServicePlan {
+  id: string;
+  service_id: string;
+  display_name: string;
+  monthly_price_cents: number;
+  has_ads: boolean;
+  is_bundle: boolean;
+}
+
 interface ServiceOption {
   serviceId: string;
   label: string;
+  plans: ServicePlan[];
 }
 
 // ---------------------------------------------------------------------------
@@ -188,6 +199,7 @@ export default function DashboardPage() {
   const [showAddPanel, setShowAddPanel] = useState(false);
   const [allServices, setAllServices] = useState<ServiceOption[]>([]);
   const [selectedAddService, setSelectedAddService] = useState<string | null>(null);
+  const [selectedAddPlan, setSelectedAddPlan] = useState<string | null>(null);
   const [addSubmitting, setAddSubmitting] = useState(false);
 
   // Remove confirmation
@@ -232,9 +244,10 @@ export default function DashboardPage() {
       const data = await res.json();
       if (data.groups) {
         setAllServices(
-          data.groups.map((g: { serviceId: string; label: string }) => ({
+          data.groups.map((g: { serviceId: string; label: string; plans: ServicePlan[] }) => ({
             serviceId: g.serviceId,
             label: g.label,
+            plans: g.plans,
           }))
         );
       }
@@ -324,11 +337,19 @@ export default function DashboardPage() {
         throw new Error(credData.error || "Failed to save credentials.");
       }
 
-      // 2. Update queue with the new service appended
+      // 2. Update queue with the new service appended, preserving existing plans
       const newOrder = [...queue.map((q) => q.service_id), data.serviceId];
+      const plansMap: Record<string, string> = {};
+      for (const q of queue) {
+        if (q.plan_id) plansMap[q.service_id] = q.plan_id;
+      }
+      if (selectedAddPlan) plansMap[data.serviceId] = selectedAddPlan;
       const queueRes = await authFetch("/api/queue", {
         method: "PUT",
-        body: JSON.stringify({ order: newOrder }),
+        body: JSON.stringify({
+          order: newOrder,
+          plans: Object.keys(plansMap).length > 0 ? plansMap : undefined,
+        }),
       });
 
       if (!queueRes.ok) {
@@ -339,6 +360,7 @@ export default function DashboardPage() {
       // 3. Refresh and close panel
       setShowAddPanel(false);
       setSelectedAddService(null);
+      setSelectedAddPlan(null);
       await fetchData();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to add service.");
@@ -450,6 +472,7 @@ export default function DashboardPage() {
                     onClick={() => {
                       setShowAddPanel(!showAddPanel);
                       setSelectedAddService(null);
+                      setSelectedAddPlan(null);
                     }}
                     className="text-xs font-medium text-accent hover:text-accent/80 transition-colors"
                   >
@@ -490,45 +513,88 @@ export default function DashboardPage() {
               )}
 
               {/* Add service panel */}
-              {showAddPanel && (
-                <div className="bg-surface border border-accent/30 rounded p-4 mb-4 space-y-3">
-                  <p className="text-sm font-medium text-foreground">
-                    Add a service
-                  </p>
-                  {!selectedAddService ? (
-                    <div className="space-y-2">
-                      {availableToAdd.map((svc) => (
+              {showAddPanel && (() => {
+                const selectedSvc = availableToAdd.find((s) => s.serviceId === selectedAddService);
+                const hasMultiplePlans = selectedSvc && selectedSvc.plans.length > 1;
+                const needsPlanSelection = selectedAddService && hasMultiplePlans && !selectedAddPlan;
+                const showCredForm = selectedAddService && (!hasMultiplePlans || selectedAddPlan);
+
+                return (
+                  <div className="bg-surface border border-accent/30 rounded p-4 mb-4 space-y-3">
+                    <p className="text-sm font-medium text-foreground">
+                      Add a service
+                    </p>
+                    {!selectedAddService ? (
+                      <div className="space-y-2">
+                        {availableToAdd.map((svc) => (
+                          <button
+                            key={svc.serviceId}
+                            type="button"
+                            onClick={() => {
+                              setSelectedAddService(svc.serviceId);
+                              setSelectedAddPlan(null);
+                              // Auto-select plan for single-plan services
+                              if (svc.plans.length === 1) {
+                                setSelectedAddPlan(svc.plans[0].id);
+                              }
+                            }}
+                            className="flex items-center justify-between w-full px-4 py-3 rounded-lg border border-border bg-surface hover:border-amber-500/40 text-sm transition-colors"
+                          >
+                            <span className="font-medium text-foreground">{svc.label}</span>
+                            <span className="text-muted text-xs">Select</span>
+                          </button>
+                        ))}
+                      </div>
+                    ) : needsPlanSelection ? (
+                      <div>
                         <button
-                          key={svc.serviceId}
                           type="button"
-                          onClick={() => setSelectedAddService(svc.serviceId)}
-                          className="flex items-center justify-between w-full px-4 py-3 rounded-lg border border-border bg-surface hover:border-amber-500/40 text-sm transition-colors"
+                          onClick={() => { setSelectedAddService(null); setSelectedAddPlan(null); }}
+                          className="text-xs text-muted hover:text-foreground transition-colors mb-2"
                         >
-                          <span className="font-medium text-foreground">{svc.label}</span>
-                          <span className="text-muted text-xs">Select</span>
+                          &larr; Pick a different service
                         </button>
-                      ))}
-                    </div>
-                  ) : (
-                    <div>
-                      <button
-                        type="button"
-                        onClick={() => setSelectedAddService(null)}
-                        className="text-xs text-muted hover:text-foreground transition-colors mb-2"
-                      >
-                        &larr; Pick a different service
-                      </button>
-                      <ServiceCredentialForm
-                        serviceId={selectedAddService}
-                        serviceName={availableToAdd.find((s) => s.serviceId === selectedAddService)?.label ?? selectedAddService}
-                        onSubmit={handleAddService}
-                        submitting={addSubmitting}
-                        submitLabel="Add to queue"
-                      />
-                    </div>
-                  )}
-                </div>
-              )}
+                        <p className="text-sm text-muted mb-2">Which plan?</p>
+                        <div className="space-y-1">
+                          {selectedSvc!.plans.map((plan) => (
+                            <button
+                              key={plan.id}
+                              type="button"
+                              onClick={() => setSelectedAddPlan(plan.id)}
+                              className="w-full flex items-center justify-between py-2 px-3 rounded text-sm border border-border bg-surface hover:border-amber-500/40 transition-colors"
+                            >
+                              <span>{plan.display_name}</span>
+                              <span className="text-muted/60">${(plan.monthly_price_cents / 100).toFixed(2)}/mo</span>
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    ) : showCredForm ? (
+                      <div>
+                        <button
+                          type="button"
+                          onClick={() => { setSelectedAddService(null); setSelectedAddPlan(null); }}
+                          className="text-xs text-muted hover:text-foreground transition-colors mb-2"
+                        >
+                          &larr; Pick a different service
+                        </button>
+                        {selectedAddPlan && selectedSvc && (
+                          <p className="text-xs text-muted mb-2">
+                            {selectedSvc.plans.find((p) => p.id === selectedAddPlan)?.display_name}
+                          </p>
+                        )}
+                        <ServiceCredentialForm
+                          serviceId={selectedAddService!}
+                          serviceName={selectedSvc?.label ?? selectedAddService!}
+                          onSubmit={handleAddService}
+                          submitting={addSubmitting}
+                          submitLabel="Add to queue"
+                        />
+                      </div>
+                    ) : null}
+                  </div>
+                );
+              })()}
 
               {queue.length === 0 ? (
                 <p className="text-muted text-sm">
@@ -540,7 +606,7 @@ export default function DashboardPage() {
                   {pinnedItems.map((item) => (
                     <SortableQueueItem
                       key={item.service_id}
-                      item={{ serviceId: item.service_id, serviceName: item.service_name }}
+                      item={{ serviceId: item.service_id, serviceName: item.service_name, planName: item.plan_name ?? undefined }}
                       pinned
                       statusBadge={renderStatusBadge(item)}
                     />
@@ -561,7 +627,7 @@ export default function DashboardPage() {
                           {sortableItems.map((item) => (
                             <SortableQueueItem
                               key={item.service_id}
-                              item={{ serviceId: item.service_id, serviceName: item.service_name }}
+                              item={{ serviceId: item.service_id, serviceName: item.service_name, planName: item.plan_name ?? undefined }}
                               statusBadge={renderStatusBadge(item)}
                               onRemove={() => setRemoveConfirm(item.service_id)}
                             />
@@ -590,7 +656,7 @@ export default function DashboardPage() {
                 When you request a cancel or resume, it will show up here. Each cancel or resume costs 3,000 sats.
               </p>
 
-              {jobs.length > 0 ? (
+              {jobs.length > 0 && (
                 <div className="overflow-x-auto">
                   <table className="w-full">
                     <thead>
@@ -623,10 +689,6 @@ export default function DashboardPage() {
                     </tbody>
                   </table>
                 </div>
-              ) : (
-                <p className="text-muted text-sm">
-                  No jobs yet.
-                </p>
               )}
             </section>
 
@@ -640,8 +702,15 @@ export default function DashboardPage() {
               <div className="space-y-2">
                 <div className="flex items-center gap-3">
                   <span className="text-sm text-muted">Nostr:</span>
-                  <span className="text-sm text-foreground font-mono truncate max-w-xs">
-                    {(() => { try { return hexToNpub(user.nostr_npub); } catch { return user.nostr_npub; } })()}
+                  <span className="text-sm text-foreground font-mono">
+                    {(() => {
+                      try {
+                        const npub = hexToNpub(user.nostr_npub);
+                        return npub.length > 24
+                          ? `${npub.slice(0, 14)}...${npub.slice(-10)}`
+                          : npub;
+                      } catch { return user.nostr_npub; }
+                    })()}
                   </span>
                 </div>
                 {user.onboarded_at && (
@@ -689,8 +758,8 @@ export default function DashboardPage() {
                   Danger zone
                 </h3>
                 <p className="text-sm text-muted">
-                  Deleting your account is permanent. All credentials and queue
-                  data will be destroyed immediately. Type{" "}
+                  All credentials and queue data will be destroyed immediately.
+                  Type{" "}
                   <span className="font-mono text-foreground">destroy</span> to
                   confirm.
                 </p>

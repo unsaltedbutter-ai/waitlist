@@ -251,9 +251,11 @@ export default function OnboardingPage() {
       // Build queue from selected services
       const savedQueue: QueueItem[] = selectedIds.map((sid) => {
         const svc = services.find((s) => s.service_id === sid)!;
+        const plan = getSelectedPlanForService(sid);
         return {
           serviceId: sid,
           serviceName: svc.service_name,
+          planName: plan?.display_name,
         };
       });
       setQueue(savedQueue);

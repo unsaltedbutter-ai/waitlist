@@ -6,7 +6,7 @@ export const GET = withAuth(async (_req: NextRequest, { userId }) => {
   try {
     const result = await query(
       `SELECT rq.service_id, ss.display_name AS service_name, rq.position,
-              sp.display_name AS plan_name, sp.monthly_price_cents AS plan_price_cents
+              rq.plan_id, sp.display_name AS plan_name, sp.monthly_price_cents AS plan_price_cents
        FROM rotation_queue rq
        JOIN streaming_services ss ON ss.id = rq.service_id
        LEFT JOIN service_plans sp ON sp.id = rq.plan_id

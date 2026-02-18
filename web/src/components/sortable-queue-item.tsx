@@ -6,6 +6,7 @@ import { CSS } from "@dnd-kit/utilities";
 export interface QueueItemData {
   serviceId: string;
   serviceName: string;
+  planName?: string;
 }
 
 interface SortableQueueItemProps {
@@ -94,8 +95,11 @@ export function SortableQueueItem({
       {position != null && (
         <span className="text-sm font-medium text-muted w-6">{position}</span>
       )}
-      <span className="text-foreground font-medium flex-1 min-w-0 truncate">
-        {item.serviceName}
+      <span className="flex-1 min-w-0 truncate">
+        <span className="text-foreground font-medium">{item.serviceName}</span>
+        {item.planName && (
+          <span className="text-muted text-xs ml-2">{item.planName}</span>
+        )}
       </span>
       {statusBadge}
       {onRemove && !pinned && (
