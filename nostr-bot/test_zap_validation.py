@@ -78,19 +78,19 @@ def _valid_set(job_id=None):
 
 
 @pytest.fixture
-def mock_db():
-    with patch("zap_handler.db") as m:
-        m.get_user_by_npub = AsyncMock(
-            return_value={"id": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee", "debt_sats": 0, "onboarded_at": "2026-01-01"}
+def mock_user_lookup():
+    with patch("zap_handler.api_client") as m:
+        m.get_user = AsyncMock(
+            return_value={"user": {"id": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee", "debt_sats": 0, "onboarded_at": "2026-01-01"}}
         )
+        m.mark_job_paid = AsyncMock(return_value={"status_code": 200, "data": {"success": True}})
         yield m
 
 
 @pytest.fixture
-def mock_api():
-    with patch("zap_handler.api_client") as m:
-        m.mark_job_paid = AsyncMock(return_value={"status_code": 200, "data": {"success": True}})
-        yield m
+def mock_api(mock_user_lookup):
+    """Alias: mock_user_lookup already patches api_client with both get_user and mark_job_paid."""
+    return mock_user_lookup
 
 
 @pytest.fixture
@@ -102,7 +102,7 @@ def send_dm():
 
 
 @pytest.mark.asyncio
-async def test_valid_zap_with_job_id_marks_paid(mock_db, mock_api, send_dm):
+async def test_valid_zap_with_job_id_marks_paid(mock_user_lookup, mock_api, send_dm):
     receipt, invoice = _valid_set(job_id="job-123")
     with patch("zap_handler.bolt11_lib.decode", return_value=invoice):
         await zap_handler.handle_zap_receipt(receipt, send_dm, BOT_PK, PROVIDER_PK)
@@ -117,7 +117,7 @@ async def test_valid_zap_with_job_id_marks_paid(mock_db, mock_api, send_dm):
 
 
 @pytest.mark.asyncio
-async def test_valid_zap_no_job_id_sends_info(mock_db, mock_api, send_dm):
+async def test_valid_zap_no_job_id_sends_info(mock_user_lookup, mock_api, send_dm):
     receipt, invoice = _valid_set(job_id=None)
     with patch("zap_handler.bolt11_lib.decode", return_value=invoice):
         await zap_handler.handle_zap_receipt(receipt, send_dm, BOT_PK, PROVIDER_PK)
@@ -130,7 +130,7 @@ async def test_valid_zap_no_job_id_sends_info(mock_db, mock_api, send_dm):
 
 
 @pytest.mark.asyncio
-async def test_zap_job_already_paid(mock_db, mock_api, send_dm):
+async def test_zap_job_already_paid(mock_user_lookup, mock_api, send_dm):
     mock_api.mark_job_paid.return_value = {"status_code": 409, "data": {"error": "Already paid"}}
     receipt, invoice = _valid_set(job_id="job-123")
     with patch("zap_handler.bolt11_lib.decode", return_value=invoice):
@@ -144,7 +144,7 @@ async def test_zap_job_already_paid(mock_db, mock_api, send_dm):
 
 
 @pytest.mark.asyncio
-async def test_zap_api_error(mock_db, mock_api, send_dm):
+async def test_zap_api_error(mock_user_lookup, mock_api, send_dm):
     mock_api.mark_job_paid.side_effect = Exception("connection refused")
     receipt, invoice = _valid_set(job_id="job-123")
     with patch("zap_handler.bolt11_lib.decode", return_value=invoice):
@@ -157,7 +157,7 @@ async def test_zap_api_error(mock_db, mock_api, send_dm):
 
 
 @pytest.mark.asyncio
-async def test_zap_api_unexpected_status(mock_db, mock_api, send_dm):
+async def test_zap_api_unexpected_status(mock_user_lookup, mock_api, send_dm):
     mock_api.mark_job_paid.return_value = {"status_code": 400, "data": {"error": "not payable"}}
     receipt, invoice = _valid_set(job_id="job-123")
     with patch("zap_handler.bolt11_lib.decode", return_value=invoice):
@@ -170,7 +170,7 @@ async def test_zap_api_unexpected_status(mock_db, mock_api, send_dm):
 
 
 @pytest.mark.asyncio
-async def test_reject_wrong_receipt_author(mock_db, mock_api, send_dm):
+async def test_reject_wrong_receipt_author(mock_user_lookup, mock_api, send_dm):
     """9735 signed by attacker instead of the LNURL provider."""
     zap_req = _make_9734(p_hex=BOT_PK, amount_msats=AMOUNT_MSATS)
     desc_json = zap_req.as_json()
@@ -187,7 +187,7 @@ async def test_reject_wrong_receipt_author(mock_db, mock_api, send_dm):
 
 
 @pytest.mark.asyncio
-async def test_reject_description_hash_mismatch(mock_db, mock_api, send_dm):
+async def test_reject_description_hash_mismatch(mock_user_lookup, mock_api, send_dm):
     receipt, _ = _valid_set()
     invoice = _bolt11_mock(description_hash="0" * 64)
 
@@ -197,7 +197,7 @@ async def test_reject_description_hash_mismatch(mock_db, mock_api, send_dm):
 
 
 @pytest.mark.asyncio
-async def test_reject_missing_description_hash(mock_db, mock_api, send_dm):
+async def test_reject_missing_description_hash(mock_user_lookup, mock_api, send_dm):
     receipt, _ = _valid_set()
     invoice = _bolt11_mock(description_hash=None)
 
@@ -210,7 +210,7 @@ async def test_reject_missing_description_hash(mock_db, mock_api, send_dm):
 
 
 @pytest.mark.asyncio
-async def test_reject_tampered_9734_pubkey(mock_db, mock_api, send_dm):
+async def test_reject_tampered_9734_pubkey(mock_user_lookup, mock_api, send_dm):
     zap_req = _make_9734(p_hex=BOT_PK, amount_msats=AMOUNT_MSATS)
     desc_json = zap_req.as_json()
 
@@ -228,7 +228,7 @@ async def test_reject_tampered_9734_pubkey(mock_db, mock_api, send_dm):
 
 
 @pytest.mark.asyncio
-async def test_reject_garbage_description(mock_db, mock_api, send_dm):
+async def test_reject_garbage_description(mock_user_lookup, mock_api, send_dm):
     garbage = '{"foo":"bar"}'
     desc_hash = hashlib.sha256(garbage.encode("utf-8")).hexdigest()
     receipt = _make_9735(garbage)
@@ -243,7 +243,7 @@ async def test_reject_garbage_description(mock_db, mock_api, send_dm):
 
 
 @pytest.mark.asyncio
-async def test_reject_wrong_kind_in_description(mock_db, mock_api, send_dm):
+async def test_reject_wrong_kind_in_description(mock_user_lookup, mock_api, send_dm):
     wrong = _make_9734(p_hex=BOT_PK, amount_msats=AMOUNT_MSATS, kind_num=1)
     desc_json = wrong.as_json()
     desc_hash = hashlib.sha256(desc_json.encode("utf-8")).hexdigest()
@@ -259,7 +259,7 @@ async def test_reject_wrong_kind_in_description(mock_db, mock_api, send_dm):
 
 
 @pytest.mark.asyncio
-async def test_reject_wrong_p_tag(mock_db, mock_api, send_dm):
+async def test_reject_wrong_p_tag(mock_user_lookup, mock_api, send_dm):
     other_pk = ATTACKER_KEYS.public_key().to_hex()
     zap_req = _make_9734(p_hex=other_pk, amount_msats=AMOUNT_MSATS)
     desc_json = zap_req.as_json()
@@ -273,7 +273,7 @@ async def test_reject_wrong_p_tag(mock_db, mock_api, send_dm):
 
 
 @pytest.mark.asyncio
-async def test_reject_missing_p_tag(mock_db, mock_api, send_dm):
+async def test_reject_missing_p_tag(mock_user_lookup, mock_api, send_dm):
     zap_req = _make_9734(p_hex=None, amount_msats=AMOUNT_MSATS)
     desc_json = zap_req.as_json()
     desc_hash = hashlib.sha256(desc_json.encode("utf-8")).hexdigest()
@@ -289,7 +289,7 @@ async def test_reject_missing_p_tag(mock_db, mock_api, send_dm):
 
 
 @pytest.mark.asyncio
-async def test_reject_amount_inflation(mock_db, mock_api, send_dm):
+async def test_reject_amount_inflation(mock_user_lookup, mock_api, send_dm):
     zap_req = _make_9734(p_hex=BOT_PK, amount_msats=3_000_000)
     desc_json = zap_req.as_json()
     desc_hash = hashlib.sha256(desc_json.encode("utf-8")).hexdigest()
@@ -305,9 +305,9 @@ async def test_reject_amount_inflation(mock_db, mock_api, send_dm):
 
 
 @pytest.mark.asyncio
-async def test_unregistered_sender_not_processed(mock_db, mock_api, send_dm):
+async def test_unregistered_sender_not_processed(mock_user_lookup, mock_api, send_dm):
     receipt, invoice = _valid_set(job_id="job-123")
-    mock_db.get_user_by_npub.return_value = None
+    mock_user_lookup.get_user.return_value = None
 
     with patch("zap_handler.bolt11_lib.decode", return_value=invoice):
         await zap_handler.handle_zap_receipt(receipt, send_dm, BOT_PK, PROVIDER_PK)

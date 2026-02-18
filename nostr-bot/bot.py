@@ -32,7 +32,6 @@ from nostr_sdk import (
 
 import api_client
 import commands
-import db
 import notifications
 import zap_handler
 
@@ -188,11 +187,12 @@ class BotNotificationHandler(HandleNotification):
 
     async def _dispatch_command(self, sender_hex: str, message: str) -> str:
         cmd = message.strip().lower()
-        user = await db.get_user_by_npub(sender_hex)
+        data = await api_client.get_user(sender_hex)
+        user = data["user"] if data else None
 
         # "login" works for anyone (proves npub ownership for both login + signup)
         if cmd == "login":
-            code = await db.create_otp(sender_hex)
+            code = await api_client.create_otp(sender_hex)
             formatted = f"{code[:6]}-{code[6:]}"
             base_url = os.getenv("BASE_URL", "https://unsaltedbutter.ai")
             return [
@@ -204,12 +204,12 @@ class BotNotificationHandler(HandleNotification):
         if cmd == "waitlist":
             if user is not None:
                 return "You already have an account."
-            result, invite_code = await db.add_to_waitlist(sender_hex)
-            if result == "added":
+            result = await api_client.add_to_waitlist(sender_hex)
+            if result["status"] == "added":
                 return "You're on the waitlist. We'll DM you when a spot opens."
-            elif result == "already_invited":
+            elif result["status"] == "already_invited":
                 base_url = os.getenv("BASE_URL", "https://unsaltedbutter.ai")
-                link = f"{base_url}/login?code={invite_code}"
+                link = f"{base_url}/login?code={result['invite_code']}"
                 return f"You've already been invited:\n\n{link}"
             else:
                 return "You're already on the waitlist. We'll DM you when a spot opens."
@@ -227,7 +227,7 @@ class BotNotificationHandler(HandleNotification):
             return "Join the waitlist"
 
         # Registered but hasn't completed onboarding
-        if not await db.has_onboarded(user["id"]):
+        if user["onboarded_at"] is None:
             base_url = os.getenv("BASE_URL", "https://unsaltedbutter.ai")
             return f"Complete your setup first.\n\n{base_url}/login"
 
@@ -237,7 +237,7 @@ class BotNotificationHandler(HandleNotification):
 
     async def _send_pending_invite_dms(self) -> int:
         """Send invite link DMs to waitlist entries flagged invite_dm_pending."""
-        pending = await db.get_pending_invite_dms()
+        pending = await api_client.get_pending_invite_dms()
         base_url = os.getenv("BASE_URL", "https://unsaltedbutter.ai")
         count = 0
 
@@ -252,7 +252,7 @@ class BotNotificationHandler(HandleNotification):
                     Tag.parse(["p", pk.to_hex()])
                 ])
                 await self._client.send_event_builder(builder)
-                await db.mark_invite_dm_sent(entry["id"])
+                await api_client.mark_invite_dm_sent(entry["id"])
                 count += 1
                 log.info("Sent invite DM to %s", entry["nostr_npub"][:16])
             except Exception as e:
@@ -292,9 +292,6 @@ async def main():
         level=getattr(logging, level, logging.INFO),
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
-
-    # Database
-    await db.init_pool()
 
     # API client
     api_client.init()
@@ -388,7 +385,6 @@ async def main():
             pass
 
     await client.disconnect()
-    await db.close_pool()
     log.info("Shutdown complete")
 
 

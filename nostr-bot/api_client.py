@@ -8,6 +8,7 @@ All agent API endpoints require:
 
 import hashlib
 import hmac
+import json
 import logging
 import os
 import secrets
@@ -69,13 +70,45 @@ async def get_user(npub_hex: str) -> dict | None:
     return resp.json()
 
 
+async def create_otp(npub_hex: str) -> str:
+    """POST /api/agent/otp. Returns the 12-digit OTP code string."""
+    path = "/api/agent/otp"
+    body = json.dumps({"npub_hex": npub_hex})
+    resp = await _request("POST", path, body=body)
+    resp.raise_for_status()
+    return resp.json()["code"]
+
+
+async def add_to_waitlist(npub_hex: str) -> dict:
+    """POST /api/agent/waitlist. Returns {"status": str, "invite_code": str|None}."""
+    path = "/api/agent/waitlist"
+    body = json.dumps({"npub_hex": npub_hex})
+    resp = await _request("POST", path, body=body)
+    resp.raise_for_status()
+    return resp.json()
+
+
+async def get_pending_invite_dms() -> list[dict]:
+    """GET /api/agent/waitlist/pending-invites. Returns list of pending entries."""
+    path = "/api/agent/waitlist/pending-invites"
+    resp = await _request("GET", path)
+    resp.raise_for_status()
+    return resp.json()["pending"]
+
+
+async def mark_invite_dm_sent(waitlist_id: str) -> None:
+    """POST /api/agent/waitlist/{id}/dm-sent. Marks invite DM as delivered."""
+    path = f"/api/agent/waitlist/{waitlist_id}/dm-sent"
+    resp = await _request("POST", path)
+    resp.raise_for_status()
+
+
 async def create_on_demand_job(npub_hex: str, service: str, action: str) -> dict:
     """POST /api/agent/users/{npub}/on-demand.
 
     Returns the parsed JSON response. Raises httpx.HTTPStatusError on failure.
     The caller should inspect the status code for specific error handling.
     """
-    import json
     path = f"/api/agent/users/{npub_hex}/on-demand"
     body = json.dumps({"service": service, "action": action})
     resp = await _request("POST", path, body=body)
@@ -87,7 +120,6 @@ async def mark_job_paid(job_id: str, zap_event_id: str | None = None) -> dict:
 
     Returns the parsed JSON response with status_code.
     """
-    import json
     path = f"/api/agent/jobs/{job_id}/paid"
     payload: dict = {}
     if zap_event_id:

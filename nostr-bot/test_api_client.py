@@ -127,6 +127,137 @@ class TestGetUser:
             mock_req.assert_awaited_once_with("GET", "/api/agent/users/abc123hex")
 
 
+# -- create_otp ----------------------------------------------------------------
+
+
+class TestCreateOtp:
+    def setup_method(self):
+        api_client.init(base_url="https://example.com", hmac_secret="testsecret")
+
+    @pytest.mark.asyncio
+    async def test_create_otp_success(self):
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {"code": "123456789012"}
+        mock_resp.raise_for_status = MagicMock()
+
+        with patch("api_client._request", AsyncMock(return_value=mock_resp)) as mock_req:
+            result = await api_client.create_otp("aabb")
+
+        assert result == "123456789012"
+        mock_req.assert_awaited_once_with("POST", "/api/agent/otp", body='{"npub_hex": "aabb"}')
+
+    @pytest.mark.asyncio
+    async def test_create_otp_raises_on_error(self):
+        mock_resp = MagicMock()
+        mock_resp.status_code = 500
+        mock_resp.raise_for_status.side_effect = Exception("server error")
+
+        with patch("api_client._request", AsyncMock(return_value=mock_resp)):
+            with pytest.raises(Exception, match="server error"):
+                await api_client.create_otp("aabb")
+
+
+# -- add_to_waitlist -----------------------------------------------------------
+
+
+class TestAddToWaitlist:
+    def setup_method(self):
+        api_client.init(base_url="https://example.com", hmac_secret="testsecret")
+
+    @pytest.mark.asyncio
+    async def test_add_new(self):
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {"status": "added", "invite_code": None}
+        mock_resp.raise_for_status = MagicMock()
+
+        with patch("api_client._request", AsyncMock(return_value=mock_resp)) as mock_req:
+            result = await api_client.add_to_waitlist("aabb")
+
+        assert result["status"] == "added"
+        assert result["invite_code"] is None
+        mock_req.assert_awaited_once_with("POST", "/api/agent/waitlist", body='{"npub_hex": "aabb"}')
+
+    @pytest.mark.asyncio
+    async def test_already_invited(self):
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {"status": "already_invited", "invite_code": "ABC123"}
+        mock_resp.raise_for_status = MagicMock()
+
+        with patch("api_client._request", AsyncMock(return_value=mock_resp)):
+            result = await api_client.add_to_waitlist("aabb")
+
+        assert result["status"] == "already_invited"
+        assert result["invite_code"] == "ABC123"
+
+
+# -- get_pending_invite_dms ---------------------------------------------------
+
+
+class TestGetPendingInviteDms:
+    def setup_method(self):
+        api_client.init(base_url="https://example.com", hmac_secret="testsecret")
+
+    @pytest.mark.asyncio
+    async def test_returns_pending_list(self):
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {"pending": [
+            {"id": "uuid-1", "nostr_npub": "aabb", "invite_code": "CODE1"},
+        ]}
+        mock_resp.raise_for_status = MagicMock()
+
+        with patch("api_client._request", AsyncMock(return_value=mock_resp)) as mock_req:
+            result = await api_client.get_pending_invite_dms()
+
+        assert len(result) == 1
+        assert result[0]["id"] == "uuid-1"
+        mock_req.assert_awaited_once_with("GET", "/api/agent/waitlist/pending-invites")
+
+    @pytest.mark.asyncio
+    async def test_returns_empty_list(self):
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {"pending": []}
+        mock_resp.raise_for_status = MagicMock()
+
+        with patch("api_client._request", AsyncMock(return_value=mock_resp)):
+            result = await api_client.get_pending_invite_dms()
+
+        assert result == []
+
+
+# -- mark_invite_dm_sent ------------------------------------------------------
+
+
+class TestMarkInviteDmSent:
+    def setup_method(self):
+        api_client.init(base_url="https://example.com", hmac_secret="testsecret")
+
+    @pytest.mark.asyncio
+    async def test_success(self):
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.raise_for_status = MagicMock()
+
+        with patch("api_client._request", AsyncMock(return_value=mock_resp)) as mock_req:
+            await api_client.mark_invite_dm_sent("uuid-1")
+
+        mock_req.assert_awaited_once_with("POST", "/api/agent/waitlist/uuid-1/dm-sent")
+
+    @pytest.mark.asyncio
+    async def test_raises_on_404(self):
+        mock_resp = MagicMock()
+        mock_resp.status_code = 404
+        mock_resp.raise_for_status.side_effect = Exception("not found")
+
+        with patch("api_client._request", AsyncMock(return_value=mock_resp)):
+            with pytest.raises(Exception, match="not found"):
+                await api_client.mark_invite_dm_sent("nonexistent")
+
+
 # -- create_on_demand_job ------------------------------------------------------
 
 

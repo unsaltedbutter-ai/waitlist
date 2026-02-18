@@ -20,7 +20,6 @@ import bolt11 as bolt11_lib
 from nostr_sdk import Event as NostrEvent
 
 import api_client
-import db
 
 log = logging.getLogger(__name__)
 
@@ -141,7 +140,8 @@ async def handle_zap_receipt(
     # -- All checks passed, identify sender --
     sender_hex = zap_request_event.author().to_hex()
 
-    user = await db.get_user_by_npub(sender_hex)
+    data = await api_client.get_user(sender_hex)
+    user = data["user"] if data else None
     if user is None:
         log.info("Zap from unregistered npub %s (%d sats), ignoring", sender_hex[:16], amount_sats)
         try:
