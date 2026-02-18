@@ -81,24 +81,39 @@ async def test_login_registered_user(handler, mock_api):
 
 
 @pytest.mark.asyncio
-async def test_login_unregistered_user(handler, mock_api):
+async def test_login_unregistered_user_gets_waitlisted(handler, mock_api):
     mock_api.get_user.return_value = None
-    mock_api.create_otp.return_value = "000000000001"
+    mock_api.add_to_waitlist.return_value = {"status": "added", "invite_code": None}
+
+    result = await handler._dispatch_command(UNREGISTERED_NPUB_HEX, "login")
+
+    assert "waitlist" in result.lower()
+    mock_api.add_to_waitlist.assert_awaited_once_with(UNREGISTERED_NPUB_HEX)
+    mock_api.create_otp.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_login_invited_but_no_account_sends_otp(handler, mock_api):
+    """Returning user (deleted account): invited, no user row. Should get OTP + invite link."""
+    mock_api.get_user.return_value = None
+    mock_api.add_to_waitlist.return_value = {"status": "already_invited", "invite_code": "ABC123XYZ"}
+    mock_api.create_otp.return_value = "999888777666"
 
     result = await handler._dispatch_command(UNREGISTERED_NPUB_HEX, "login")
 
     assert isinstance(result, list)
-    assert result[0] == "000000-000001"
+    assert result[0] == "999888-777666"
+    assert "ABC123XYZ" in result[1]
     mock_api.create_otp.assert_awaited_once_with(UNREGISTERED_NPUB_HEX)
 
 
 @pytest.mark.asyncio
 async def test_login_case_insensitive(handler, mock_api):
-    mock_api.get_user.return_value = None
+    mock_api.get_user.return_value = {"user": {"id": "u1", "nostr_npub": REGISTERED_NPUB_HEX, "onboarded_at": "2026-01-01"}}
     mock_api.create_otp.return_value = "111111222222"
 
     for variant in ["LOGIN", "Login", "  login  "]:
-        result = await handler._dispatch_command(UNREGISTERED_NPUB_HEX, variant)
+        result = await handler._dispatch_command(REGISTERED_NPUB_HEX, variant)
         assert isinstance(result, list)
         assert result[0] == "111111-222222"
 

@@ -34,8 +34,8 @@ export const GET = withAuth(async (_req: NextRequest, { userId }) => {
 export const DELETE = withAuth(async (_req: NextRequest, { userId }) => {
   try {
     // Verify user exists and check debt before deleting
-    const userResult = await query<{ id: string; debt_sats: number }>(
-      "SELECT id, debt_sats FROM users WHERE id = $1",
+    const userResult = await query<{ id: string; nostr_npub: string; debt_sats: number }>(
+      "SELECT id, nostr_npub, debt_sats FROM users WHERE id = $1",
       [userId]
     );
 
@@ -43,7 +43,7 @@ export const DELETE = withAuth(async (_req: NextRequest, { userId }) => {
       return NextResponse.json({ error: "User not found" }, { status: 404 });
     }
 
-    const debtSats = userResult.rows[0].debt_sats;
+    const { nostr_npub, debt_sats: debtSats } = userResult.rows[0];
     if (debtSats > 0) {
       return NextResponse.json(
         {
@@ -56,6 +56,9 @@ export const DELETE = withAuth(async (_req: NextRequest, { userId }) => {
 
     // CASCADE delete: wipes credentials, queue, consents, jobs, transactions, action_logs
     await query("DELETE FROM users WHERE id = $1", [userId]);
+
+    // Clean up waitlist row so user starts fresh if they return
+    await query("DELETE FROM waitlist WHERE nostr_npub = $1", [nostr_npub]);
 
     return NextResponse.json({ ok: true });
   } catch (err) {

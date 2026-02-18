@@ -127,9 +127,11 @@ describe("DELETE /api/account", () => {
 
     // SELECT user exists with zero debt
     vi.mocked(query).mockResolvedValueOnce(
-      mockQueryResult([{ id: "user-123", debt_sats: 0 }])
+      mockQueryResult([{ id: "user-123", nostr_npub: "abcd".repeat(16), debt_sats: 0 }])
     );
     // DELETE users (CASCADE)
+    vi.mocked(query).mockResolvedValueOnce(mockQueryResult([]));
+    // DELETE waitlist row
     vi.mocked(query).mockResolvedValueOnce(mockQueryResult([]));
 
     const res = await DELETE(
@@ -140,17 +142,21 @@ describe("DELETE /api/account", () => {
     const data = await res.json();
     expect(data.ok).toBe(true);
 
-    // Verify the DELETE query was called
-    const deleteCall = vi.mocked(query).mock.calls[1];
-    expect(deleteCall[0]).toContain("DELETE FROM users");
-    expect(deleteCall[1]).toEqual(["user-123"]);
+    // Verify the DELETE queries were called
+    const deleteUserCall = vi.mocked(query).mock.calls[1];
+    expect(deleteUserCall[0]).toContain("DELETE FROM users");
+    expect(deleteUserCall[1]).toEqual(["user-123"]);
+
+    const deleteWaitlistCall = vi.mocked(query).mock.calls[2];
+    expect(deleteWaitlistCall[0]).toContain("DELETE FROM waitlist");
+    expect(deleteWaitlistCall[1]).toEqual(["abcd".repeat(16)]);
   });
 
   it("blocks deletion when debt > 0 -> 402", async () => {
     mockAuthenticateRequest.mockResolvedValueOnce("user-123");
 
     vi.mocked(query).mockResolvedValueOnce(
-      mockQueryResult([{ id: "user-123", debt_sats: 6000 }])
+      mockQueryResult([{ id: "user-123", nostr_npub: "abcd".repeat(16), debt_sats: 6000 }])
     );
 
     const res = await DELETE(

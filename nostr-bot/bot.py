@@ -190,8 +190,22 @@ class BotNotificationHandler(HandleNotification):
         data = await api_client.get_user(sender_hex)
         user = data["user"] if data else None
 
-        # "login" works for anyone (proves npub ownership for both login + signup)
+        # "login" requires an account or an invite
         if cmd == "login":
+            if user is None:
+                # Check if they're already invited (e.g. returning after account deletion)
+                result = await api_client.add_to_waitlist(sender_hex)
+                if result["status"] == "already_invited" and result.get("invite_code"):
+                    code = await api_client.create_otp(sender_hex)
+                    formatted = f"{code[:6]}-{code[6:]}"
+                    base_url = os.getenv("BASE_URL", "https://unsaltedbutter.ai")
+                    link = f"{base_url}/login?code={result['invite_code']}"
+                    return [
+                        formatted,
+                        f"That's your login code. Enter it within 5 minutes.\n\n{link}",
+                    ]
+                # Not invited yet: waitlist message
+                return self._waitlist_message(result)
             code = await api_client.create_otp(sender_hex)
             formatted = f"{code[:6]}-{code[6:]}"
             base_url = os.getenv("BASE_URL", "https://unsaltedbutter.ai")
@@ -204,15 +218,7 @@ class BotNotificationHandler(HandleNotification):
         if cmd == "waitlist":
             if user is not None:
                 return "You already have an account."
-            result = await api_client.add_to_waitlist(sender_hex)
-            if result["status"] == "added":
-                return "You're on the waitlist. We'll DM you when a spot opens."
-            elif result["status"] == "already_invited":
-                base_url = os.getenv("BASE_URL", "https://unsaltedbutter.ai")
-                link = f"{base_url}/login?code={result['invite_code']}"
-                return f"You've already been invited:\n\n{link}"
-            else:
-                return "You're already on the waitlist. We'll DM you when a spot opens."
+            return await self._auto_waitlist(sender_hex)
 
         # "invites" operator-only: trigger sending pending invite DMs
         if cmd == "invites":
@@ -238,6 +244,11 @@ class BotNotificationHandler(HandleNotification):
     async def _auto_waitlist(self, sender_hex: str) -> str:
         """Add unregistered user to waitlist automatically and return a message."""
         result = await api_client.add_to_waitlist(sender_hex)
+        return self._waitlist_message(result)
+
+    @staticmethod
+    def _waitlist_message(result: dict) -> str:
+        """Format a human-readable message from a waitlist API result."""
         if result["status"] == "added":
             return "You're on the waitlist. We'll DM you when a spot opens."
         elif result["status"] == "already_invited":
