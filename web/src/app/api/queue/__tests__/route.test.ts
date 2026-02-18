@@ -55,24 +55,6 @@ beforeEach(() => {
   vi.mocked(transaction).mockReset();
 });
 
-/** Mock the post-transaction user query (onboarded_at check). Already onboarded by default. */
-function mockUserOnboarded(onboarded: boolean = true) {
-  vi.mocked(query).mockResolvedValueOnce(
-    mockQueryResult([{
-      onboarded_at: onboarded ? "2026-01-01T00:00:00Z" : null,
-    }])
-  );
-}
-
-/** Mock first-time onboarding: user query (not onboarded) + UPDATE */
-function mockFirstOnboarding() {
-  // SELECT user (not onboarded)
-  vi.mocked(query).mockResolvedValueOnce(
-    mockQueryResult([{ onboarded_at: null }])
-  );
-  // UPDATE onboarded_at
-  vi.mocked(query).mockResolvedValueOnce(mockQueryResult([]));
-}
 
 describe("PUT /api/queue", () => {
   // --- Input validation ---
@@ -158,7 +140,6 @@ describe("PUT /api/queue", () => {
     mockCreds(["netflix", "hulu"]);
     mockExistingPlanIds();
     mockTransaction();
-    mockUserOnboarded();
 
     const req = makeRequest({ order: ["netflix", "hulu"] });
     const res = await PUT(req as any, { params: Promise.resolve({}) });
@@ -172,7 +153,6 @@ describe("PUT /api/queue", () => {
     mockCreds(["netflix", "hulu", "disney_plus"]);
     mockExistingPlanIds();
     mockTransaction();
-    mockUserOnboarded();
 
     const req = makeRequest({ order: ["disney_plus", "netflix", "hulu"] });
     const res = await PUT(req as any, { params: Promise.resolve({}) });
@@ -185,7 +165,6 @@ describe("PUT /api/queue", () => {
     mockCreds(["netflix", "hulu", "disney_plus"]);
     mockExistingPlanIds();
     mockTransaction();
-    mockUserOnboarded();
 
     const req = makeRequest({ order: ["netflix", "disney_plus", "hulu"] });
     const res = await PUT(req as any, { params: Promise.resolve({}) });
@@ -198,7 +177,6 @@ describe("PUT /api/queue", () => {
     mockCreds(["netflix", "hulu"]);
     mockExistingPlanIds();
     mockTransaction();
-    mockUserOnboarded();
 
     const req = makeRequest({ order: ["netflix", "hulu"] });
     const res = await PUT(req as any, { params: Promise.resolve({}) });
@@ -210,7 +188,6 @@ describe("PUT /api/queue", () => {
     mockCreds(["netflix"]);
     mockExistingPlanIds();
     mockTransaction();
-    mockUserOnboarded();
 
     const req = makeRequest({ order: ["netflix"] });
     const res = await PUT(req as any, { params: Promise.resolve({}) });
@@ -226,7 +203,6 @@ describe("PUT /api/queue", () => {
     mockCreds(all);
     mockExistingPlanIds();
     mockTransaction();
-    mockUserOnboarded();
 
     const req = makeRequest({ order: all });
     const res = await PUT(req as any, { params: Promise.resolve({}) });
@@ -245,7 +221,6 @@ describe("PUT /api/queue", () => {
 
     const txQuery = vi.fn().mockResolvedValue(mockQueryResult([]));
     vi.mocked(transaction).mockImplementationOnce(async (cb) => cb(txQuery as any));
-    mockUserOnboarded();
 
     const req = makeRequest({ order: ["hulu", "netflix"] });
     await PUT(req as any, { params: Promise.resolve({}) });
@@ -265,6 +240,11 @@ describe("PUT /api/queue", () => {
       "INSERT INTO rotation_queue (user_id, service_id, position, plan_id) VALUES ($1, $2, $3, $4)",
       ["test-user", "netflix", 2, "netflix_standard"]
     );
+    // Fourth call: UPDATE onboarded_at
+    expect(txQuery).toHaveBeenCalledWith(
+      "UPDATE users SET onboarded_at = NOW(), updated_at = NOW() WHERE id = $1 AND onboarded_at IS NULL",
+      ["test-user"]
+    );
   });
 
   // --- Dynamic services / prices scenario ---
@@ -276,7 +256,6 @@ describe("PUT /api/queue", () => {
     mockCreds(["netflix", "new_streaming_service"]);
     mockExistingPlanIds();
     mockTransaction();
-    mockUserOnboarded();
 
     const req = makeRequest({ order: ["netflix", "new_streaming_service"] });
     const res = await PUT(req as any, { params: Promise.resolve({}) });
@@ -289,7 +268,6 @@ describe("PUT /api/queue", () => {
     mockCreds(["netflix", "hulu", "disney_plus", "max", "peacock"]);
     mockExistingPlanIds();
     mockTransaction();
-    mockUserOnboarded();
 
     const req = makeRequest({ order: ["netflix", "hulu"] });
     const res = await PUT(req as any, { params: Promise.resolve({}) });
@@ -303,7 +281,6 @@ describe("PUT /api/queue", () => {
 
     const txQuery = vi.fn().mockResolvedValue(mockQueryResult([]));
     vi.mocked(transaction).mockImplementationOnce(async (cb) => cb(txQuery as any));
-    mockUserOnboarded();
 
     const req = makeRequest({
       order: ["netflix", "hulu"],
@@ -324,35 +301,24 @@ describe("PUT /api/queue", () => {
 
   // --- Onboarding activation ---
 
-  it("sets onboarded_at on first queue save", async () => {
+  it("sets onboarded_at inside the transaction (idempotent via IS NULL guard)", async () => {
     mockServices(["netflix"]);
     mockCreds(["netflix"]);
     mockExistingPlanIds();
-    mockTransaction();
-    mockFirstOnboarding();
+
+    const txQuery = vi.fn().mockResolvedValue(mockQueryResult([]));
+    vi.mocked(transaction).mockImplementationOnce(async (cb) => cb(txQuery as any));
 
     const req = makeRequest({ order: ["netflix"] });
     const res = await PUT(req as any, { params: Promise.resolve({}) });
     expect(res.status).toBe(200);
 
-    // Should have UPDATE onboarded_at call
-    const calls = vi.mocked(query).mock.calls;
-    const onboardCall = calls.find((c) =>
-      typeof c[0] === "string" && c[0].includes("onboarded_at")
+    // The transaction should include the onboarded_at UPDATE with IS NULL guard
+    const onboardCall = txQuery.mock.calls.find((c: unknown[]) =>
+      typeof c[0] === "string" && (c[0] as string).includes("onboarded_at")
     );
     expect(onboardCall).toBeTruthy();
-  });
-
-  it("skips onboarding check on subsequent queue saves", async () => {
-    mockServices(["netflix"]);
-    mockCreds(["netflix"]);
-    mockExistingPlanIds();
-    mockTransaction();
-    mockUserOnboarded(); // already onboarded
-
-    const req = makeRequest({ order: ["netflix"] });
-    const res = await PUT(req as any, { params: Promise.resolve({}) });
-    expect(res.status).toBe(200);
+    expect(onboardCall![0]).toContain("onboarded_at IS NULL");
   });
 });
 

@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { withAgentAuth } from "@/lib/agent-auth";
 import { query } from "@/lib/db";
-import { TERMINAL_STATUSES } from "@/lib/constants";
 import { getUserByNpub } from "@/lib/queries";
 import { parseJsonBody } from "@/lib/parse-json-body";
 
@@ -75,29 +74,22 @@ export const POST = withAgentAuth(async (_req: NextRequest, { body: rawBody, par
       );
     }
 
-    // Check for existing non-terminal job for this user+service
-    const placeholders = TERMINAL_STATUSES.map((_, i) => `$${i + 3}`).join(", ");
-    const existingJob = await query<{ id: string }>(
-      `SELECT id FROM jobs
-       WHERE user_id = $1 AND service_id = $2 AND status NOT IN (${placeholders})
-       LIMIT 1`,
-      [user.id, service, ...TERMINAL_STATUSES]
+    // Attempt insert; the partial unique index idx_jobs_active_user_service
+    // prevents duplicate non-terminal jobs for the same user+service.
+    const jobResult = await query<{ id: string }>(
+      `INSERT INTO jobs (user_id, service_id, action, trigger, status)
+       VALUES ($1, $2, $3, 'on_demand', 'pending')
+       ON CONFLICT DO NOTHING
+       RETURNING id`,
+      [user.id, service, action]
     );
 
-    if (existingJob.rows.length > 0) {
+    if (jobResult.rows.length === 0) {
       return NextResponse.json(
         { error: "A non-terminal job already exists for this user and service" },
         { status: 409 }
       );
     }
-
-    // Create the job
-    const jobResult = await query<{ id: string }>(
-      `INSERT INTO jobs (user_id, service_id, action, trigger, status)
-       VALUES ($1, $2, $3, 'on_demand', 'pending')
-       RETURNING id`,
-      [user.id, service, action]
-    );
 
     return NextResponse.json({
       job_id: jobResult.rows[0].id,

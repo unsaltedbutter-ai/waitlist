@@ -119,11 +119,16 @@ async function sendPushDM(payload: Record<string, unknown>): Promise<void> {
 }
 
 // ---- Public push functions ----
+//
+// Payload format: { type, data: { ... }, timestamp }
+// The bot (notifications.py) expects "type" + nested "data" object.
 
 export async function pushNewUser(npub: string): Promise<void> {
   await sendPushDM({
     type: "new_user",
-    npub,
+    data: {
+      npub,
+    },
     timestamp: Date.now(),
   });
 }
@@ -131,31 +136,41 @@ export async function pushNewUser(npub: string): Promise<void> {
 export async function pushJobsReady(jobIds: string[]): Promise<void> {
   await sendPushDM({
     type: "jobs_ready",
-    job_ids: jobIds,
+    data: {
+      job_ids: jobIds,
+    },
     timestamp: Date.now(),
   });
 }
 
 export async function pushPaymentReceived(
-  jobId: string,
+  npubHex: string,
+  serviceName: string,
   amountSats: number
 ): Promise<void> {
   await sendPushDM({
     type: "payment_received",
-    job_id: jobId,
-    amount_sats: amountSats,
+    data: {
+      npub_hex: npubHex,
+      service_name: serviceName,
+      amount_sats: amountSats,
+    },
     timestamp: Date.now(),
   });
 }
 
 export async function pushPaymentExpired(
-  jobId: string,
-  npub: string
+  npubHex: string,
+  serviceName: string,
+  debtSats: number
 ): Promise<void> {
   await sendPushDM({
     type: "payment_expired",
-    job_id: jobId,
-    npub,
+    data: {
+      npub_hex: npubHex,
+      service_name: serviceName,
+      debt_sats: debtSats,
+    },
     timestamp: Date.now(),
   });
 }

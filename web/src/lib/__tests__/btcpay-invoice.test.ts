@@ -118,13 +118,14 @@ describe("createLightningInvoice", () => {
       );
     });
 
-    it("returns empty string when no bolt11 source is available", async () => {
+    it("throws when no bolt11 source is available", async () => {
       mockFetch.mockResolvedValue(
         btcpayResponse({ id: "inv-fb4" })
       );
 
-      const result = await createLightningInvoice({ amountSats: 3000 });
-      expect(result.bolt11).toBe("");
+      await expect(
+        createLightningInvoice({ amountSats: 3000 })
+      ).rejects.toThrow("BTCPay response missing bolt11/Lightning payment data");
     });
   });
 

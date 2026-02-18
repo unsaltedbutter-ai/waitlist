@@ -100,20 +100,12 @@ export const PUT = withAuth(async (req: NextRequest, { userId }) => {
           [userId, order[i], i + 1, planId]
         );
       }
-    });
-
-    // Set onboarded_at on first queue save (completes onboarding)
-    const user = await query<{ onboarded_at: string | null }>(
-      "SELECT onboarded_at FROM users WHERE id = $1",
-      [userId]
-    );
-
-    if (user.rows.length > 0 && user.rows[0].onboarded_at === null) {
-      await query(
-        "UPDATE users SET onboarded_at = NOW(), updated_at = NOW() WHERE id = $1",
+      // Set onboarded_at on first queue save (completes onboarding)
+      await txQuery(
+        "UPDATE users SET onboarded_at = NOW(), updated_at = NOW() WHERE id = $1 AND onboarded_at IS NULL",
         [userId]
       );
-    }
+    });
 
     return NextResponse.json({ success: true });
   } catch (err) {

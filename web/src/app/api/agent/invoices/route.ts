@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { withAgentAuth } from "@/lib/agent-auth";
-import { query } from "@/lib/db";
+import { query, transaction } from "@/lib/db";
 import { createLightningInvoice } from "@/lib/btcpay-invoice";
 import { parseJsonBody } from "@/lib/parse-json-body";
 
@@ -83,18 +83,18 @@ export const POST = withAgentAuth(async (_req: NextRequest, { body: rawBody }) =
       );
     }
 
-    // Store invoice_id on the job row
-    await query(
-      "UPDATE jobs SET invoice_id = $1, amount_sats = $2 WHERE id = $3",
-      [invoice.id, amount_sats, job_id]
-    );
-
-    // Create transaction row
-    await query(
-      `INSERT INTO transactions (job_id, user_id, service_id, action, amount_sats, status)
-       VALUES ($1, $2, $3, $4, $5, 'invoice_sent')`,
-      [job_id, userId, job.service_id, job.action, amount_sats]
-    );
+    // Store invoice_id on job and create transaction row atomically
+    await transaction(async (txQuery) => {
+      await txQuery(
+        "UPDATE jobs SET invoice_id = $1, amount_sats = $2 WHERE id = $3",
+        [invoice.id, amount_sats, job_id]
+      );
+      await txQuery(
+        `INSERT INTO transactions (job_id, user_id, service_id, action, amount_sats, status)
+         VALUES ($1, $2, $3, $4, $5, 'invoice_sent')`,
+        [job_id, userId, job.service_id, job.action, amount_sats]
+      );
+    });
 
     return NextResponse.json({
       invoice_id: invoice.id,

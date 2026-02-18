@@ -27,7 +27,7 @@ describe("getActiveUserCount", () => {
     const count = await getActiveUserCount();
     expect(count).toBe(42);
     expect(query).toHaveBeenCalledWith(
-      "SELECT COUNT(*) AS count FROM users WHERE status IN ('active', 'expiring')"
+      "SELECT COUNT(*) AS count FROM users WHERE onboarded_at IS NOT NULL"
     );
   });
 });

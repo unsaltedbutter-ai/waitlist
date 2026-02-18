@@ -88,7 +88,7 @@ afterEach(() => {
 
 describe("nostr-push", () => {
   describe("pushNewUser", () => {
-    it("sends correct payload with type and npub", async () => {
+    it("sends nested payload with type and data.npub", async () => {
       await pushNewUser("npub1abc");
 
       expect(mockPublish).toHaveBeenCalledTimes(1);
@@ -97,45 +97,47 @@ describe("nostr-push", () => {
       const message = mockWrapEvent.mock.calls[0][2];
       const parsed = JSON.parse(message);
       expect(parsed.type).toBe("new_user");
-      expect(parsed.npub).toBe("npub1abc");
+      expect(parsed.data.npub).toBe("npub1abc");
       expect(typeof parsed.timestamp).toBe("number");
     });
   });
 
   describe("pushJobsReady", () => {
-    it("sends correct payload with job_ids array", async () => {
+    it("sends nested payload with data.job_ids array", async () => {
       await pushJobsReady(["job-1", "job-2", "job-3"]);
 
       const message = mockWrapEvent.mock.calls[0][2];
       const parsed = JSON.parse(message);
       expect(parsed.type).toBe("jobs_ready");
-      expect(parsed.job_ids).toEqual(["job-1", "job-2", "job-3"]);
+      expect(parsed.data.job_ids).toEqual(["job-1", "job-2", "job-3"]);
       expect(typeof parsed.timestamp).toBe("number");
     });
   });
 
   describe("pushPaymentReceived", () => {
-    it("sends correct payload with job_id and amount_sats", async () => {
-      await pushPaymentReceived("job-42", 4400);
+    it("sends nested payload with npub_hex, service_name, and amount_sats", async () => {
+      await pushPaymentReceived("aabb".repeat(16), "Netflix", 4400);
 
       const message = mockWrapEvent.mock.calls[0][2];
       const parsed = JSON.parse(message);
       expect(parsed.type).toBe("payment_received");
-      expect(parsed.job_id).toBe("job-42");
-      expect(parsed.amount_sats).toBe(4400);
+      expect(parsed.data.npub_hex).toBe("aabb".repeat(16));
+      expect(parsed.data.service_name).toBe("Netflix");
+      expect(parsed.data.amount_sats).toBe(4400);
       expect(typeof parsed.timestamp).toBe("number");
     });
   });
 
   describe("pushPaymentExpired", () => {
-    it("sends correct payload with job_id and npub", async () => {
-      await pushPaymentExpired("job-99", "npub1xyz");
+    it("sends nested payload with npub_hex, service_name, and debt_sats", async () => {
+      await pushPaymentExpired("ccdd".repeat(16), "Hulu", 3000);
 
       const message = mockWrapEvent.mock.calls[0][2];
       const parsed = JSON.parse(message);
       expect(parsed.type).toBe("payment_expired");
-      expect(parsed.job_id).toBe("job-99");
-      expect(parsed.npub).toBe("npub1xyz");
+      expect(parsed.data.npub_hex).toBe("ccdd".repeat(16));
+      expect(parsed.data.service_name).toBe("Hulu");
+      expect(parsed.data.debt_sats).toBe(3000);
       expect(typeof parsed.timestamp).toBe("number");
     });
   });

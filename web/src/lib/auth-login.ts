@@ -18,14 +18,13 @@ export async function loginExistingUser(
   npub: string
 ): Promise<LoginResult | null> {
   const existing = await query<{ id: string }>(
-    "SELECT id FROM users WHERE nostr_npub = $1",
+    "UPDATE users SET updated_at = NOW() WHERE nostr_npub = $1 RETURNING id",
     [npub]
   );
 
   if (existing.rows.length === 0) return null;
 
   const userId = existing.rows[0].id;
-  await query("UPDATE users SET updated_at = NOW() WHERE id = $1", [userId]);
   const token = await createToken(userId);
   const onboarding = await needsOnboarding(userId);
 
@@ -53,9 +52,7 @@ export async function createUserWithInvite(
 
   const userId = await transaction(async (txQuery) => {
     const result = await txQuery<{ id: string }>(
-      `INSERT INTO users (nostr_npub, status)
-       VALUES ($1, 'auto_paused')
-       RETURNING id`,
+      `INSERT INTO users (nostr_npub) VALUES ($1) RETURNING id`,
       [npub]
     );
     await txQuery(

@@ -57,20 +57,14 @@ function mockNoCredentials() {
   vi.mocked(query).mockResolvedValueOnce(mockQueryResult([]));
 }
 
-function mockNoExistingJob() {
-  vi.mocked(query).mockResolvedValueOnce(mockQueryResult([]));
-}
-
-function mockExistingJob() {
-  vi.mocked(query).mockResolvedValueOnce(
-    mockQueryResult([{ id: "existing-job-1" }])
-  );
-}
-
 function mockJobCreated(jobId: string = "new-job-1") {
   vi.mocked(query).mockResolvedValueOnce(
     mockQueryResult([{ id: jobId }])
   );
+}
+
+function mockJobConflict() {
+  vi.mocked(query).mockResolvedValueOnce(mockQueryResult([]));
 }
 
 describe("POST /api/agent/users/[npub]/on-demand", () => {
@@ -78,7 +72,6 @@ describe("POST /api/agent/users/[npub]/on-demand", () => {
     mockUser();
     mockServiceExists();
     mockCredentials();
-    mockNoExistingJob();
     mockJobCreated("new-job-1");
 
     const req = makeRequest({ service: "netflix", action: "cancel" });
@@ -89,9 +82,10 @@ describe("POST /api/agent/users/[npub]/on-demand", () => {
     expect(data.job_id).toBe("new-job-1");
     expect(data.status).toBe("pending");
 
-    // Verify the INSERT call
-    const insertCall = vi.mocked(query).mock.calls[4];
+    // Verify the INSERT call (query index 3: getUserByNpub, service, creds, insert)
+    const insertCall = vi.mocked(query).mock.calls[3];
     expect(insertCall[0]).toContain("INSERT INTO jobs");
+    expect(insertCall[0]).toContain("ON CONFLICT DO NOTHING");
     expect(insertCall[1]).toEqual(["user-uuid-1", "netflix", "cancel"]);
   });
 
@@ -99,7 +93,6 @@ describe("POST /api/agent/users/[npub]/on-demand", () => {
     mockUser();
     mockServiceExists();
     mockCredentials();
-    mockNoExistingJob();
     mockJobCreated("resume-job-1");
 
     const req = makeRequest({ service: "netflix", action: "resume" });
@@ -109,7 +102,7 @@ describe("POST /api/agent/users/[npub]/on-demand", () => {
     const data = await res.json();
     expect(data.job_id).toBe("resume-job-1");
 
-    const insertCall = vi.mocked(query).mock.calls[4];
+    const insertCall = vi.mocked(query).mock.calls[3];
     expect(insertCall[1]).toEqual(["user-uuid-1", "netflix", "resume"]);
   });
 
@@ -161,7 +154,7 @@ describe("POST /api/agent/users/[npub]/on-demand", () => {
     mockUser();
     mockServiceExists();
     mockCredentials();
-    mockExistingJob();
+    mockJobConflict();
 
     const req = makeRequest({ service: "netflix", action: "cancel" });
     const res = await POST(req as any, { params: Promise.resolve({ npub: "npub1abc" }) });

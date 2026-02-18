@@ -147,15 +147,16 @@ async function createJob(
   serviceId: string,
   action: "cancel" | "resume",
   billingDate?: string
-): Promise<string> {
+): Promise<string | null> {
   const result = await query<{ id: string }>(
     `INSERT INTO jobs (user_id, service_id, action, trigger, status, billing_date)
      VALUES ($1, $2, $3, 'scheduled', 'pending', $4)
+     ON CONFLICT DO NOTHING
      RETURNING id`,
     [userId, serviceId, action, billingDate ?? null]
   );
 
-  return result.rows[0].id;
+  return result.rows[0]?.id ?? null;
 }
 
 /**
@@ -179,7 +180,7 @@ export async function runDailyCron(): Promise<CronResult> {
       "cancel",
       candidate.billing_date
     );
-    createdJobIds.push(jobId);
+    if (jobId) createdJobIds.push(jobId);
   }
 
   // 2. Find and create resume jobs
@@ -190,7 +191,7 @@ export async function runDailyCron(): Promise<CronResult> {
       candidate.service_id,
       "resume"
     );
-    createdJobIds.push(jobId);
+    if (jobId) createdJobIds.push(jobId);
   }
 
   // 3. Push notification for newly created jobs

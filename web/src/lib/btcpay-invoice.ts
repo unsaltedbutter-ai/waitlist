@@ -56,6 +56,10 @@ export async function createLightningInvoice(
     data.checkoutLink ??
     "";
 
+  if (!bolt11) {
+    throw new Error("BTCPay response missing bolt11/Lightning payment data");
+  }
+
   return {
     id: data.id,
     bolt11,

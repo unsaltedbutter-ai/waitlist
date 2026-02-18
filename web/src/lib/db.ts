@@ -7,9 +7,10 @@ type QueryFn = <T extends QueryResultRow = QueryResultRow>(
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
-  max: 20,
+  max: 10,
   idleTimeoutMillis: 30_000,
   connectionTimeoutMillis: 5_000,
+  options: '-c statement_timeout=10000',
 });
 
 export async function query<T extends QueryResultRow = QueryResultRow>(

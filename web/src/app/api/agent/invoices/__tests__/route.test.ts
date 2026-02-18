@@ -3,6 +3,7 @@ import { mockQueryResult } from "@/__test-utils__/fixtures";
 
 vi.mock("@/lib/db", () => ({
   query: vi.fn(),
+  transaction: vi.fn(),
 }));
 vi.mock("@/lib/agent-auth", () => ({
   withAgentAuth: vi.fn((handler: Function) => {
@@ -19,7 +20,7 @@ vi.mock("@/lib/btcpay-invoice", () => ({
   createLightningInvoice: vi.fn(),
 }));
 
-import { query } from "@/lib/db";
+import { query, transaction } from "@/lib/db";
 import { createLightningInvoice } from "@/lib/btcpay-invoice";
 import { POST } from "../route";
 
@@ -33,6 +34,7 @@ function makeRequest(body: object): Request {
 
 beforeEach(() => {
   vi.mocked(query).mockReset();
+  vi.mocked(transaction).mockReset();
   vi.mocked(createLightningInvoice).mockReset();
 });
 
@@ -52,10 +54,9 @@ describe("POST /api/agent/invoices", () => {
       id: "btcpay-inv-1",
       bolt11: "lnbc3000sat1...",
     });
-    // Update job with invoice_id
-    vi.mocked(query).mockResolvedValueOnce(mockQueryResult([]));
-    // Insert transaction
-    vi.mocked(query).mockResolvedValueOnce(mockQueryResult([]));
+    // Transaction wrapping UPDATE jobs + INSERT transactions
+    const txQuery = vi.fn().mockResolvedValue(mockQueryResult([]));
+    vi.mocked(transaction).mockImplementationOnce(async (cb) => cb(txQuery as any));
 
     const req = makeRequest({
       job_id: jobId,
@@ -70,28 +71,31 @@ describe("POST /api/agent/invoices", () => {
     expect(data.bolt11).toBe("lnbc3000sat1...");
     expect(data.amount_sats).toBe(3000);
 
-    // Finding 2.4: Verify createLightningInvoice was called with the exact request amount
+    // Verify createLightningInvoice was called with the exact request amount
     expect(createLightningInvoice).toHaveBeenCalledWith({
       amountSats: 3000,
       metadata: { job_id: jobId, user_npub: "npub1abc" },
     });
 
+    // Verify both writes happened inside the transaction
+    expect(txQuery).toHaveBeenCalledTimes(2);
+
     // Verify job was updated with invoice_id
-    const updateCall = vi.mocked(query).mock.calls[2];
+    const updateCall = txQuery.mock.calls[0];
     expect(updateCall[0]).toContain("UPDATE jobs SET invoice_id");
     expect(updateCall[1]).toEqual(["btcpay-inv-1", 3000, jobId]);
 
-    // Finding 2.4: Verify the UPDATE query sets the correct amount_sats value (3000)
+    // Verify the UPDATE query sets the correct amount_sats value (3000)
     const updateParams = updateCall[1] as unknown[];
     expect(updateParams[1]).toBe(3000);
 
-    // Verify transaction was created
-    const txCall = vi.mocked(query).mock.calls[3];
-    expect(txCall[0]).toContain("INSERT INTO transactions");
-    expect(txCall[1]).toEqual([jobId, userId, "netflix", "cancel", 3000]);
+    // Verify transaction row was created
+    const txInsertCall = txQuery.mock.calls[1];
+    expect(txInsertCall[0]).toContain("INSERT INTO transactions");
+    expect(txInsertCall[1]).toEqual([jobId, userId, "netflix", "cancel", 3000]);
 
-    // Finding 2.4: Verify the transaction row also has the correct amount_sats
-    const txParams = txCall[1] as unknown[];
+    // Verify the transaction row also has the correct amount_sats
+    const txParams = txInsertCall[1] as unknown[];
     expect(txParams[4]).toBe(3000);
   });
 
