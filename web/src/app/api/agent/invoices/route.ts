@@ -2,14 +2,15 @@ import { NextRequest, NextResponse } from "next/server";
 import { withAgentAuth } from "@/lib/agent-auth";
 import { query } from "@/lib/db";
 import { createLightningInvoice } from "@/lib/btcpay-invoice";
+import { parseJsonBody } from "@/lib/parse-json-body";
 
 export const POST = withAgentAuth(async (_req: NextRequest, { body: rawBody }) => {
-  let parsed: { job_id?: string; amount_sats?: number; user_npub?: string };
-  try {
-    parsed = JSON.parse(rawBody || "{}");
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
-  }
+  const { data: parsed, error } = parseJsonBody<{
+    job_id?: string;
+    amount_sats?: number;
+    user_npub?: string;
+  }>(rawBody);
+  if (error) return error;
 
   const { job_id, amount_sats, user_npub } = parsed;
 
@@ -27,76 +28,81 @@ export const POST = withAgentAuth(async (_req: NextRequest, { body: rawBody }) =
     );
   }
 
-  // Verify user exists
-  const userResult = await query<{ id: string }>(
-    "SELECT id FROM users WHERE nostr_npub = $1",
-    [user_npub]
-  );
-
-  if (userResult.rows.length === 0) {
-    return NextResponse.json({ error: "User not found" }, { status: 404 });
-  }
-
-  const userId = userResult.rows[0].id;
-
-  // Verify job exists and belongs to user
-  const jobResult = await query<{ id: string; service_id: string; action: string; status: string; invoice_id: string | null }>(
-    "SELECT id, service_id, action, status, invoice_id FROM jobs WHERE id = $1 AND user_id = $2",
-    [job_id, userId]
-  );
-
-  if (jobResult.rows.length === 0) {
-    return NextResponse.json({ error: "Job not found" }, { status: 404 });
-  }
-
-  const job = jobResult.rows[0];
-
-  // Reject if invoice already exists for this job
-  if (job.invoice_id) {
-    return NextResponse.json(
-      { error: "Invoice already exists for this job" },
-      { status: 409 }
-    );
-  }
-
-  // Reject if job is already paid
-  if (job.status === "completed_paid" || job.status === "completed_eventual") {
-    return NextResponse.json(
-      { error: "Job already paid" },
-      { status: 409 }
-    );
-  }
-
-  // Create Lightning invoice via BTCPay
-  let invoice;
   try {
-    invoice = await createLightningInvoice({
-      amountSats: amount_sats,
-      metadata: { job_id, user_npub },
-    });
-  } catch {
-    return NextResponse.json(
-      { error: "Failed to create Lightning invoice" },
-      { status: 502 }
+    // Verify user exists
+    const userResult = await query<{ id: string }>(
+      "SELECT id FROM users WHERE nostr_npub = $1",
+      [user_npub]
     );
+
+    if (userResult.rows.length === 0) {
+      return NextResponse.json({ error: "User not found" }, { status: 404 });
+    }
+
+    const userId = userResult.rows[0].id;
+
+    // Verify job exists and belongs to user
+    const jobResult = await query<{ id: string; service_id: string; action: string; status: string; invoice_id: string | null }>(
+      "SELECT id, service_id, action, status, invoice_id FROM jobs WHERE id = $1 AND user_id = $2",
+      [job_id, userId]
+    );
+
+    if (jobResult.rows.length === 0) {
+      return NextResponse.json({ error: "Job not found" }, { status: 404 });
+    }
+
+    const job = jobResult.rows[0];
+
+    // Reject if invoice already exists for this job
+    if (job.invoice_id) {
+      return NextResponse.json(
+        { error: "Invoice already exists for this job" },
+        { status: 409 }
+      );
+    }
+
+    // Reject if job is already paid
+    if (job.status === "completed_paid" || job.status === "completed_eventual") {
+      return NextResponse.json(
+        { error: "Job already paid" },
+        { status: 409 }
+      );
+    }
+
+    // Create Lightning invoice via BTCPay
+    let invoice;
+    try {
+      invoice = await createLightningInvoice({
+        amountSats: amount_sats,
+        metadata: { job_id, user_npub },
+      });
+    } catch {
+      return NextResponse.json(
+        { error: "Failed to create Lightning invoice" },
+        { status: 502 }
+      );
+    }
+
+    // Store invoice_id on the job row
+    await query(
+      "UPDATE jobs SET invoice_id = $1, amount_sats = $2 WHERE id = $3",
+      [invoice.id, amount_sats, job_id]
+    );
+
+    // Create transaction row
+    await query(
+      `INSERT INTO transactions (job_id, user_id, service_id, action, amount_sats, status)
+       VALUES ($1, $2, $3, $4, $5, 'invoice_sent')`,
+      [job_id, userId, job.service_id, job.action, amount_sats]
+    );
+
+    return NextResponse.json({
+      invoice_id: invoice.id,
+      bolt11: invoice.bolt11,
+      amount_sats,
+    });
+  } catch (err) {
+    console.error("Agent invoice create error:", err);
+    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
-
-  // Store invoice_id on the job row
-  await query(
-    "UPDATE jobs SET invoice_id = $1, amount_sats = $2 WHERE id = $3",
-    [invoice.id, amount_sats, job_id]
-  );
-
-  // Create transaction row
-  await query(
-    `INSERT INTO transactions (job_id, user_id, service_id, action, amount_sats, status)
-     VALUES ($1, $2, $3, $4, $5, 'invoice_sent')`,
-    [job_id, userId, job.service_id, job.action, amount_sats]
-  );
-
-  return NextResponse.json({
-    invoice_id: invoice.id,
-    bolt11: invoice.bolt11,
-    amount_sats,
-  });
 });

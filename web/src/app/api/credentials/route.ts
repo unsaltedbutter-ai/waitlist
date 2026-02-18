@@ -20,49 +20,59 @@ export const POST = withAuth(async (req: NextRequest, { userId }) => {
     );
   }
 
-  // Verify service exists
-  const svc = await query(
-    "SELECT id FROM streaming_services WHERE id = $1 AND supported = TRUE",
-    [serviceId]
-  );
-  if (svc.rows.length === 0) {
-    return NextResponse.json(
-      { error: "Invalid or unsupported service" },
-      { status: 400 }
+  try {
+    // Verify service exists
+    const svc = await query(
+      "SELECT id FROM streaming_services WHERE id = $1 AND supported = TRUE",
+      [serviceId]
     );
+    if (svc.rows.length === 0) {
+      return NextResponse.json(
+        { error: "Invalid or unsupported service" },
+        { status: 400 }
+      );
+    }
+
+    const emailEnc = encrypt(email);
+    const passwordEnc = encrypt(password);
+
+    await query(
+      `INSERT INTO streaming_credentials
+         (user_id, service_id, email_enc, password_enc)
+       VALUES ($1, $2, $3, $4)
+       ON CONFLICT (user_id, service_id) DO UPDATE SET
+         email_enc = EXCLUDED.email_enc,
+         password_enc = EXCLUDED.password_enc`,
+      [userId, serviceId, emailEnc, passwordEnc]
+    );
+
+    return NextResponse.json({ success: true }, { status: 201 });
+  } catch (err) {
+    console.error("Credentials POST error:", err);
+    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
-
-  const emailEnc = encrypt(email);
-  const passwordEnc = encrypt(password);
-
-  await query(
-    `INSERT INTO streaming_credentials
-       (user_id, service_id, email_enc, password_enc)
-     VALUES ($1, $2, $3, $4)
-     ON CONFLICT (user_id, service_id) DO UPDATE SET
-       email_enc = EXCLUDED.email_enc,
-       password_enc = EXCLUDED.password_enc`,
-    [userId, serviceId, emailEnc, passwordEnc]
-  );
-
-  return NextResponse.json({ success: true }, { status: 201 });
 });
 
 export const GET = withAuth(async (_req: NextRequest, { userId }) => {
-  const result = await query(
-    `SELECT sc.service_id, ss.display_name AS service_name, sc.email_enc
-     FROM streaming_credentials sc
-     JOIN streaming_services ss ON ss.id = sc.service_id
-     WHERE sc.user_id = $1
-     ORDER BY ss.display_name`,
-    [userId]
-  );
+  try {
+    const result = await query(
+      `SELECT sc.service_id, ss.display_name AS service_name, sc.email_enc
+       FROM streaming_credentials sc
+       JOIN streaming_services ss ON ss.id = sc.service_id
+       WHERE sc.user_id = $1
+       ORDER BY ss.display_name`,
+      [userId]
+    );
 
-  const credentials = result.rows.map((row) => ({
-    serviceId: row.service_id,
-    serviceName: row.service_name,
-    email: decrypt(row.email_enc),
-  }));
+    const credentials = result.rows.map((row) => ({
+      serviceId: row.service_id,
+      serviceName: row.service_name,
+      email: decrypt(row.email_enc),
+    }));
 
-  return NextResponse.json({ credentials });
+    return NextResponse.json({ credentials });
+  } catch (err) {
+    console.error("Credentials GET error:", err);
+    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
+  }
 });

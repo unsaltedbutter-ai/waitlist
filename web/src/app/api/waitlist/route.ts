@@ -42,25 +42,30 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  // Check for duplicate
-  const existing = await query(
-    "SELECT id FROM waitlist WHERE nostr_npub = $1",
-    [nostrNpub]
-  );
-  if (existing.rows.length > 0) {
-    return NextResponse.json(
-      { error: "You're already on the list." },
-      { status: 409 }
+  try {
+    // Check for duplicate
+    const existing = await query(
+      "SELECT id FROM waitlist WHERE nostr_npub = $1",
+      [nostrNpub]
     );
+    if (existing.rows.length > 0) {
+      return NextResponse.json(
+        { error: "You're already on the list." },
+        { status: 409 }
+      );
+    }
+
+    await query(
+      "INSERT INTO waitlist (nostr_npub) VALUES ($1)",
+      [nostrNpub]
+    );
+
+    return NextResponse.json(
+      { message: "You're in. We'll be in touch." },
+      { status: 201 }
+    );
+  } catch (err) {
+    console.error("Waitlist POST error:", err);
+    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
-
-  await query(
-    "INSERT INTO waitlist (nostr_npub) VALUES ($1)",
-    [nostrNpub]
-  );
-
-  return NextResponse.json(
-    { message: "You're in. We'll be in touch." },
-    { status: 201 }
-  );
 }

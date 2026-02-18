@@ -336,11 +336,11 @@ describe("POST /api/agent/jobs/[id]/paid", () => {
       return cb(txQuery as any);
     });
 
-    // The real transaction() wrapper in db.ts catches errors and issues ROLLBACK.
-    // Since we mocked transaction itself, the error propagates up as an unhandled throw.
-    await expect(
-      POST(makeRequest({}) as any, { params: Promise.resolve({ id: JOB_ID }) })
-    ).rejects.toThrow("disk full");
+    // The route's try/catch catches the error from the transaction and returns 500.
+    const res = await POST(makeRequest({}) as any, { params: Promise.resolve({ id: JOB_ID }) });
+    expect(res.status).toBe(500);
+    const data = await res.json();
+    expect(data.error).toBe("Internal server error");
 
     // The transaction mock was called exactly once (no retry)
     expect(transaction).toHaveBeenCalledOnce();

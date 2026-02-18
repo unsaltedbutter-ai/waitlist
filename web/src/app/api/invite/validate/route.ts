@@ -17,14 +17,19 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const result = await query<{ id: string }>(
-    "SELECT id FROM waitlist WHERE invite_code = $1 AND invited = TRUE",
-    [code]
-  );
+  try {
+    const result = await query<{ id: string }>(
+      "SELECT id FROM waitlist WHERE invite_code = $1 AND invited = TRUE",
+      [code]
+    );
 
-  if (result.rows.length === 0) {
-    return NextResponse.json({ valid: false });
+    if (result.rows.length === 0) {
+      return NextResponse.json({ valid: false });
+    }
+
+    return NextResponse.json({ valid: true });
+  } catch (err) {
+    console.error("Invite validate error:", err);
+    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
-
-  return NextResponse.json({ valid: true });
 }

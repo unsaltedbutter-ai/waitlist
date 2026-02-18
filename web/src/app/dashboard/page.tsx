@@ -39,7 +39,7 @@ interface JobRecord {
   service_name: string;
   flow_type: string;
   status: string;
-  completed_at: string | null;
+  completed_at: string | null; // status_updated_at from the DB
   created_at: string;
 }
 
@@ -90,14 +90,23 @@ function statusLabel(status: QueueItem["subscription_status"]): string {
 
 function jobStatusBadge(status: string): string {
   switch (status) {
-    case "completed":
+    case "completed_paid":
+    case "completed_eventual":
       return "bg-green-900/50 text-green-400 border border-green-700";
-    case "failed":
-    case "dead_letter":
+    case "completed_reneged":
       return "bg-red-900/50 text-red-400 border border-red-700";
-    case "in_progress":
-    case "claimed":
+    case "active":
+    case "awaiting_otp":
+    case "dispatched":
       return "bg-blue-900/50 text-blue-400 border border-blue-700";
+    case "outreach_sent":
+    case "snoozed":
+      return "bg-amber-900/50 text-amber-400 border border-amber-700";
+    case "user_skip":
+    case "user_abandon":
+    case "implied_skip":
+      return "bg-neutral-800/50 text-neutral-500 border border-neutral-700";
+    case "pending":
     default:
       return "bg-neutral-800/50 text-neutral-400 border border-neutral-700";
   }
@@ -107,11 +116,42 @@ function flowTypeLabel(flowType: string): string {
   switch (flowType) {
     case "cancel":
       return "Cancel";
-    case "signup":
     case "resume":
       return "Resume";
     default:
       return flowType;
+  }
+}
+
+/** Human-readable label for v4 job statuses. */
+function jobStatusLabel(status: string): string {
+  switch (status) {
+    case "pending":
+      return "Pending";
+    case "dispatched":
+      return "Dispatched";
+    case "outreach_sent":
+      return "Outreach sent";
+    case "snoozed":
+      return "Snoozed";
+    case "active":
+      return "Active";
+    case "awaiting_otp":
+      return "Awaiting OTP";
+    case "completed_paid":
+      return "Paid";
+    case "completed_eventual":
+      return "Paid (late)";
+    case "completed_reneged":
+      return "Unpaid";
+    case "user_skip":
+      return "Skipped";
+    case "user_abandon":
+      return "Abandoned";
+    case "implied_skip":
+      return "Implied skip";
+    default:
+      return status;
   }
 }
 
@@ -124,33 +164,6 @@ function isItemPinned(item: QueueItem): boolean {
   );
 }
 
-/** Display label for user status. */
-function userStatusLabel(status: string): string {
-  switch (status) {
-    case "active":
-      return "Active";
-    case "paused":
-      return "Paused";
-    case "auto_paused":
-      return "Paused (debt)";
-    default:
-      return status;
-  }
-}
-
-/** CSS class for user status badge. */
-function userStatusBadgeClass(status: string): string {
-  switch (status) {
-    case "active":
-      return "bg-green-900/50 text-green-400 border border-green-700";
-    case "paused":
-      return "bg-neutral-800/50 text-neutral-400 border border-neutral-700";
-    case "auto_paused":
-      return "bg-amber-900/50 text-amber-400 border border-amber-700";
-    default:
-      return "bg-neutral-800/50 text-neutral-400 border border-neutral-700";
-  }
-}
 
 // ---------------------------------------------------------------------------
 // SortableItem (draggable queue item)
@@ -255,10 +268,6 @@ export default function DashboardPage() {
   const [loadingData, setLoadingData] = useState(true);
   const [error, setError] = useState("");
 
-  // Pause/unpause
-  const [pauseLoading, setPauseLoading] = useState(false);
-  const [unpauseError, setUnpauseError] = useState("");
-
   // Nostr npub copy
   const [npubCopied, setNpubCopied] = useState(false);
 
@@ -274,8 +283,6 @@ export default function DashboardPage() {
     try {
       const [qRes, meRes] = await Promise.all([
         authFetch("/api/queue"),
-        // TODO: GET /api/me should return { debt_sats, recent_jobs }
-        // For now, try fetching it; if it fails, fall back gracefully.
         authFetch("/api/me").catch(() => null),
       ]);
 
@@ -354,44 +361,6 @@ export default function DashboardPage() {
     },
     [queue, pinnedItems, sortableItems]
   );
-
-  // ---------- Pause / Unpause ----------
-
-  const handlePause = useCallback(async () => {
-    setPauseLoading(true);
-    setUnpauseError("");
-    try {
-      const res = await authFetch("/api/pause", { method: "POST" });
-      if (res.ok) {
-        window.location.reload();
-      } else {
-        const data = await res.json().catch(() => ({}));
-        setUnpauseError(data.error || "Failed to pause.");
-      }
-    } catch {
-      setUnpauseError("Connection failed.");
-    } finally {
-      setPauseLoading(false);
-    }
-  }, []);
-
-  const handleUnpause = useCallback(async () => {
-    setPauseLoading(true);
-    setUnpauseError("");
-    try {
-      const res = await authFetch("/api/unpause", { method: "POST" });
-      if (res.ok) {
-        window.location.reload();
-      } else {
-        const data = await res.json().catch(() => ({}));
-        setUnpauseError(data.error || "Failed to resume.");
-      }
-    } catch {
-      setUnpauseError("Connection failed.");
-    } finally {
-      setPauseLoading(false);
-    }
-  }, []);
 
   // ---------- Delete account ----------
 
@@ -547,7 +516,7 @@ export default function DashboardPage() {
                           </td>
                           <td className="px-3 py-2">
                             <span className={`text-xs font-medium px-2 py-0.5 rounded ${jobStatusBadge(job.status)}`}>
-                              {job.status}
+                              {jobStatusLabel(job.status)}
                             </span>
                           </td>
                           <td className="px-3 py-2 text-sm text-muted">
@@ -571,48 +540,21 @@ export default function DashboardPage() {
             <section className="bg-surface border border-border rounded p-6 space-y-6">
               <h2 className="text-sm font-medium text-muted mb-4">Account</h2>
 
-              {/* Status + pause toggle */}
-              <div className="space-y-4">
-                <div className="flex items-center justify-between">
+              {/* Account info */}
+              <div className="space-y-2">
+                <div className="flex items-center gap-3">
+                  <span className="text-sm text-muted">Nostr:</span>
+                  <span className="text-sm text-foreground font-mono truncate max-w-xs">
+                    {user.nostr_npub}
+                  </span>
+                </div>
+                {user.onboarded_at && (
                   <div className="flex items-center gap-3">
-                    <span className="text-sm text-muted">Status:</span>
-                    <span
-                      className={`text-xs font-medium px-2 py-0.5 rounded ${userStatusBadgeClass(user.status)}`}
-                    >
-                      {userStatusLabel(user.status)}
+                    <span className="text-sm text-muted">Member since:</span>
+                    <span className="text-sm text-foreground">
+                      {formatDate(user.onboarded_at)}
                     </span>
                   </div>
-
-                  {/* iOS-style toggle for active/paused */}
-                  {(user.status === "active" || user.status === "paused") && (
-                    <button
-                      type="button"
-                      onClick={user.status === "active" ? handlePause : handleUnpause}
-                      disabled={pauseLoading}
-                      className={`relative inline-flex h-7 w-12 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none disabled:opacity-50 ${
-                        user.status === "active" ? "bg-green-600" : "bg-neutral-600"
-                      }`}
-                      role="switch"
-                      aria-checked={user.status === "active"}
-                      aria-label={user.status === "active" ? "Pause rotation" : "Resume rotation"}
-                    >
-                      <span
-                        className={`pointer-events-none inline-block h-6 w-6 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
-                          user.status === "active" ? "translate-x-5" : "translate-x-0"
-                        }`}
-                      />
-                    </button>
-                  )}
-                </div>
-
-                {user.status === "auto_paused" && (
-                  <p className="text-sm text-amber-400">
-                    Paused due to outstanding debt. Pay your balance to resume.
-                  </p>
-                )}
-
-                {unpauseError && (
-                  <p className="text-red-400 text-sm">{unpauseError}</p>
                 )}
               </div>
 
@@ -623,7 +565,7 @@ export default function DashboardPage() {
                     {process.env.NEXT_PUBLIC_NOSTR_BOT_NAME}
                   </h3>
                   <p className="text-sm text-muted">
-                    DM for status, queue, cancel, resume, or pause commands.
+                    DM for status, queue, cancel, or resume commands.
                   </p>
                   {process.env.NEXT_PUBLIC_NOSTR_BOT_NPUB && (
                     <button

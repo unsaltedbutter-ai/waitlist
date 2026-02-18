@@ -21,6 +21,11 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const result = await runDailyCron();
-  return NextResponse.json(result);
+  try {
+    const result = await runDailyCron();
+    return NextResponse.json(result);
+  } catch (err) {
+    console.error("Daily cron error:", err);
+    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
+  }
 }

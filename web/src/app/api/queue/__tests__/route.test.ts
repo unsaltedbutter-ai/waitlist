@@ -358,13 +358,14 @@ describe("PUT /api/queue", () => {
 
 // Finding 4.1: database connection failure on GET (no try/catch in route)
 describe("GET /api/queue", () => {
-  it("crashes when database query throws (documents missing error handling)", async () => {
+  it("returns 500 when database query throws", async () => {
     vi.mocked(query).mockRejectedValueOnce(new Error("Connection refused"));
 
     const req = new Request("http://localhost/api/queue");
-    await expect(
-      GET(req as any, { params: Promise.resolve({}) })
-    ).rejects.toThrow("Connection refused");
+    const res = await GET(req as any, { params: Promise.resolve({}) });
+    expect(res.status).toBe(500);
+    const data = await res.json();
+    expect(data.error).toBe("Internal server error");
   });
 
   it("returns queue rows on success", async () => {

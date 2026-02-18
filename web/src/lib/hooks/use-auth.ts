@@ -7,12 +7,11 @@ const TOKEN_KEY = "ub_token";
 
 interface User {
   id: string;
-  email: string | null;
-  nostr_npub: string | null;
-  status: "active" | "paused" | "auto_paused";
-  paused_at: string | null;
+  nostr_npub: string;
+  debt_sats: number;
   onboarded_at: string | null;
   created_at: string;
+  updated_at: string;
 }
 
 export function useAuth() {

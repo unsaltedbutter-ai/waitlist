@@ -164,7 +164,7 @@ describe("POST /api/credentials", () => {
   });
 
   // Finding 4.1: database error on POST service lookup (no outer try/catch)
-  it("crashes when database query throws during service lookup (documents missing error handling)", async () => {
+  it("returns 500 when database query throws during service lookup", async () => {
     vi.mocked(query).mockRejectedValueOnce(new Error("Connection refused"));
 
     const req = makePostRequest({
@@ -172,9 +172,10 @@ describe("POST /api/credentials", () => {
       email: "user@example.com",
       password: "hunter2",
     });
-    await expect(
-      POST(req as any, { params: Promise.resolve({}) })
-    ).rejects.toThrow("Connection refused");
+    const res = await POST(req as any, { params: Promise.resolve({}) });
+    expect(res.status).toBe(500);
+    const data = await res.json();
+    expect(data.error).toBe("Internal server error");
   });
 });
 
@@ -218,7 +219,7 @@ describe("GET /api/credentials", () => {
   });
 
   // Finding 3.1: decrypt() throws on corrupted data (e.g. rotated key)
-  it("crashes with 500 when decrypt throws on a row (documents broken behavior)", async () => {
+  it("returns 500 when decrypt throws on a row", async () => {
     vi.mocked(decrypt).mockImplementationOnce(() => {
       throw new Error("Decryption failed: bad key or corrupted data");
     });
@@ -234,19 +235,20 @@ describe("GET /api/credentials", () => {
     );
 
     const req = new Request("http://localhost/api/credentials");
-    // The route has no try/catch around decrypt, so this should throw
-    await expect(
-      GET(req as any, { params: Promise.resolve({}) })
-    ).rejects.toThrow("Decryption failed");
+    const res = await GET(req as any, { params: Promise.resolve({}) });
+    expect(res.status).toBe(500);
+    const data = await res.json();
+    expect(data.error).toBe("Internal server error");
   });
 
   // Finding 4.1: database connection failure on GET (no try/catch in route)
-  it("crashes when database query throws (documents missing error handling)", async () => {
+  it("returns 500 when database query throws", async () => {
     vi.mocked(query).mockRejectedValueOnce(new Error("Connection refused"));
 
     const req = new Request("http://localhost/api/credentials");
-    await expect(
-      GET(req as any, { params: Promise.resolve({}) })
-    ).rejects.toThrow("Connection refused");
+    const res = await GET(req as any, { params: Promise.resolve({}) });
+    expect(res.status).toBe(500);
+    const data = await res.json();
+    expect(data.error).toBe("Internal server error");
   });
 });
