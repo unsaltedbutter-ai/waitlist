@@ -8,6 +8,7 @@ processes timer callbacks.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import datetime, timezone, timedelta
 
@@ -66,6 +67,10 @@ class JobManager:
         self._send_dm = send_dm
         self._dispatch_queue: list[str] = []  # job IDs waiting for an agent slot
         self._active_agent_jobs: set[str] = set()  # job IDs currently on the agent
+        # Lock protecting _dispatch_queue and _active_agent_jobs. Without this,
+        # two concurrent request_dispatch calls could both see a slot available,
+        # both add to _active_agent_jobs, and exceed max_concurrent_agent_jobs.
+        self._dispatch_lock = asyncio.Lock()
 
     # ------------------------------------------------------------------
     # Polling + claiming
@@ -287,51 +292,66 @@ class JobManager:
         Called instead of session.handle_otp_confirm_yes directly.
         If an agent slot is available, dispatch immediately.
         If not, add to the dispatch queue and DM the user.
+
+        Thread-safe: acquires _dispatch_lock to prevent two concurrent
+        callers from both seeing a slot available and double-dispatching.
         """
-        if self.agent_slot_available():
-            self._active_agent_jobs.add(job_id)
-            await self._session.handle_otp_confirm_yes(user_npub)
-        else:
-            self._dispatch_queue.append(job_id)
-            job = await self._db.get_job(job_id)
-            if job:
-                await self._send_dm(
-                    user_npub,
-                    messages.queued(job["service_id"], job["action"]),
-                )
+        async with self._dispatch_lock:
+            if self.agent_slot_available():
+                self._active_agent_jobs.add(job_id)
+                await self._session.handle_otp_confirm_yes(user_npub)
+            else:
+                self._dispatch_queue.append(job_id)
+                job = await self._db.get_job(job_id)
+                if job:
+                    await self._send_dm(
+                        user_npub,
+                        messages.queued(job["service_id"], job["action"]),
+                    )
 
     async def try_dispatch_next(self) -> bool:
         """If there's an open agent slot and queued jobs, dispatch the next one.
 
         Returns True if a job was dispatched, False otherwise.
+
+        Thread-safe: acquires _dispatch_lock to prevent races between
+        slot checks and active job set mutations.
         """
+        async with self._dispatch_lock:
+            return await self._try_dispatch_next_unlocked()
+
+    async def _try_dispatch_next_unlocked(self) -> bool:
+        """Internal dispatch logic. Caller must hold _dispatch_lock."""
         if not self.agent_slot_available():
             return False
 
-        if not self._dispatch_queue:
-            return False
+        while self._dispatch_queue:
+            job_id = self._dispatch_queue.pop(0)
 
-        job_id = self._dispatch_queue.pop(0)
+            # Verify job still exists and find the user
+            job = await self._db.get_job(job_id)
+            if job is None:
+                # Job disappeared, skip to next queued job
+                continue
 
-        # Verify job still exists and find the user
-        job = await self._db.get_job(job_id)
-        if job is None:
-            # Job disappeared, try the next one
-            return await self.try_dispatch_next()
+            user_npub = job["user_npub"]
+            self._active_agent_jobs.add(job_id)
+            await self._session.handle_otp_confirm_yes(user_npub)
+            return True
 
-        user_npub = job["user_npub"]
-        self._active_agent_jobs.add(job_id)
-        await self._session.handle_otp_confirm_yes(user_npub)
-        return True
+        return False
 
     async def on_job_complete(self, job_id: str) -> None:
         """Called when a job finishes (success or failure). Free the agent slot.
 
         Removes the job from active_agent_jobs and tries to dispatch the
         next queued job.
+
+        Thread-safe: acquires _dispatch_lock to prevent races.
         """
-        self._active_agent_jobs.discard(job_id)
-        await self.try_dispatch_next()
+        async with self._dispatch_lock:
+            self._active_agent_jobs.discard(job_id)
+            await self._try_dispatch_next_unlocked()
 
     # ------------------------------------------------------------------
     # Timer callbacks

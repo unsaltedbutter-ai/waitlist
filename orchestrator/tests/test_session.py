@@ -381,8 +381,13 @@ async def test_otp_input(deps):
 
 
 @pytest.mark.asyncio
-async def test_otp_input_redacted_in_log(deps):
-    """OTP code must be logged as [OTP_REDACTED], never the actual digits."""
+async def test_otp_input_does_not_double_log(deps):
+    """handle_otp_input must NOT write its own log entry.
+
+    The inbound message is already logged by nostr_handler (with automatic
+    OTP redaction in db.log_message). A second log call here would create
+    a duplicate row.
+    """
     s = deps["session"]
     db = deps["db"]
 
@@ -390,9 +395,7 @@ async def test_otp_input_redacted_in_log(deps):
     await s.handle_otp_input("npub1alice", "987654")
 
     log_entries = await db.get_messages("npub1alice")
-    assert len(log_entries) == 1
-    assert log_entries[0]["content"] == "[OTP_REDACTED]"
-    assert "987654" not in str(log_entries)
+    assert len(log_entries) == 0  # session.py no longer writes to message_log
 
 
 @pytest.mark.asyncio

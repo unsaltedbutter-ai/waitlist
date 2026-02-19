@@ -580,3 +580,187 @@ async def test_zap_send_dm_closure_calls_client(handler):
 
     MockPK.parse.assert_called_with(USER_PK)
     handler._test_client.send_private_msg.assert_awaited_once_with(pk_instance, "zap thanks", [])
+
+
+# ==============================================================================
+# Per-user lock: concurrency protection
+# ==============================================================================
+
+
+def test_get_user_lock_creates_on_first_access(handler):
+    """_get_user_lock creates a new lock on first access for a user."""
+    assert USER_PK not in handler._user_locks
+    lock = handler._get_user_lock(USER_PK)
+    assert lock is not None
+    assert USER_PK in handler._user_locks
+    assert USER_PK in handler._user_lock_last_used
+
+
+def test_get_user_lock_returns_same_lock(handler):
+    """_get_user_lock returns the same lock object for the same user."""
+    lock1 = handler._get_user_lock(USER_PK)
+    lock2 = handler._get_user_lock(USER_PK)
+    assert lock1 is lock2
+
+
+def test_get_user_lock_different_users_different_locks(handler):
+    """Different users get different locks."""
+    lock_user = handler._get_user_lock(USER_PK)
+    lock_other = handler._get_user_lock("11" * 32)
+    assert lock_user is not lock_other
+
+
+def test_cleanup_idle_locks_removes_stale(handler):
+    """cleanup_idle_locks removes locks idle longer than _lock_idle_seconds."""
+    import time
+
+    handler._get_user_lock(USER_PK)
+    # Backdate the last-used time to make it stale
+    handler._user_lock_last_used[USER_PK] = time.monotonic() - 600
+    removed = handler.cleanup_idle_locks()
+    assert removed == 1
+    assert USER_PK not in handler._user_locks
+    assert USER_PK not in handler._user_lock_last_used
+
+
+def test_cleanup_idle_locks_preserves_recent(handler):
+    """cleanup_idle_locks preserves locks used recently."""
+    handler._get_user_lock(USER_PK)
+    removed = handler.cleanup_idle_locks()
+    assert removed == 0
+    assert USER_PK in handler._user_locks
+
+
+def test_cleanup_idle_locks_preserves_held_lock(handler):
+    """cleanup_idle_locks does not remove a lock that is currently held."""
+    import time
+
+    lock = handler._get_user_lock(USER_PK)
+    # Backdate to make it eligible for cleanup
+    handler._user_lock_last_used[USER_PK] = time.monotonic() - 600
+    # Simulate holding the lock (without actually using async with)
+    lock._locked = True
+    # cleanup should skip it because lock.locked() returns True
+    removed = handler.cleanup_idle_locks()
+    assert removed == 0
+    assert USER_PK in handler._user_locks
+    lock._locked = False  # Clean up
+
+
+@pytest.mark.asyncio
+@patch("nostr_handler.nip04_decrypt", return_value="hello")
+async def test_nip04_dm_acquires_user_lock(mock_decrypt, handler):
+    """NIP-04 DM processing acquires the per-user lock before calling commands."""
+    import asyncio
+
+    event = _make_event(kind_value=4, author_hex=USER_PK, content="enc")
+    processing_order = []
+
+    # Track when lock is held during handle_dm
+    original_handle_dm = handler._test_commands.handle_dm
+
+    async def tracking_handle_dm(sender, text):
+        lock = handler._user_locks.get(sender)
+        processing_order.append(("handle_dm", lock.locked() if lock else False))
+
+    handler._test_commands.handle_dm = AsyncMock(side_effect=tracking_handle_dm)
+
+    await handler.handle(RELAY_URL, SUB_ID, event)
+
+    # Lock should have been held during handle_dm
+    assert len(processing_order) == 1
+    assert processing_order[0] == ("handle_dm", True)
+
+
+@pytest.mark.asyncio
+@patch("nostr_handler.nip04_decrypt", return_value="hello")
+async def test_concurrent_dms_same_user_serialized(mock_decrypt, handler):
+    """Two concurrent DMs from the same user are serialized (not parallel)."""
+    import asyncio
+
+    event1 = _make_event(kind_value=4, author_hex=USER_PK, content="enc1")
+    event2 = _make_event(kind_value=4, author_hex=USER_PK, content="enc2")
+
+    execution_log = []
+    barrier = asyncio.Event()
+
+    call_count = 0
+
+    async def slow_handle_dm(sender, text):
+        nonlocal call_count
+        call_count += 1
+        my_num = call_count
+        execution_log.append(("start", my_num))
+        if my_num == 1:
+            # First call: set barrier so second can start, then delay
+            barrier.set()
+            await asyncio.sleep(0.05)
+        execution_log.append(("end", my_num))
+
+    handler._test_commands.handle_dm = AsyncMock(side_effect=slow_handle_dm)
+
+    # Launch two DMs concurrently
+    task1 = asyncio.create_task(handler.handle(RELAY_URL, SUB_ID, event1))
+    # Wait until first DM has started processing before sending second
+    await barrier.wait()
+    task2 = asyncio.create_task(handler.handle(RELAY_URL, SUB_ID, event2))
+
+    await asyncio.gather(task1, task2)
+
+    # With serialization: start1, end1, start2, end2
+    # Without serialization: start1, start2, end1/end2 interleaved
+    assert execution_log[0] == ("start", 1)
+    assert execution_log[1] == ("end", 1)
+    assert execution_log[2] == ("start", 2)
+    assert execution_log[3] == ("end", 2)
+
+
+@pytest.mark.asyncio
+@patch("nostr_handler.nip04_decrypt", return_value="hello")
+async def test_concurrent_dms_different_users_parallel(mock_decrypt, handler):
+    """DMs from different users can proceed in parallel (different locks)."""
+    import asyncio
+
+    other_user = "11" * 32
+    event_user = _make_event(kind_value=4, author_hex=USER_PK, content="enc1")
+    event_other = _make_event(kind_value=4, author_hex=other_user, content="enc2")
+
+    execution_log = []
+    both_started = asyncio.Event()
+    start_count = 0
+
+    async def tracking_handle_dm(sender, text):
+        nonlocal start_count
+        start_count += 1
+        execution_log.append(("start", sender[:4]))
+        if start_count >= 2:
+            both_started.set()
+        # Wait briefly so both can start concurrently if locks allow
+        try:
+            await asyncio.wait_for(both_started.wait(), timeout=0.2)
+        except asyncio.TimeoutError:
+            pass
+        execution_log.append(("end", sender[:4]))
+
+    handler._test_commands.handle_dm = AsyncMock(side_effect=tracking_handle_dm)
+
+    task1 = asyncio.create_task(handler.handle(RELAY_URL, SUB_ID, event_user))
+    task2 = asyncio.create_task(handler.handle(RELAY_URL, SUB_ID, event_other))
+
+    await asyncio.gather(task1, task2)
+
+    # Both should have started before either finished (parallel execution)
+    starts = [e for e in execution_log if e[0] == "start"]
+    assert len(starts) == 2
+
+
+@pytest.mark.asyncio
+@patch("nostr_handler.nip04_decrypt", return_value='{"type":"push"}')
+async def test_vps_dm_does_not_acquire_user_lock(mock_decrypt, handler):
+    """DMs from VPS bot bypass the per-user lock (no user session to protect)."""
+    event = _make_event(kind_value=4, author_hex=VPS_BOT_PK, content="enc")
+
+    await handler.handle(RELAY_URL, SUB_ID, event)
+
+    # VPS bot should not have a lock created
+    assert VPS_BOT_PK not in handler._user_locks

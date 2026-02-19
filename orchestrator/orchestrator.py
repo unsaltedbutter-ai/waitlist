@@ -126,6 +126,9 @@ async def _cleanup_loop(
             purged = await db.purge_old_messages()
             if purged > 0:
                 log.info("[cleanup] Purged %d old message(s)", purged)
+            fired = await db.delete_fired_timers()
+            if fired > 0:
+                log.info("[cleanup] Deleted %d fired timer(s)", fired)
         except Exception:
             log.exception("[cleanup] Error")
 
@@ -178,20 +181,19 @@ async def run(config: Config) -> None:
 
     # -- Build the module graph --
     # NostrHandler provides send_dm/send_operator_dm to all other modules.
-    # We construct it first (partially), then wire in commands/notifications
-    # after they are created.
+    # Construct it first (without commands/notifications), grab send_dm,
+    # then wire commands/notifications back in after they are created.
     start_time = Timestamp.now()
 
-    nostr_handler = NostrHandler.__new__(NostrHandler)
-    nostr_handler._keys = keys
-    nostr_handler._signer = signer
-    nostr_handler._client = client
-    nostr_handler._start_time = start_time
-    nostr_handler._config = config
-    nostr_handler._db = db
-    nostr_handler._api_client = api
-    nostr_handler._bot_pubkey_hex = keys.public_key().to_hex()
-    nostr_handler._user_protocol = {}
+    nostr_handler = NostrHandler(
+        keys=keys,
+        signer=signer,
+        client=client,
+        start_time=start_time,
+        config=config,
+        db=db,
+        api_client=api,
+    )
 
     send_dm = nostr_handler.send_dm
     send_operator_dm = nostr_handler.send_operator_dm
@@ -237,8 +239,7 @@ async def run(config: Config) -> None:
     )
 
     # -- Wire remaining refs into NostrHandler --
-    nostr_handler._commands = commands
-    nostr_handler._notifications = notifications
+    nostr_handler.wire(commands=commands, notifications=notifications)
 
     # -- Wire timer callbacks --
     timers.set_callback(job_manager.handle_timer)

@@ -531,7 +531,7 @@ async def test_action_api_400_no_credentials():
 
 @pytest.mark.asyncio
 async def test_action_api_400_other_error():
-    """API 400 with generic error should pass it through."""
+    """API 400 with non-credentials error should send generic message (no internal details)."""
     router, deps = _make_router()
     deps["api"].get_user.return_value = {"debt_sats": 0}
     deps["api"].create_on_demand_job.return_value = {
@@ -543,7 +543,9 @@ async def test_action_api_400_other_error():
 
     deps["send_dm"].assert_awaited_once()
     msg = deps["send_dm"].call_args[0][1]
-    assert "Invalid service" in msg
+    # Must NOT leak internal error text to user
+    assert "Invalid service" not in msg
+    assert "wrong" in msg.lower()
 
 
 @pytest.mark.asyncio

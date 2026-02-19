@@ -173,10 +173,13 @@ class TestResult:
         msg = action_failed_cancel("netflix")
         assert "Failed to cancel Netflix" in msg
         assert "manually" in msg
+        assert "operator has been notified" in msg
 
-    def test_action_failed_cancel_with_error(self) -> None:
-        msg = action_failed_cancel("netflix", error="Timeout during login")
-        assert "Timeout during login" in msg
+    def test_action_failed_cancel_no_internal_details(self) -> None:
+        """Cancel failure message must never contain internal error details."""
+        msg = action_failed_cancel("netflix")
+        # Should not have a raw "Error:" line with internal info
+        assert "Error:" not in msg
 
     def test_action_failed_resume(self) -> None:
         msg = action_failed_resume("disney_plus")

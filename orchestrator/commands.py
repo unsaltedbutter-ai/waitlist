@@ -223,11 +223,11 @@ class CommandRouter:
                     messages.no_credentials(service_id, self._config.base_url),
                 )
             else:
-                display = messages.display_name(service_id)
-                await self._send_dm(
-                    sender_npub,
-                    f"Could not {action} {display}: {error_msg}",
+                log.warning(
+                    "API 400 for %s %s (user %s): %s",
+                    action, service_id, sender_npub, error_msg,
                 )
+                await self._send_dm(sender_npub, messages.error_generic())
         elif status_code == 404:
             await self._send_dm(
                 sender_npub,

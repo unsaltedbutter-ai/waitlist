@@ -43,11 +43,13 @@ class FakeApi:
 
 
 class FakeDb:
-    def __init__(self, terminal_count=0, purge_count=0):
+    def __init__(self, terminal_count=0, purge_count=0, fired_timer_count=0):
         self._terminal_count = terminal_count
         self._purge_count = purge_count
+        self._fired_timer_count = fired_timer_count
         self.delete_calls = 0
         self.purge_calls = 0
+        self.fired_timer_calls = 0
 
     async def delete_terminal_jobs(self):
         self.delete_calls += 1
@@ -56,6 +58,10 @@ class FakeDb:
     async def purge_old_messages(self, days=90):
         self.purge_calls += 1
         return self._purge_count
+
+    async def delete_fired_timers(self, max_age_hours=168):
+        self.fired_timer_calls += 1
+        return self._fired_timer_count
 
 
 # ---------------------------------------------------------------------------
@@ -178,8 +184,8 @@ async def test_cleanup_loop_exits_on_shutdown_during_initial_wait():
 
 @pytest.mark.asyncio
 async def test_cleanup_loop_calls_cleanup():
-    """Cleanup loop calls delete_terminal_jobs and purge_old_messages."""
-    db = FakeDb(terminal_count=5, purge_count=10)
+    """Cleanup loop calls delete_terminal_jobs, purge_old_messages, and delete_fired_timers."""
+    db = FakeDb(terminal_count=5, purge_count=10, fired_timer_count=3)
     shutdown = asyncio.Event()
 
     async def run_cleanup():
@@ -187,10 +193,12 @@ async def test_cleanup_loop_calls_cleanup():
         # the DB methods directly since the loop has a 300s initial delay
         await db.delete_terminal_jobs()
         await db.purge_old_messages()
+        await db.delete_fired_timers()
 
     await run_cleanup()
     assert db.delete_calls == 1
     assert db.purge_calls == 1
+    assert db.fired_timer_calls == 1
 
 
 # ---------------------------------------------------------------------------

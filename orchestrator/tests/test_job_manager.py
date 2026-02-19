@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 from datetime import datetime, timezone, timedelta
 from unittest.mock import AsyncMock, patch
@@ -899,3 +900,120 @@ async def test_send_outreach_job_not_found(deps):
     await jm.send_outreach("nonexistent")
 
     send_dm.assert_not_awaited()
+
+
+# ------------------------------------------------------------------
+# Dispatch lock: concurrency protection
+# ------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_dispatch_lock_exists(deps):
+    """JobManager should have a _dispatch_lock attribute."""
+    jm = deps["jm"]
+    assert hasattr(jm, "_dispatch_lock")
+    assert isinstance(jm._dispatch_lock, asyncio.Lock)
+
+
+@pytest.mark.asyncio
+async def test_concurrent_request_dispatch_respects_max_slots(deps):
+    """Two concurrent request_dispatch calls with one slot should not both dispatch."""
+    jm = deps["jm"]
+    session = deps["session"]
+    db = deps["db"]
+    send_dm = deps["send_dm"]
+
+    # Set max_concurrent_agent_jobs to 1 via a new config
+    jm._config = FakeConfig(max_concurrent_agent_jobs=1)
+
+    await db.upsert_job(_make_job(job_id="job-a", user_npub="npub1alice"))
+    await db.upsert_job(_make_job(job_id="job-b", user_npub="npub1bob"))
+
+    barrier = asyncio.Event()
+    original_handle = session.handle_otp_confirm_yes
+
+    async def slow_otp_confirm(user_npub):
+        # Simulate slow dispatch so the race window is visible
+        barrier.set()
+        await asyncio.sleep(0.05)
+
+    session.handle_otp_confirm_yes = AsyncMock(side_effect=slow_otp_confirm)
+
+    # Launch two concurrent dispatch requests
+    task_a = asyncio.create_task(jm.request_dispatch("npub1alice", "job-a"))
+    await barrier.wait()
+    task_b = asyncio.create_task(jm.request_dispatch("npub1bob", "job-b"))
+
+    await asyncio.gather(task_a, task_b)
+
+    # Only one should have been dispatched (1 slot available)
+    assert len(jm._active_agent_jobs) == 1
+    # The other should be in the queue
+    assert len(jm._dispatch_queue) == 1
+
+
+@pytest.mark.asyncio
+async def test_on_job_complete_holds_lock_during_dispatch(deps):
+    """on_job_complete should atomically free slot + dispatch next under lock."""
+    jm = deps["jm"]
+    session = deps["session"]
+    db = deps["db"]
+
+    jm._config = FakeConfig(max_concurrent_agent_jobs=1)
+
+    await db.upsert_job(_make_job(job_id="job-queued", user_npub="npub1bob"))
+
+    jm._active_agent_jobs = {"job-current"}
+    jm._dispatch_queue = ["job-queued"]
+
+    await jm.on_job_complete("job-current")
+
+    # The queued job should be dispatched atomically
+    assert "job-current" not in jm._active_agent_jobs
+    assert "job-queued" in jm._active_agent_jobs
+    session.handle_otp_confirm_yes.assert_awaited_once_with("npub1bob")
+
+
+@pytest.mark.asyncio
+async def test_try_dispatch_next_skips_vanished_jobs(deps):
+    """try_dispatch_next should skip jobs that no longer exist and dispatch next valid one."""
+    jm = deps["jm"]
+    session = deps["session"]
+    db = deps["db"]
+
+    # Only job-c exists in DB
+    await db.upsert_job(_make_job(job_id="job-c", user_npub="npub1carol"))
+
+    jm._dispatch_queue = ["job-a", "job-b", "job-c"]
+
+    result = await jm.try_dispatch_next()
+
+    assert result is True
+    assert "job-c" in jm._active_agent_jobs
+    assert jm._dispatch_queue == []
+    session.handle_otp_confirm_yes.assert_awaited_once_with("npub1carol")
+
+
+@pytest.mark.asyncio
+async def test_concurrent_on_job_complete_does_not_exceed_max(deps):
+    """Two concurrent on_job_complete calls should not dispatch more than max_concurrent."""
+    jm = deps["jm"]
+    session = deps["session"]
+    db = deps["db"]
+
+    jm._config = FakeConfig(max_concurrent_agent_jobs=1)
+
+    await db.upsert_job(_make_job(job_id="job-q1", user_npub="npub1alice"))
+    await db.upsert_job(_make_job(job_id="job-q2", user_npub="npub1bob"))
+
+    jm._active_agent_jobs = {"job-x", "job-y"}
+    jm._dispatch_queue = ["job-q1", "job-q2"]
+
+    # Both jobs complete simultaneously
+    task_x = asyncio.create_task(jm.on_job_complete("job-x"))
+    task_y = asyncio.create_task(jm.on_job_complete("job-y"))
+
+    await asyncio.gather(task_x, task_y)
+
+    # With max=1, at most 1 slot should be occupied
+    assert len(jm._active_agent_jobs) <= 1

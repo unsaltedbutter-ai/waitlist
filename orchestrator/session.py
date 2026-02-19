@@ -65,10 +65,17 @@ class Session:
         job: dict,
         error: str | None,
     ) -> None:
-        """Common failure handling: update statuses, DM user/operator, delete session."""
+        """Common failure handling: update statuses, DM user/operator, delete session.
+
+        The user gets a generic failure message (no internal details).
+        The operator gets the full error via DM. The error is also logged.
+        """
         job_id = job["id"]
         service_id = job["service_id"]
         action = job["action"]
+
+        if error:
+            log.error("Job %s (%s %s) failed: %s", job_id, action, service_id, error)
 
         # Update VPS and local job status to failed
         try:
@@ -81,7 +88,7 @@ class Session:
         if action == "cancel":
             await self._send_dm(
                 user_npub,
-                messages.action_failed_cancel(service_id, error),
+                messages.action_failed_cancel(service_id),
             )
         else:
             await self._send_dm(
@@ -252,8 +259,8 @@ class Session:
         # DM acknowledgement
         await self._send_dm(user_npub, messages.otp_received())
 
-        # Log with redacted content (NEVER log the actual code)
-        await self._db.log_message("inbound", user_npub, "[OTP_REDACTED]")
+        # NOTE: No explicit log_message here. The inbound message was already
+        # logged by nostr_handler with automatic OTP redaction (see db.py).
 
     async def handle_result(
         self,

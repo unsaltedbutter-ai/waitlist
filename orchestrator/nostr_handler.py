@@ -8,7 +8,9 @@ Routes incoming Nostr events to the appropriate handler:
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import time
 from typing import TYPE_CHECKING
 
 from nostr_sdk import (
@@ -50,6 +52,10 @@ class NostrHandler(HandleNotification):
       If VPS bot -> push handler. If user -> command router.
     - Kind 1059 (NIP-17 gift wrap): unwrap, check sender. Same routing.
     - Kind 9735 (zap receipt): forward to zap handler.
+
+    Supports two-phase initialization: construct with core dependencies,
+    then call wire() to attach commands and notifications after they are
+    created (they need send_dm from this handler, creating a circular dep).
     """
 
     def __init__(
@@ -59,10 +65,10 @@ class NostrHandler(HandleNotification):
         client: Client,
         start_time: Timestamp,
         config: Config,
-        commands: CommandRouter,
-        notifications: NotificationHandler,
         db: Database,
         api_client: ApiClient,
+        commands: CommandRouter | None = None,
+        notifications: NotificationHandler | None = None,
     ) -> None:
         self._keys = keys
         self._signer = signer
@@ -77,6 +83,60 @@ class NostrHandler(HandleNotification):
         # Track each user's last-seen DM protocol for reply matching.
         # Default (missing key) = "nip04" for compatibility on outreach.
         self._user_protocol: dict[str, str] = {}
+        # Per-user locks: prevent concurrent DM processing for the same user.
+        # Two DMs from the same user (e.g., NIP-04 and NIP-17 both deliver)
+        # could race through state transitions without serialization.
+        self._user_locks: dict[str, asyncio.Lock] = {}
+        self._user_lock_last_used: dict[str, float] = {}
+        # Maximum idle time (seconds) before a user lock is eligible for cleanup.
+        self._lock_idle_seconds: float = 300.0
+
+    def wire(
+        self,
+        commands: CommandRouter,
+        notifications: NotificationHandler,
+    ) -> None:
+        """Set late-bound dependencies after construction.
+
+        NostrHandler provides send_dm/send_operator_dm to other modules,
+        but commands and notifications need send_dm to be created. This
+        two-phase init breaks the circular dependency: construct the handler
+        first, pass send_dm to commands/notifications, then wire them back.
+        """
+        self._commands = commands
+        self._notifications = notifications
+
+    # -- Per-user lock management -----------------------------------------------
+
+    def _get_user_lock(self, npub_hex: str) -> asyncio.Lock:
+        """Get or create an asyncio.Lock for a specific user.
+
+        Creates the lock on first access. Tracks last-used time for cleanup.
+        """
+        lock = self._user_locks.get(npub_hex)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._user_locks[npub_hex] = lock
+        self._user_lock_last_used[npub_hex] = time.monotonic()
+        return lock
+
+    def cleanup_idle_locks(self) -> int:
+        """Remove locks for users who have been idle longer than _lock_idle_seconds.
+
+        Only removes locks that are not currently held. Returns the number
+        of locks removed. Safe to call periodically (e.g., every 5 minutes).
+        """
+        now = time.monotonic()
+        to_remove = []
+        for npub_hex, last_used in self._user_lock_last_used.items():
+            if now - last_used > self._lock_idle_seconds:
+                lock = self._user_locks.get(npub_hex)
+                if lock is not None and not lock.locked():
+                    to_remove.append(npub_hex)
+        for npub_hex in to_remove:
+            del self._user_locks[npub_hex]
+            del self._user_lock_last_used[npub_hex]
+        return len(to_remove)
 
     # -- HandleNotification interface ------------------------------------------
 
@@ -121,7 +181,8 @@ class NostrHandler(HandleNotification):
             return
 
         self._user_protocol[sender_hex] = "nip04"
-        await self._commands.handle_dm(sender_hex, plaintext)
+        async with self._get_user_lock(sender_hex):
+            await self._commands.handle_dm(sender_hex, plaintext)
 
     async def _handle_nip17_dm(self, event: Event) -> None:
         """Handle a NIP-17 gift-wrapped DM (kind 1059)."""
@@ -148,7 +209,8 @@ class NostrHandler(HandleNotification):
             return
 
         self._user_protocol[sender_hex] = "nip17"
-        await self._commands.handle_dm(sender_hex, plaintext)
+        async with self._get_user_lock(sender_hex):
+            await self._commands.handle_dm(sender_hex, plaintext)
 
     async def _handle_zap(self, event: Event) -> None:
         """Handle a zap receipt (kind 9735)."""

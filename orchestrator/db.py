@@ -8,7 +8,36 @@ user profile cache, and message log (90-day).
 
 from __future__ import annotations
 
+import re
+
 import aiosqlite
+
+# OTP redaction sentinel. Any message whose content (after stripping spaces
+# and dashes) is purely 4-12 digits is replaced with this before storage.
+OTP_REDACTED = "[OTP_REDACTED]"
+
+# Pattern: the entire message is digits with optional space/dash separators.
+# "123456", "123 456", "12-34-56", "123456-789012" all match.
+# "cancel netflix" or "I got code 1234" do NOT match (not purely digits).
+_OTP_PATTERN = re.compile(r"^[\d \-]{4,25}$")
+
+
+def _redact_sensitive(content: str) -> str:
+    """Replace OTP-like content with a redaction sentinel.
+
+    A message is OTP-like if, after stripping whitespace and dashes,
+    it is a 4-12 digit string. This catches:
+    - Streaming service OTP codes (4-8 digits)
+    - Login OTP codes (12 digits, formatted with dash)
+    """
+    stripped = content.strip()
+    if not _OTP_PATTERN.match(stripped):
+        return content
+    digits_only = stripped.replace(" ", "").replace("-", "")
+    if digits_only.isdigit() and 4 <= len(digits_only) <= 12:
+        return OTP_REDACTED
+    return content
+
 
 _TERMINAL_STATUSES = (
     "completed_paid",
@@ -248,6 +277,15 @@ class Database:
         )
         await self._db.commit()
 
+    async def delete_fired_timers(self, max_age_hours: int = 168) -> int:
+        """Delete fired timers older than max_age_hours. Return count deleted."""
+        cursor = await self._db.execute(
+            "DELETE FROM timers WHERE fired = 1 AND fire_at < datetime('now', ?)",
+            (f"-{max_age_hours} hours",),
+        )
+        await self._db.commit()
+        return cursor.rowcount
+
     async def cancel_timers(self, timer_type: str, target_id: str) -> int:
         """Delete unfired timers matching type + target. Return count."""
         cursor = await self._db.execute(
@@ -290,11 +328,17 @@ class Database:
     # ------------------------------------------------------------------
 
     async def log_message(self, direction: str, user_npub: str, content: str) -> None:
-        """Append a message to the log."""
+        """Append a message to the log.
+
+        OTP-like content (4-12 digit strings) is automatically redacted
+        before writing. This is the single choke point: no caller needs
+        to worry about redaction.
+        """
+        safe_content = _redact_sensitive(content)
         await self._db.execute(
             """INSERT INTO message_log (direction, user_npub, content)
                VALUES (?, ?, ?)""",
-            (direction, user_npub, content),
+            (direction, user_npub, safe_content),
         )
         await self._db.commit()
 

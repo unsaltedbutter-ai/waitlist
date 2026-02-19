@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 import pytest_asyncio
 
-from db import Database
+from db import Database, _redact_sensitive, OTP_REDACTED
 
 
 @pytest_asyncio.fixture
@@ -231,6 +231,31 @@ async def test_cancel_timers(db: Database):
     assert targets == {"job-1", "job-2"}
 
 
+@pytest.mark.asyncio
+async def test_delete_fired_timers(db: Database):
+    old_date = (datetime.now(timezone.utc) - timedelta(hours=200)).isoformat()
+    recent_date = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
+
+    # Old fired timer (should be deleted)
+    t1 = await db.add_timer("outreach", "job-1", old_date)
+    await db.mark_timer_fired(t1)
+
+    # Recent fired timer (should be kept, within 168h default)
+    t2 = await db.add_timer("outreach", "job-2", recent_date)
+    await db.mark_timer_fired(t2)
+
+    # Old unfired timer (should be kept, not fired)
+    await db.add_timer("payment_expiry", "job-3", old_date)
+
+    deleted = await db.delete_fired_timers()
+    assert deleted == 1
+
+    # Verify: the old fired timer is gone, others remain
+    cursor = await db._db.execute("SELECT COUNT(*) FROM timers")
+    row = await cursor.fetchone()
+    assert row[0] == 2
+
+
 # ------------------------------------------------------------------
 # User cache
 # ------------------------------------------------------------------
@@ -301,3 +326,177 @@ async def test_purge_old_messages(db: Database):
     remaining = await db.get_messages("npub1alice")
     assert len(remaining) == 1
     assert remaining[0]["content"] == "recent message"
+
+
+# ------------------------------------------------------------------
+# OTP redaction in log_message
+# ------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_log_message_redacts_six_digit_otp(db: Database):
+    """Pure 6-digit string (streaming OTP) must be redacted."""
+    await db.log_message("inbound", "npub1alice", "123456")
+    msgs = await db.get_messages("npub1alice")
+    assert msgs[0]["content"] == "[OTP_REDACTED]"
+
+
+@pytest.mark.asyncio
+async def test_log_message_redacts_four_digit_otp(db: Database):
+    """4-digit code (minimum OTP length) must be redacted."""
+    await db.log_message("inbound", "npub1alice", "1234")
+    msgs = await db.get_messages("npub1alice")
+    assert msgs[0]["content"] == "[OTP_REDACTED]"
+
+
+@pytest.mark.asyncio
+async def test_log_message_redacts_eight_digit_otp(db: Database):
+    """8-digit code must be redacted."""
+    await db.log_message("inbound", "npub1alice", "12345678")
+    msgs = await db.get_messages("npub1alice")
+    assert msgs[0]["content"] == "[OTP_REDACTED]"
+
+
+@pytest.mark.asyncio
+async def test_log_message_redacts_otp_with_spaces(db: Database):
+    """Digits with spaces (e.g. '123 456') must be redacted."""
+    await db.log_message("inbound", "npub1alice", "123 456")
+    msgs = await db.get_messages("npub1alice")
+    assert msgs[0]["content"] == "[OTP_REDACTED]"
+
+
+@pytest.mark.asyncio
+async def test_log_message_redacts_otp_with_dashes(db: Database):
+    """Digits with dashes (e.g. '12-34-56') must be redacted."""
+    await db.log_message("inbound", "npub1alice", "12-34-56")
+    msgs = await db.get_messages("npub1alice")
+    assert msgs[0]["content"] == "[OTP_REDACTED]"
+
+
+@pytest.mark.asyncio
+async def test_log_message_redacts_twelve_digit_login_otp(db: Database):
+    """12-digit login code formatted with dash must be redacted."""
+    await db.log_message("outbound", "npub1alice", "123456-789012")
+    msgs = await db.get_messages("npub1alice")
+    assert msgs[0]["content"] == "[OTP_REDACTED]"
+
+
+@pytest.mark.asyncio
+async def test_log_message_preserves_normal_text(db: Database):
+    """Normal DM text must NOT be redacted."""
+    await db.log_message("inbound", "npub1alice", "cancel netflix")
+    msgs = await db.get_messages("npub1alice")
+    assert msgs[0]["content"] == "cancel netflix"
+
+
+@pytest.mark.asyncio
+async def test_log_message_preserves_text_with_embedded_digits(db: Database):
+    """Text containing digits mixed with letters must NOT be redacted."""
+    await db.log_message("inbound", "npub1alice", "my code is 1234 ok")
+    msgs = await db.get_messages("npub1alice")
+    assert msgs[0]["content"] == "my code is 1234 ok"
+
+
+@pytest.mark.asyncio
+async def test_log_message_preserves_short_digit_string(db: Database):
+    """3 digits or fewer should NOT be redacted (too short for an OTP)."""
+    await db.log_message("inbound", "npub1alice", "123")
+    msgs = await db.get_messages("npub1alice")
+    assert msgs[0]["content"] == "123"
+
+
+@pytest.mark.asyncio
+async def test_log_message_preserves_long_digit_string(db: Database):
+    """13+ digits should NOT be redacted (too long for an OTP)."""
+    await db.log_message("inbound", "npub1alice", "1234567890123")
+    msgs = await db.get_messages("npub1alice")
+    assert msgs[0]["content"] == "1234567890123"
+
+
+@pytest.mark.asyncio
+async def test_log_message_preserves_bolt11_invoice(db: Database):
+    """Lightning invoice strings must NOT be redacted."""
+    bolt11 = "lnbc3000n1pjexample"
+    await db.log_message("outbound", "npub1alice", bolt11)
+    msgs = await db.get_messages("npub1alice")
+    assert msgs[0]["content"] == bolt11
+
+
+@pytest.mark.asyncio
+async def test_log_message_redacts_already_redacted_sentinel(db: Database):
+    """Passing [OTP_REDACTED] directly should store it as-is (no double work)."""
+    await db.log_message("inbound", "npub1alice", "[OTP_REDACTED]")
+    msgs = await db.get_messages("npub1alice")
+    assert msgs[0]["content"] == "[OTP_REDACTED]"
+
+
+# ------------------------------------------------------------------
+# _redact_sensitive unit tests (pure function, no DB needed)
+# ------------------------------------------------------------------
+
+
+class TestRedactSensitive:
+    """Direct tests for the _redact_sensitive helper."""
+
+    def test_six_digits(self):
+        assert _redact_sensitive("123456") == OTP_REDACTED
+
+    def test_four_digits(self):
+        assert _redact_sensitive("1234") == OTP_REDACTED
+
+    def test_eight_digits(self):
+        assert _redact_sensitive("12345678") == OTP_REDACTED
+
+    def test_twelve_digits(self):
+        assert _redact_sensitive("123456789012") == OTP_REDACTED
+
+    def test_digits_with_spaces(self):
+        assert _redact_sensitive("123 456") == OTP_REDACTED
+
+    def test_digits_with_dashes(self):
+        assert _redact_sensitive("12-34-56") == OTP_REDACTED
+
+    def test_mixed_separators(self):
+        assert _redact_sensitive("12 34-56") == OTP_REDACTED
+
+    def test_login_otp_format(self):
+        """Login codes are 12 digits formatted as 123456-789012."""
+        assert _redact_sensitive("123456-789012") == OTP_REDACTED
+
+    def test_too_short_three_digits(self):
+        assert _redact_sensitive("123") == "123"
+
+    def test_too_long_thirteen_digits(self):
+        assert _redact_sensitive("1234567890123") == "1234567890123"
+
+    def test_normal_text(self):
+        assert _redact_sensitive("cancel netflix") == "cancel netflix"
+
+    def test_text_with_embedded_digits(self):
+        assert _redact_sensitive("my code is 1234 ok") == "my code is 1234 ok"
+
+    def test_help_command(self):
+        assert _redact_sensitive("help") == "help"
+
+    def test_empty_string(self):
+        assert _redact_sensitive("") == ""
+
+    def test_single_digit(self):
+        assert _redact_sensitive("5") == "5"
+
+    def test_otp_with_leading_trailing_whitespace(self):
+        """Whitespace-padded OTP should still be redacted."""
+        assert _redact_sensitive("  123456  ") == OTP_REDACTED
+
+    def test_bolt11_not_redacted(self):
+        assert _redact_sensitive("lnbc3000n1pjexample") == "lnbc3000n1pjexample"
+
+    def test_json_not_redacted(self):
+        assert _redact_sensitive('{"type":"job_dispatched"}') == '{"type":"job_dispatched"}'
+
+    def test_yes_not_redacted(self):
+        assert _redact_sensitive("yes") == "yes"
+
+    def test_sentinel_passthrough(self):
+        """Already-redacted sentinel passes through unchanged."""
+        assert _redact_sensitive("[OTP_REDACTED]") == "[OTP_REDACTED]"

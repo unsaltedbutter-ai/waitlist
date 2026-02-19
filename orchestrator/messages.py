@@ -131,13 +131,17 @@ def action_success_resume(service_id: str) -> str:
     return f"{name} reactivated. Your account should be live."
 
 
-def action_failed_cancel(service_id: str, error: str | None = None) -> str:
-    """Cancel failed. User needs to know so they can cancel manually."""
+def action_failed_cancel(service_id: str) -> str:
+    """Cancel failed. User needs to know so they can cancel manually.
+
+    Never include internal error details in user-facing messages.
+    The operator gets the full error via operator_job_failed().
+    """
     name = display_name(service_id)
-    msg = f"Failed to cancel {name}. Please cancel it manually to avoid being charged."
-    if error:
-        msg += f"\n\nError: {error}"
-    return msg
+    return (
+        f"Failed to cancel {name}. Please cancel it manually to avoid being charged.\n\n"
+        f"Something went wrong. Our operator has been notified."
+    )
 
 
 def action_failed_resume(service_id: str) -> str:
