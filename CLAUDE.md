@@ -82,4 +82,4 @@ unsaltedbutter.ai/
 - All BTC held by company. Diamond hands.
 
 ## Current Status
-See MEMORY.md `Build Progress` for details. Web + bot complete (needs migration to new model), agent + orchestrator not started.
+All components built. See MEMORY.md `Build Progress` for test counts. Inference server blocked on Mac Studio hardware.
