@@ -280,6 +280,95 @@ async def test_nip17_non_kind14_rumor_skipped(handler):
 
 
 # ==============================================================================
+# Protocol matching (NIP-04 in -> NIP-04 out, NIP-17 in -> NIP-17 out)
+# ==============================================================================
+
+
+@pytest.mark.asyncio
+@patch("nostr_handler.nip04_decrypt", return_value="login")
+async def test_nip04_dm_records_protocol(mock_decrypt, handler):
+    """Receiving a NIP-04 DM records the user's protocol as nip04."""
+    event = _make_event(kind_value=4, author_hex=USER_PK)
+    await handler.handle(RELAY_URL, SUB_ID, event)
+    assert handler._user_protocol[USER_PK] == "nip04"
+
+
+@pytest.mark.asyncio
+async def test_nip17_dm_records_protocol(handler):
+    """Receiving a NIP-17 DM records the user's protocol as nip17."""
+    rumor = _make_rumor(kind_value=14, content="hello")
+    unwrapped = _make_unwrapped(sender_hex=USER_PK, rumor=rumor)
+    event = _make_event(kind_value=1059)
+
+    with patch("nostr_handler.UnwrappedGift") as MockUG:
+        MockUG.from_gift_wrap = AsyncMock(return_value=unwrapped)
+        await handler.handle(RELAY_URL, SUB_ID, event)
+
+    assert handler._user_protocol[USER_PK] == "nip17"
+
+
+@pytest.mark.asyncio
+@patch("nostr_handler.nip04_decrypt", return_value='{"type":"jobs_ready"}')
+async def test_vps_bot_dm_does_not_record_protocol(mock_decrypt, handler):
+    """DMs from the VPS bot do not record a user protocol."""
+    event = _make_event(kind_value=4, author_hex=VPS_BOT_PK)
+    await handler.handle(RELAY_URL, SUB_ID, event)
+    assert VPS_BOT_PK not in handler._user_protocol
+
+
+@pytest.mark.asyncio
+async def test_outreach_uses_nip04_by_default(handler):
+    """Bot-initiated outreach (no prior contact) defaults to NIP-04."""
+    new_user = "11" * 32
+    assert new_user not in handler._user_protocol
+
+    with patch("nostr_handler.PublicKey") as MockPK:
+        pk_instance = MagicMock()
+        MockPK.parse.return_value = pk_instance
+        with patch.object(handler, "_send_nip04", new_callable=AsyncMock) as mock_nip04:
+            await handler.send_dm(new_user, "Time to cancel Netflix")
+
+    mock_nip04.assert_awaited_once_with(pk_instance, "Time to cancel Netflix")
+    handler._test_client.send_private_msg.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@patch("nostr_handler.nip04_decrypt", return_value="login")
+async def test_nip04_roundtrip_reply_uses_nip04(mock_decrypt, handler):
+    """Full roundtrip: NIP-04 DM in, reply goes out as NIP-04."""
+    event = _make_event(kind_value=4, author_hex=USER_PK)
+    await handler.handle(RELAY_URL, SUB_ID, event)
+
+    with patch("nostr_handler.PublicKey") as MockPK:
+        pk_instance = MagicMock()
+        MockPK.parse.return_value = pk_instance
+        with patch.object(handler, "_send_nip04", new_callable=AsyncMock) as mock_nip04:
+            await handler.send_dm(USER_PK, "reply")
+
+    mock_nip04.assert_awaited_once()
+    handler._test_client.send_private_msg.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_nip17_roundtrip_reply_uses_nip17(handler):
+    """Full roundtrip: NIP-17 DM in, reply goes out as NIP-17."""
+    rumor = _make_rumor(kind_value=14, content="login")
+    unwrapped = _make_unwrapped(sender_hex=USER_PK, rumor=rumor)
+    event = _make_event(kind_value=1059)
+
+    with patch("nostr_handler.UnwrappedGift") as MockUG:
+        MockUG.from_gift_wrap = AsyncMock(return_value=unwrapped)
+        await handler.handle(RELAY_URL, SUB_ID, event)
+
+    with patch("nostr_handler.PublicKey") as MockPK:
+        pk_instance = MagicMock()
+        MockPK.parse.return_value = pk_instance
+        await handler.send_dm(USER_PK, "reply")
+
+    handler._test_client.send_private_msg.assert_awaited_once_with(pk_instance, "reply", [])
+
+
+# ==============================================================================
 # Zap receipt routing
 # ==============================================================================
 
@@ -318,27 +407,58 @@ async def test_zap_receipt_old_event_skipped(handler):
 
 
 @pytest.mark.asyncio
-async def test_send_dm_sends_and_logs(handler):
-    """send_dm sends a NIP-17 private message and logs to DB."""
+async def test_send_dm_default_uses_nip04(handler):
+    """send_dm defaults to NIP-04 when no prior protocol is recorded."""
     with patch("nostr_handler.PublicKey") as MockPK:
         pk_instance = MagicMock()
         MockPK.parse.return_value = pk_instance
-        await handler.send_dm(USER_PK, "hi there")
+        with patch.object(handler, "_send_nip04", new_callable=AsyncMock) as mock_nip04:
+            await handler.send_dm(USER_PK, "hi there")
 
     MockPK.parse.assert_called_once_with(USER_PK)
-    handler._test_client.send_private_msg.assert_awaited_once_with(pk_instance, "hi there", [])
+    mock_nip04.assert_awaited_once_with(pk_instance, "hi there")
+    handler._test_client.send_private_msg.assert_not_awaited()
     handler._test_db.log_message.assert_awaited_once_with("outbound", USER_PK, "hi there")
+
+
+@pytest.mark.asyncio
+async def test_send_dm_uses_nip17_when_recorded(handler):
+    """send_dm uses NIP-17 when the user's last protocol was NIP-17."""
+    handler._user_protocol[USER_PK] = "nip17"
+
+    with patch("nostr_handler.PublicKey") as MockPK:
+        pk_instance = MagicMock()
+        MockPK.parse.return_value = pk_instance
+        await handler.send_dm(USER_PK, "hi nip17")
+
+    handler._test_client.send_private_msg.assert_awaited_once_with(pk_instance, "hi nip17", [])
+    handler._test_db.log_message.assert_awaited_once_with("outbound", USER_PK, "hi nip17")
+
+
+@pytest.mark.asyncio
+async def test_send_dm_uses_nip04_when_recorded(handler):
+    """send_dm uses NIP-04 when the user's last protocol was NIP-04."""
+    handler._user_protocol[USER_PK] = "nip04"
+
+    with patch("nostr_handler.PublicKey") as MockPK:
+        pk_instance = MagicMock()
+        MockPK.parse.return_value = pk_instance
+        with patch.object(handler, "_send_nip04", new_callable=AsyncMock) as mock_nip04:
+            await handler.send_dm(USER_PK, "hi nip04")
+
+    mock_nip04.assert_awaited_once_with(pk_instance, "hi nip04")
+    handler._test_client.send_private_msg.assert_not_awaited()
+    handler._test_db.log_message.assert_awaited_once_with("outbound", USER_PK, "hi nip04")
 
 
 @pytest.mark.asyncio
 async def test_send_dm_failure_logged(handler):
     """send_dm catches exceptions and logs them (does not raise)."""
-    handler._test_client.send_private_msg.side_effect = RuntimeError("relay down")
-
-    with patch("nostr_handler.PublicKey") as MockPK:
-        MockPK.parse.return_value = MagicMock()
-        # Should not raise
-        await handler.send_dm(USER_PK, "hi there")
+    with patch.object(handler, "_send_nip04", new_callable=AsyncMock, side_effect=RuntimeError("relay down")):
+        with patch("nostr_handler.PublicKey") as MockPK:
+            MockPK.parse.return_value = MagicMock()
+            # Should not raise
+            await handler.send_dm(USER_PK, "hi there")
 
     # Message was not logged (send failed before log_message)
     handler._test_db.log_message.assert_not_awaited()

@@ -171,6 +171,7 @@ async def run(config: Config) -> None:
     nostr_handler._db = db
     nostr_handler._api_client = api
     nostr_handler._bot_pubkey_hex = keys.public_key().to_hex()
+    nostr_handler._user_protocol = {}
 
     send_dm = nostr_handler.send_dm
     send_operator_dm = nostr_handler.send_operator_dm

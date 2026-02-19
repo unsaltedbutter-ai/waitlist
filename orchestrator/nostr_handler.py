@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING
 from nostr_sdk import (
     Client,
     Event,
+    EventBuilder,
     HandleNotification,
     Keys,
     Kind,
@@ -22,6 +23,7 @@ from nostr_sdk import (
     PublicKey,
     RelayMessage,
     RelayUrl,
+    Tag,
     Timestamp,
     UnsignedEvent,
     UnwrappedGift,
@@ -72,6 +74,9 @@ class NostrHandler(HandleNotification):
         self._db = db
         self._api_client = api_client
         self._bot_pubkey_hex = keys.public_key().to_hex()
+        # Track each user's last-seen DM protocol for reply matching.
+        # Default (missing key) = "nip04" for compatibility on outreach.
+        self._user_protocol: dict[str, str] = {}
 
     # -- HandleNotification interface ------------------------------------------
 
@@ -115,6 +120,7 @@ class NostrHandler(HandleNotification):
             await self._notifications.handle_push(plaintext)
             return
 
+        self._user_protocol[sender_hex] = "nip04"
         await self._commands.handle_dm(sender_hex, plaintext)
 
     async def _handle_nip17_dm(self, event: Event) -> None:
@@ -141,6 +147,7 @@ class NostrHandler(HandleNotification):
             await self._notifications.handle_push(plaintext)
             return
 
+        self._user_protocol[sender_hex] = "nip17"
         await self._commands.handle_dm(sender_hex, plaintext)
 
     async def _handle_zap(self, event: Event) -> None:
@@ -162,15 +169,28 @@ class NostrHandler(HandleNotification):
 
     # -- DM sending helpers (used by other modules via callback) ---------------
 
-    async def send_dm(self, recipient_npub: str, text: str) -> None:
-        """Send a NIP-17 private DM to a user.
+    async def _send_nip04(self, pk: PublicKey, text: str) -> None:
+        """Send a NIP-04 (kind 4) DM for broad client compatibility."""
+        ciphertext = await self._signer.nip04_encrypt(pk, text)
+        builder = EventBuilder(Kind(4), ciphertext).tags([
+            Tag.parse(["p", pk.to_hex()])
+        ])
+        await self._client.send_event_builder(builder)
 
-        This is the send_dm callback that gets passed to Session, JobManager, etc.
-        Logs outbound messages to the DB.
+    async def send_dm(self, recipient_npub: str, text: str) -> None:
+        """Send a DM using the recipient's last-seen protocol.
+
+        If the user last sent us a NIP-04 DM, reply with NIP-04.
+        If NIP-17, reply with NIP-17.
+        Default (outreach, no prior contact): NIP-04 for compatibility.
         """
         try:
             pk = PublicKey.parse(recipient_npub)
-            await self._client.send_private_msg(pk, text, [])
+            protocol = self._user_protocol.get(recipient_npub, "nip04")
+            if protocol == "nip17":
+                await self._client.send_private_msg(pk, text, [])
+            else:
+                await self._send_nip04(pk, text)
             await self._db.log_message("outbound", recipient_npub, text)
         except Exception:
             log.exception("Failed to send DM to %s", recipient_npub[:16])
