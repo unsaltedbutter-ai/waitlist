@@ -309,9 +309,9 @@ def compare_and_classify(
     current: dict[str, str | None],
     latest: dict[str, dict],
     state: dict,
-) -> tuple[list[dict], list[dict], list[str]]:
-    """Return (critical, updates, up_to_date)."""
-    critical, updates, up_to_date = [], [], []
+) -> tuple[list[dict], list[dict], list[str], list[str]]:
+    """Return (critical, updates, up_to_date, pending)."""
+    critical, updates, up_to_date, pending = [], [], [], []
 
     for key in ("btcpay", "lnd", "nextjs", "nodejs", "nostr_tools", "nostr_sdk"):
         cur = current.get(key)
@@ -323,13 +323,17 @@ def compare_and_classify(
             log.warning("Could not determine current version of %s", name)
             continue
 
+        if not lat_ver:
+            up_to_date.append(f"{name} {cur}")
+            continue
+
         if not _versions_differ(cur, lat_ver):
             up_to_date.append(f"{name} {cur}")
             continue
 
         # Already notified for this version?
         if state.get(key) == lat_ver:
-            up_to_date.append(f"{name} {cur}")
+            pending.append(f"{name} {cur} -> {lat_ver}")
             continue
 
         is_critical = bool(SECURITY_KEYWORDS.search(lat.get("body", "")))
@@ -350,7 +354,7 @@ def compare_and_classify(
         else:
             updates.append(entry)
 
-    return critical, updates, up_to_date
+    return critical, updates, up_to_date, pending
 
 
 # ---------------------------------------------------------------------------
@@ -400,6 +404,7 @@ def format_message(
     critical: list[dict],
     updates: list[dict],
     up_to_date: list[str],
+    pending: list[str],
     ubuntu_security: list[str],
     ubuntu_other: list[str],
 ) -> str | None:
@@ -439,6 +444,9 @@ def format_message(
     if ubuntu_other:
         parts.append(f"Ubuntu: {len(ubuntu_other)} non-security packages upgradable")
         parts.append("")
+
+    if pending:
+        parts.append(f"Pending (previously reported): {', '.join(pending)}")
 
     if up_to_date:
         parts.append(f"Up to date: {', '.join(up_to_date)}")
@@ -521,9 +529,9 @@ async def main() -> None:
     ubuntu_sec, ubuntu_other = classify_ubuntu(ubuntu_lines)
 
     state = load_state()
-    critical, updates, up_to_date = compare_and_classify(current, latest, state)
+    critical, updates, up_to_date, pending = compare_and_classify(current, latest, state)
 
-    message = format_message(critical, updates, up_to_date, ubuntu_sec, ubuntu_other)
+    message = format_message(critical, updates, up_to_date, pending, ubuntu_sec, ubuntu_other)
 
     if message is None:
         log.info("Everything up to date. No DM sent.")
