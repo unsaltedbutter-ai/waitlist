@@ -8,7 +8,7 @@
 # First deploy (--init flag applies schema + generates .env.production):
 #   ./scripts/deploy.sh <VPS_IP> --init
 #
-# Set up update checker + daily cron timer (run once after --init):
+# Set up cron jobs + daily cron timer (run once after --init, idempotent):
 #   ./scripts/deploy.sh <VPS_IP> --setup-bots
 #
 # What this does:
@@ -17,7 +17,7 @@
 #   3. [--init] scp SCHEMA.sql to VPS
 #   4. [--init] Generate .env.production with real secrets
 #   5. [--init] Apply database schema (v4, complete)
-#   6. [--setup-bots] Install update-checker (cron) + daily cron timer (systemd)
+#   6. [--setup-bots] Install cron jobs (update-checker, health-check, lnd-balance, backup) + daily cron timer (systemd)
 #   7. npm ci && npm run build
 #   8. Install/configure nginx
 #   9. [--init] Run certbot for SSL
@@ -208,10 +208,10 @@ REMOTE_SCHEMA
 fi
 
 # =============================================================================
-# 6. [setup-bots] Update checker + daily cron timer (one-time setup)
+# 6. [setup-bots] Cron jobs + daily cron timer (one-time setup, idempotent)
 # =============================================================================
 if $SETUP_BOTS; then
-    log "Setting up update checker + daily cron timer..."
+    log "Setting up cron jobs + daily cron timer..."
 
     ${SSH_CMD} bash << 'REMOTE_BOTS'
 set -euo pipefail
@@ -258,17 +258,39 @@ echo "Installing update-checker dependencies..."
 "$UC_VENV/bin/pip" install -r "${REMOTE_DIR}/scripts/update-checker-requirements.txt" --quiet
 echo "Update checker dependencies installed."
 
-# -- Update checker cron ----------------------------------------
+# -- install_cron helper ----------------------------------------
+install_cron() {
+    local match="$1"
+    local cron_line="$2"
+    if crontab -l 2>/dev/null | grep -qF "$match"; then
+        (crontab -l 2>/dev/null | grep -vF "$match"; echo "$cron_line") | crontab -
+        echo "Cron ($match): updated"
+    else
+        (crontab -l 2>/dev/null; echo "$cron_line") | crontab -
+        echo "Cron ($match): installed"
+    fi
+}
+
+# -- Clean old ~/scripts/ cron entries -----------------------------
+crontab -l 2>/dev/null | grep -v '/butter/scripts/' | crontab - 2>/dev/null || true
+echo "Old ~/scripts/ cron entries cleaned"
+
+# -- Install all cron jobs -----------------------------------------
 mkdir -p "$HOME/logs"
-CRON_LINE="0 10 * * * ${UC_VENV}/bin/python ${REMOTE_DIR}/scripts/update-checker.py >> $HOME/logs/update-checker.log 2>&1"
-if crontab -l 2>/dev/null | grep -qF "update-checker.py"; then
-    (crontab -l 2>/dev/null | grep -vF "update-checker.py"; echo "$CRON_LINE") | crontab -
-    echo "Cron: updated"
-else
-    (crontab -l 2>/dev/null; echo "$CRON_LINE") | crontab -
-    echo "Cron: installed"
-fi
-echo "Update checker: daily 10 AM UTC"
+
+install_cron "update-checker.py" \
+    "0 10 * * * ${UC_VENV}/bin/python ${REMOTE_DIR}/scripts/update-checker.py >> \$HOME/logs/update-checker.log 2>&1"
+
+install_cron "health-check.sh" \
+    "*/15 * * * * ${REMOTE_DIR}/scripts/health-check.sh >> \$HOME/logs/health.log 2>&1"
+
+install_cron "lnd-balance.sh" \
+    "0 6 * * * ${REMOTE_DIR}/scripts/lnd-balance.sh >> \$HOME/logs/lnd-balance.log 2>&1"
+
+install_cron "backup-daily.sh" \
+    "0 3 * * * ${REMOTE_DIR}/scripts/backup-daily.sh >> \$HOME/logs/backup.log 2>&1"
+
+echo "Cron jobs: update-checker (10:00), health-check (*/15), lnd-balance (06:00), backup (03:00)"
 
 # -- Sudoers for apt-get update ---------------------------------
 SUDOERS="/etc/sudoers.d/update-checker"
@@ -320,9 +342,15 @@ echo "Daily cron timer: installed and started (10:00 UTC / 5:00 AM EST)"
 echo ""
 echo "=== Setup Complete ==="
 echo ""
-echo "  Update checker venv:  $UC_VENV"
-echo "  Update checker cron:  daily 10 AM UTC"
-echo "  Daily cron timer:     unsaltedbutter-daily-cron.timer (10:00 UTC)"
+echo "  Venv:              $UC_VENV"
+echo "  update-checker.py  daily 10:00 UTC"
+echo "  health-check.sh    every 15 min"
+echo "  lnd-balance.sh     daily 06:00 UTC"
+echo "  backup-daily.sh    daily 03:00 UTC"
+echo "  daily cron timer   unsaltedbutter-daily-cron.timer (10:00 UTC)"
+echo ""
+echo "  Test nostr-alert:"
+echo "    ${UC_VENV}/bin/python ${REMOTE_DIR}/scripts/nostr-alert.py --dry-run --key test 'Test alert'"
 echo ""
 REMOTE_BOTS
 fi
@@ -464,12 +492,14 @@ echo "=== nginx Status ==="
 sudo systemctl is-active nginx && echo "nginx is running ✓"
 
 echo ""
-echo "=== Update Checker ==="
-if crontab -l 2>/dev/null | grep -qF "update-checker.py"; then
-    echo "Cron job installed ✓"
-else
-    echo "Cron job not installed"
-fi
+echo "=== Cron Jobs ==="
+for script in update-checker.py health-check.sh lnd-balance.sh backup-daily.sh; do
+    if crontab -l 2>/dev/null | grep -qF "$script"; then
+        echo "$script ✓"
+    else
+        echo "$script NOT installed"
+    fi
+done
 
 echo ""
 echo "=== Daily Cron Timer ==="
@@ -503,9 +533,13 @@ if $INIT_MODE; then
 fi
 if $SETUP_BOTS; then
     echo "  NEXT STEPS (setup-bots):"
-    echo "  1. Test update checker:"
+    echo "  1. Test nostr-alert:"
+    echo "     ssh ${VPS_USER}@${VPS_IP} ~/venvs/update-checker/bin/python ~/unsaltedbutter/scripts/nostr-alert.py --dry-run --key test 'Test alert'"
+    echo "  2. Test update checker:"
     echo "     ssh ${VPS_USER}@${VPS_IP} ~/venvs/update-checker/bin/python ~/unsaltedbutter/scripts/update-checker.py --dry-run"
-    echo "  2. Verify daily cron timer:"
+    echo "  3. Verify cron jobs:"
+    echo "     ssh ${VPS_USER}@${VPS_IP} crontab -l"
+    echo "  4. Verify daily cron timer:"
     echo "     ssh ${VPS_USER}@${VPS_IP} systemctl list-timers unsaltedbutter-daily-cron.timer"
     echo ""
 fi
