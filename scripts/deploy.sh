@@ -264,8 +264,8 @@ install_cron() {
     local match="$1"
     local cron_line="$2"
     local comment="$3"
-    # Remove any existing entry (and its comment line) for this script
-    crontab -l 2>/dev/null | grep -vF "$match" | crontab - 2>/dev/null || true
+    # Remove any existing entry AND its comment line for this script
+    crontab -l 2>/dev/null | grep -vF "$match" | grep -vxF "# $comment" | crontab - 2>/dev/null || true
     # Append comment + cron line
     (crontab -l 2>/dev/null; echo "# $comment"; echo "$cron_line") | crontab -
     echo "Cron ($match): installed"
