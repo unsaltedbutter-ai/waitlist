@@ -467,15 +467,15 @@ REMOTE_PM2
 # =============================================================================
 # 11. Notify operator via Nostr DM
 # =============================================================================
-log "Sending deploy notification (${GIT_HASH})..."
-${SSH_CMD} bash << REMOTE_NOTIFY
-UC_VENV="\$HOME/venvs/update-checker"
-if [[ -d "\$UC_VENV" ]] && [[ -f "\$HOME/.unsaltedbutter/nostr.env" ]]; then
-    "\$UC_VENV/bin/python" "\$HOME/unsaltedbutter/scripts/notify-deploy.py" "Deploy complete: ${GIT_HASH}" 2>&1 || echo "Deploy DM failed (non-fatal)"
-else
-    echo "Skipping deploy DM (venv or config missing)"
-fi
-REMOTE_NOTIFY
+#log "Sending deploy notification (${GIT_HASH})..."
+#${SSH_CMD} bash << REMOTE_NOTIFY
+#UC_VENV="\$HOME/venvs/update-checker"
+#if [[ -d "\$UC_VENV" ]] && [[ -f "\$HOME/.unsaltedbutter/nostr.env" ]]; then
+#    "\$UC_VENV/bin/python" "\$HOME/unsaltedbutter/scripts/notify-deploy.py" "Deploy complete: ${GIT_HASH}" 2>&1 || echo "Deploy DM failed (non-fatal)"
+#else
+#    echo "Skipping deploy DM (venv or config missing)"
+#fi
+#REMOTE_NOTIFY
 
 # =============================================================================
 # 12. Verify
