@@ -93,7 +93,7 @@ export function DebtBanner() {
           Outstanding balance: {formatSats(debt.debt_sats)} sats
         </h3>
         <p className="text-xs text-red-400/80 mt-1">
-          Work was completed but not yet paid. Clear your balance to continue using the service.
+          Our records indicate you owe us a few sats.
         </p>
       </div>
 
