@@ -150,7 +150,7 @@ export function SortableQueueItem({
     <div
       ref={setNodeRef}
       style={style}
-      className="bg-surface border border-border rounded overflow-hidden"
+      className="bg-surface border border-border rounded"
     >
       {/* Primary row */}
       <div className="flex items-center gap-3 px-4 py-3">
