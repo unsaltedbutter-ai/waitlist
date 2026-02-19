@@ -164,19 +164,38 @@ RESULT=$($LNCLI closechannel $FORCE_FLAG $FEE_FLAG --funding_txid "$FUNDING_TXID
     exit 1
 }
 
-echo "$RESULT"
-
-CLOSE_TXID=$(echo "$RESULT" | lnd_json closing_txid 2>/dev/null || echo "")
+# lncli closechannel outputs plain text + JSON, so extract the txid directly
+CLOSE_TXID=$(echo "$RESULT" | python3 -c "
+import sys, json, re
+text = sys.stdin.read()
+# Try JSON extraction first
+try:
+    # Find the JSON object in the mixed output
+    match = re.search(r'\{[^}]+\}', text, re.DOTALL)
+    if match:
+        data = json.loads(match.group())
+        txid = data.get('closing_txid', '')
+        if txid:
+            print(txid)
+            sys.exit(0)
+except (json.JSONDecodeError, AttributeError):
+    pass
+# Fallback: grep the broadcasted line
+match = re.search(r'broadcasted:\s*([a-f0-9]{64})', text)
+if match:
+    print(match.group(1))
+" 2>/dev/null || echo "")
 
 echo ""
 if [ -n "$CLOSE_TXID" ]; then
     echo "Closing transaction: $CLOSE_TXID"
     echo "Monitor at: https://mempool.space/tx/$CLOSE_TXID"
 else
+    echo "$RESULT"
+    echo ""
     echo "Close initiated. Check output above for status."
 fi
 
 echo ""
 echo "Monitor pending closes with:"
 echo "  ./lightning-status.sh"
-echo "  $LNCLI pendingchannels"
