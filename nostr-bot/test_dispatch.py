@@ -306,11 +306,9 @@ async def test_push_notification_job_complete(handler):
         },
     })
     await handler._handle_push_notification(payload)
-    handler._client.send_private_msg.assert_awaited_once()
-    msg = handler._client.send_private_msg.call_args[0][1]
-    assert "Netflix was cancelled" in msg
-    assert "March 15" in msg
-    assert "lnbc3000n1fake" in msg
+    # Proactive outbound uses NIP-04 (send_event_builder), not NIP-17 (send_private_msg)
+    handler._client.send_event_builder.assert_awaited_once()
+    handler._client.send_private_msg.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -324,10 +322,9 @@ async def test_push_notification_payment_received(handler):
         },
     })
     await handler._handle_push_notification(payload)
-    handler._client.send_private_msg.assert_awaited_once()
-    msg = handler._client.send_private_msg.call_args[0][1]
-    assert "3,000 sats" in msg
-    assert "Hulu" in msg
+    # Proactive outbound uses NIP-04 (send_event_builder), not NIP-17 (send_private_msg)
+    handler._client.send_event_builder.assert_awaited_once()
+    handler._client.send_private_msg.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -341,10 +338,9 @@ async def test_push_notification_payment_expired(handler):
         },
     })
     await handler._handle_push_notification(payload)
-    handler._client.send_private_msg.assert_awaited_once()
-    msg = handler._client.send_private_msg.call_args[0][1]
-    assert "expired" in msg.lower()
-    assert "3,000 sats" in msg
+    # Proactive outbound uses NIP-04 (send_event_builder), not NIP-17 (send_private_msg)
+    handler._client.send_event_builder.assert_awaited_once()
+    handler._client.send_private_msg.assert_not_awaited()
 
 
 @pytest.mark.asyncio

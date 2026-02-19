@@ -157,7 +157,9 @@ class BotNotificationHandler(HandleNotification):
 
         async def send_dm(pubkey_hex: str, text: str):
             pk = PublicKey.parse(pubkey_hex)
-            await self._client.send_private_msg(pk, text, [])
+            # Zap is user-initiated, but we don't track protocol here.
+            # Default to NIP-04 for compatibility.
+            await self._send_nip04_reply(pk, text)
 
         await zap_handler.handle_zap_receipt(
             event, send_dm, self._bot_pubkey_hex, self._zap_provider_pubkey_hex,
@@ -176,7 +178,8 @@ class BotNotificationHandler(HandleNotification):
         if target_npub and msg:
             try:
                 pk = PublicKey.parse(target_npub)
-                await self._client.send_private_msg(pk, msg, [])
+                # Proactive outbound: use NIP-04 for client compatibility
+                await self._send_nip04_reply(pk, msg)
                 log.info("Forwarded %s notification to %s", payload.get("type"), target_npub[:16])
             except Exception as e:
                 log.error("Failed to forward notification to %s: %s", target_npub[:16], e)

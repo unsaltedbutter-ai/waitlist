@@ -18,7 +18,7 @@ from pathlib import Path
 
 import httpx
 from dotenv import load_dotenv
-from nostr_sdk import Client, Keys, NostrSigner, PublicKey, RelayUrl
+from nostr_sdk import Client, EventBuilder, Keys, Kind, NostrSigner, PublicKey, RelayUrl, Tag
 
 # ---------------------------------------------------------------------------
 # Config
@@ -343,7 +343,12 @@ async def send_nostr_dm(message: str) -> None:
     await client.connect()
 
     recipient = PublicKey.parse(npub)
-    await client.send_private_msg(recipient, message, [])
+    # Proactive outbound: use NIP-04 for client compatibility
+    ciphertext = await signer.nip04_encrypt(recipient, message)
+    builder = EventBuilder(Kind(4), ciphertext).tags([
+        Tag.parse(["p", recipient.to_hex()])
+    ])
+    await client.send_event_builder(builder)
     log.info("DM sent to %s", npub)
 
     await client.disconnect()
