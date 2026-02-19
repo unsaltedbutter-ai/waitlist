@@ -87,12 +87,12 @@ export function DebtBanner() {
   }
 
   return (
-    <div className="bg-red-900/20 border border-red-700 rounded p-5 space-y-4">
+    <div className="bg-amber-900/20 border border-amber-700/60 rounded p-5 space-y-4">
       <div>
-        <h3 className="text-sm font-medium text-red-300">
+        <h3 className="text-sm font-medium text-amber-300">
           Outstanding balance: {formatSats(debt.debt_sats)} sats
         </h3>
-        <p className="text-xs text-red-400/80 mt-1">
+        <p className="text-xs text-amber-400/70 mt-1">
           Our records indicate you owe us a few sats.
         </p>
       </div>
@@ -103,19 +103,19 @@ export function DebtBanner() {
           {debt.reneged_jobs.map((job) => (
             <div
               key={job.id}
-              className="flex items-center justify-between text-sm py-1.5 border-b border-red-800/40 last:border-0"
+              className="flex items-center justify-between text-sm py-1.5 border-b border-amber-800/30 last:border-0"
             >
               <div className="flex items-center gap-2">
-                <span className="text-red-200">{job.service_name}</span>
-                <span className="text-red-400/70 text-xs">
+                <span className="text-amber-200">{job.service_name}</span>
+                <span className="text-amber-400/60 text-xs">
                   {actionLabel(job.action)}
                 </span>
               </div>
               <div className="flex items-center gap-3">
-                <span className="text-red-300 text-xs">
+                <span className="text-amber-300/80 text-xs">
                   {formatDate(job.status_updated_at)}
                 </span>
-                <span className="text-red-200 font-medium text-xs">
+                <span className="text-amber-200 font-medium text-xs">
                   {formatSats(job.amount_sats)} sats
                 </span>
               </div>
