@@ -1,18 +1,45 @@
 import { NextRequest, NextResponse } from "next/server";
 import { withAuth } from "@/lib/auth";
 import { query, transaction } from "@/lib/db";
+import { TERMINAL_STATUSES, COMPLETED_STATUSES } from "@/lib/constants";
 
 export const GET = withAuth(async (_req: NextRequest, { userId }) => {
   try {
+    // Build parameterized NOT IN clause for terminal statuses.
+    // $1 = userId, $2..$N = terminal statuses
+    const terminalParams = TERMINAL_STATUSES.map((_, i) => `$${i + 2}`).join(", ");
+    const completedPlaceholders = COMPLETED_STATUSES.map(
+      (_, i) => `$${TERMINAL_STATUSES.length + 2 + i}`
+    ).join(", ");
+
     const result = await query(
       `SELECT rq.service_id, ss.display_name AS service_name, rq.position,
-              rq.plan_id, sp.display_name AS plan_name, sp.monthly_price_cents AS plan_price_cents
+              rq.plan_id, sp.display_name AS plan_name, sp.monthly_price_cents AS plan_price_cents,
+              aj.active_job_id, aj.active_job_action, aj.active_job_status,
+              lj.last_access_end_date, lj.last_completed_action
        FROM rotation_queue rq
        JOIN streaming_services ss ON ss.id = rq.service_id
        LEFT JOIN service_plans sp ON sp.id = rq.plan_id
+       LEFT JOIN LATERAL (
+         SELECT j.id AS active_job_id, j.action AS active_job_action, j.status AS active_job_status
+         FROM jobs j
+         WHERE j.user_id = rq.user_id AND j.service_id = rq.service_id
+           AND j.status NOT IN (${terminalParams})
+         ORDER BY j.created_at DESC
+         LIMIT 1
+       ) aj ON TRUE
+       LEFT JOIN LATERAL (
+         SELECT j.access_end_date AS last_access_end_date, j.action AS last_completed_action
+         FROM jobs j
+         WHERE j.user_id = rq.user_id AND j.service_id = rq.service_id
+           AND j.status IN (${completedPlaceholders})
+           AND j.access_end_date IS NOT NULL
+         ORDER BY j.created_at DESC
+         LIMIT 1
+       ) lj ON TRUE
        WHERE rq.user_id = $1
        ORDER BY rq.position`,
-      [userId]
+      [userId, ...TERMINAL_STATUSES, ...COMPLETED_STATUSES]
     );
 
     return NextResponse.json({ queue: result.rows });

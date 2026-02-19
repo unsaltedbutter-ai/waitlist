@@ -343,6 +343,11 @@ describe("GET /api/queue", () => {
           position: 1,
           plan_name: "Standard",
           plan_price_cents: 1549,
+          active_job_id: null,
+          active_job_action: null,
+          active_job_status: null,
+          last_access_end_date: null,
+          last_completed_action: null,
         },
       ])
     );
@@ -353,5 +358,163 @@ describe("GET /api/queue", () => {
     const data = await res.json();
     expect(data.queue).toHaveLength(1);
     expect(data.queue[0].service_id).toBe("netflix");
+  });
+
+  it("queue item with no jobs returns null for all job fields", async () => {
+    vi.mocked(query).mockResolvedValueOnce(
+      mockQueryResult([
+        {
+          service_id: "netflix",
+          service_name: "Netflix",
+          position: 1,
+          plan_id: "netflix_standard",
+          plan_name: "Standard",
+          plan_price_cents: 1799,
+          active_job_id: null,
+          active_job_action: null,
+          active_job_status: null,
+          last_access_end_date: null,
+          last_completed_action: null,
+        },
+      ])
+    );
+
+    const req = new Request("http://localhost/api/queue");
+    const res = await GET(req as any, { params: Promise.resolve({}) });
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data.queue).toHaveLength(1);
+    const item = data.queue[0];
+    expect(item.active_job_id).toBeNull();
+    expect(item.active_job_action).toBeNull();
+    expect(item.active_job_status).toBeNull();
+    expect(item.last_access_end_date).toBeNull();
+    expect(item.last_completed_action).toBeNull();
+  });
+
+  it("queue item with an active (non-terminal) job returns the job data", async () => {
+    vi.mocked(query).mockResolvedValueOnce(
+      mockQueryResult([
+        {
+          service_id: "netflix",
+          service_name: "Netflix",
+          position: 1,
+          plan_id: "netflix_standard",
+          plan_name: "Standard",
+          plan_price_cents: 1799,
+          active_job_id: "job-uuid-1",
+          active_job_action: "cancel",
+          active_job_status: "dispatched",
+          last_access_end_date: null,
+          last_completed_action: null,
+        },
+      ])
+    );
+
+    const req = new Request("http://localhost/api/queue");
+    const res = await GET(req as any, { params: Promise.resolve({}) });
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    const item = data.queue[0];
+    expect(item.active_job_id).toBe("job-uuid-1");
+    expect(item.active_job_action).toBe("cancel");
+    expect(item.active_job_status).toBe("dispatched");
+    expect(item.last_access_end_date).toBeNull();
+    expect(item.last_completed_action).toBeNull();
+  });
+
+  it("queue item with a completed job returns the access end date and last action", async () => {
+    vi.mocked(query).mockResolvedValueOnce(
+      mockQueryResult([
+        {
+          service_id: "hulu",
+          service_name: "Hulu",
+          position: 1,
+          plan_id: "hulu_ads",
+          plan_name: "Hulu (With Ads)",
+          plan_price_cents: 999,
+          active_job_id: null,
+          active_job_action: null,
+          active_job_status: null,
+          last_access_end_date: "2026-03-15",
+          last_completed_action: "cancel",
+        },
+      ])
+    );
+
+    const req = new Request("http://localhost/api/queue");
+    const res = await GET(req as any, { params: Promise.resolve({}) });
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    const item = data.queue[0];
+    expect(item.active_job_id).toBeNull();
+    expect(item.last_access_end_date).toBe("2026-03-15");
+    expect(item.last_completed_action).toBe("cancel");
+  });
+
+  it("queue item with both active and completed jobs returns both", async () => {
+    vi.mocked(query).mockResolvedValueOnce(
+      mockQueryResult([
+        {
+          service_id: "netflix",
+          service_name: "Netflix",
+          position: 1,
+          plan_id: "netflix_standard",
+          plan_name: "Standard",
+          plan_price_cents: 1799,
+          active_job_id: "job-uuid-2",
+          active_job_action: "resume",
+          active_job_status: "awaiting_otp",
+          last_access_end_date: "2026-02-28",
+          last_completed_action: "cancel",
+        },
+      ])
+    );
+
+    const req = new Request("http://localhost/api/queue");
+    const res = await GET(req as any, { params: Promise.resolve({}) });
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    const item = data.queue[0];
+    expect(item.active_job_id).toBe("job-uuid-2");
+    expect(item.active_job_action).toBe("resume");
+    expect(item.active_job_status).toBe("awaiting_otp");
+    expect(item.last_access_end_date).toBe("2026-02-28");
+    expect(item.last_completed_action).toBe("cancel");
+  });
+
+  it("queue item with only a failed job returns no active job (failed is terminal)", async () => {
+    // The SQL lateral join filters out terminal statuses including "failed",
+    // so the DB returns null for active_job fields when the only job is failed.
+    vi.mocked(query).mockResolvedValueOnce(
+      mockQueryResult([
+        {
+          service_id: "disney_plus",
+          service_name: "Disney+",
+          position: 1,
+          plan_id: "disney_plus_basic",
+          plan_name: "Disney+ Basic",
+          plan_price_cents: 899,
+          active_job_id: null,
+          active_job_action: null,
+          active_job_status: null,
+          last_access_end_date: null,
+          last_completed_action: null,
+        },
+      ])
+    );
+
+    const req = new Request("http://localhost/api/queue");
+    const res = await GET(req as any, { params: Promise.resolve({}) });
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    const item = data.queue[0];
+    expect(item.active_job_id).toBeNull();
+    expect(item.active_job_action).toBeNull();
+    expect(item.active_job_status).toBeNull();
+    // Failed jobs are not in completed_paid/completed_eventual,
+    // so last_access_end_date is also null
+    expect(item.last_access_end_date).toBeNull();
+    expect(item.last_completed_action).toBeNull();
   });
 });

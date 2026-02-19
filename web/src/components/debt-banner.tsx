@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback } from "react";
 import QRCode from "react-qr-code";
 import { authFetch } from "@/lib/hooks/use-auth";
+import { formatDate } from "@/lib/format";
 
 interface RenegedJob {
   id: string;
@@ -26,15 +27,6 @@ interface InvoiceData {
 
 function formatSats(n: number): string {
   return n.toLocaleString("en-US");
-}
-
-function formatDate(iso: string): string {
-  const d = new Date(iso);
-  return d.toLocaleDateString("en-US", {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-  });
 }
 
 function actionLabel(action: string): string {

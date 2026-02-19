@@ -1,8 +1,8 @@
 "use client";
 
 export { PasswordToggle } from "@/components/password-toggle";
-export { SortableQueueItem as SortableItem } from "@/components/sortable-queue-item";
-export type { QueueItemData as QueueItem } from "@/components/sortable-queue-item";
+export { SimpleQueueItem as SortableItem } from "@/components/simple-queue-item";
+export type { QueueItemData as QueueItem } from "@/components/simple-queue-item";
 
 // ---------------------------------------------------------------------------
 // Step Indicator (onboarding-specific)

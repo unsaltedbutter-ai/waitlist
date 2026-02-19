@@ -21,21 +21,13 @@ import { SortableQueueItem } from "@/components/sortable-queue-item";
 import { ServiceCredentialForm } from "@/components/service-credential-form";
 import { DebtBanner } from "@/components/debt-banner";
 import { hexToNpub } from "@/lib/nostr";
+import { formatDate } from "@/lib/format";
+import { getJobStatusBadgeClass, getJobStatusLabel } from "@/lib/job-status";
+import type { EnrichedQueueItem } from "@/lib/types";
 
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
-
-interface QueueItem {
-  service_id: string;
-  service_name: string;
-  position: number;
-  subscription_status: "active" | "cancel_scheduled" | "signup_scheduled" | null;
-  subscription_end_date: string | null;
-  plan_id: string | null;
-  plan_name: string | null;
-  plan_price_cents: number | null;
-}
 
 interface JobRecord {
   id: string;
@@ -61,70 +53,15 @@ interface ServiceOption {
   plans: ServicePlan[];
 }
 
+interface CachedCredential {
+  serviceId: string;
+  serviceName: string;
+  email: string;
+}
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-function formatDate(iso: string): string {
-  const d = new Date(iso);
-  return d.toLocaleDateString("en-US", {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-  });
-}
-
-function statusColor(
-  status: QueueItem["subscription_status"]
-): string {
-  switch (status) {
-    case "active":
-      return "bg-green-900/50 text-green-400 border border-green-700";
-    case "cancel_scheduled":
-      return "bg-amber-900/50 text-amber-400 border border-amber-700";
-    case "signup_scheduled":
-      return "bg-blue-900/50 text-blue-400 border border-blue-700";
-    default:
-      return "bg-neutral-800/50 text-neutral-400 border border-neutral-700";
-  }
-}
-
-function statusLabel(status: QueueItem["subscription_status"]): string {
-  switch (status) {
-    case "active":
-      return "Active";
-    case "cancel_scheduled":
-      return "Cancelling";
-    case "signup_scheduled":
-      return "Resuming";
-    default:
-      return "Queued";
-  }
-}
-
-function jobStatusBadge(status: string): string {
-  switch (status) {
-    case "completed_paid":
-    case "completed_eventual":
-      return "bg-green-900/50 text-green-400 border border-green-700";
-    case "completed_reneged":
-      return "bg-red-900/50 text-red-400 border border-red-700";
-    case "active":
-    case "awaiting_otp":
-    case "dispatched":
-      return "bg-blue-900/50 text-blue-400 border border-blue-700";
-    case "outreach_sent":
-    case "snoozed":
-      return "bg-amber-900/50 text-amber-400 border border-amber-700";
-    case "user_skip":
-    case "user_abandon":
-    case "implied_skip":
-      return "bg-neutral-800/50 text-neutral-500 border border-neutral-700";
-    case "pending":
-    default:
-      return "bg-neutral-800/50 text-neutral-400 border border-neutral-700";
-  }
-}
 
 function flowTypeLabel(flowType: string): string {
   switch (flowType) {
@@ -137,43 +74,8 @@ function flowTypeLabel(flowType: string): string {
   }
 }
 
-function jobStatusLabel(status: string): string {
-  switch (status) {
-    case "pending":
-      return "Pending";
-    case "dispatched":
-      return "Dispatched";
-    case "outreach_sent":
-      return "Outreach sent";
-    case "snoozed":
-      return "Snoozed";
-    case "active":
-      return "Active";
-    case "awaiting_otp":
-      return "Awaiting OTP";
-    case "completed_paid":
-      return "Paid";
-    case "completed_eventual":
-      return "Paid (late)";
-    case "completed_reneged":
-      return "Unpaid";
-    case "user_skip":
-      return "Skipped";
-    case "user_abandon":
-      return "Abandoned";
-    case "implied_skip":
-      return "Implied skip";
-    default:
-      return status;
-  }
-}
-
-function isItemPinned(item: QueueItem): boolean {
-  return (
-    item.subscription_status === "active" ||
-    item.subscription_status === "cancel_scheduled" ||
-    item.subscription_status === "signup_scheduled"
-  );
+function isItemPinned(item: EnrichedQueueItem): boolean {
+  return item.active_job_id !== null;
 }
 
 // ---------------------------------------------------------------------------
@@ -183,10 +85,11 @@ function isItemPinned(item: QueueItem): boolean {
 export default function DashboardPage() {
   const { user, loading: authLoading, logout } = useAuth();
 
-  const [queue, setQueue] = useState<QueueItem[]>([]);
+  const [queue, setQueue] = useState<EnrichedQueueItem[]>([]);
   const [jobs, setJobs] = useState<JobRecord[]>([]);
   const [loadingData, setLoadingData] = useState(true);
   const [error, setError] = useState("");
+  const [jobsError, setJobsError] = useState(false);
 
   // Nostr npub copy
   const [npubCopied, setNpubCopied] = useState(false);
@@ -202,15 +105,34 @@ export default function DashboardPage() {
   const [selectedAddPlan, setSelectedAddPlan] = useState<string | null>(null);
   const [addSubmitting, setAddSubmitting] = useState(false);
 
-  // Remove confirmation
-  const [removeConfirm, setRemoveConfirm] = useState<string | null>(null);
-  const [removeLoading, setRemoveLoading] = useState(false);
+  // Expanded panel state (only one panel open at a time across all items).
+  // The optional `action` field tracks which action was requested from the
+  // overflow menu (escape hatch). When absent, the primary action is used.
+  const [expandedPanel, setExpandedPanel] = useState<{
+    serviceId: string;
+    panel: "credentials" | "confirm-action" | "remove";
+    action?: "cancel" | "resume";
+  } | null>(null);
+
+  // Credential cache (lazy fetch)
+  const [credentialCache, setCredentialCache] = useState<CachedCredential[] | null>(null);
+  const [credentialLoading, setCredentialLoading] = useState(false);
+  const [credentialError, setCredentialError] = useState(false);
+  const [updatingCredentials, setUpdatingCredentials] = useState(false);
+
+  // Action request state
+  const [requestingAction, setRequestingAction] = useState(false);
+  const [actionError, setActionError] = useState("");
+
+  // Remove state
+  const [removingService, setRemovingService] = useState(false);
 
   // ---------- Data fetching ----------
 
   const fetchData = useCallback(async () => {
     setLoadingData(true);
     setError("");
+    setJobsError(false);
     try {
       const [qRes, meRes] = await Promise.all([
         authFetch("/api/queue"),
@@ -229,6 +151,9 @@ export default function DashboardPage() {
       if (meRes && meRes.ok) {
         const meData = await meRes.json();
         setJobs(meData.recent_jobs ?? []);
+      } else {
+        setJobs([]);
+        setJobsError(true);
       }
     } catch {
       setError("Failed to load dashboard data.");
@@ -256,6 +181,27 @@ export default function DashboardPage() {
     }
   }, []);
 
+  const fetchCredentials = useCallback(async () => {
+    if (credentialCache) return; // already cached
+    setCredentialLoading(true);
+    setCredentialError(false);
+    try {
+      const res = await authFetch("/api/credentials");
+      if (res.ok) {
+        const data = await res.json();
+        setCredentialCache(data.credentials ?? []);
+      } else {
+        setCredentialCache([]);
+        setCredentialError(true);
+      }
+    } catch {
+      setCredentialCache([]);
+      setCredentialError(true);
+    } finally {
+      setCredentialLoading(false);
+    }
+  }, [credentialCache]);
+
   useEffect(() => {
     if (!authLoading && user) {
       fetchData();
@@ -270,6 +216,27 @@ export default function DashboardPage() {
 
   const queueServiceIds = new Set(queue.map((q) => q.service_id));
   const availableToAdd = allServices.filter((s) => !queueServiceIds.has(s.serviceId));
+
+  const userDebtSats = user?.debt_sats ?? 0;
+
+  // ---------- Panel management ----------
+
+  function handleExpandPanel(
+    serviceId: string,
+    panel: "credentials" | "confirm-action" | "remove" | null,
+    action?: "cancel" | "resume"
+  ) {
+    setActionError("");
+    if (panel === null) {
+      setExpandedPanel(null);
+      return;
+    }
+    // If opening credentials panel, trigger lazy fetch
+    if (panel === "credentials") {
+      fetchCredentials();
+    }
+    setExpandedPanel({ serviceId, panel, action });
+  }
 
   // ---------- Drag and drop ----------
 
@@ -299,6 +266,8 @@ export default function DashboardPage() {
         newSortableIndex
       );
       const fullReordered = [...pinnedItems, ...reorderedSortable];
+
+      const previousQueue = queue; // capture before optimistic update
       setQueue(fullReordered);
 
       try {
@@ -309,7 +278,8 @@ export default function DashboardPage() {
           }),
         });
       } catch {
-        setQueue(queue);
+        setQueue(previousQueue); // revert to captured state
+        setError("Failed to save queue order. Please try again.");
       }
     },
     [queue, pinnedItems, sortableItems]
@@ -357,7 +327,10 @@ export default function DashboardPage() {
         throw new Error(queueData.error || "Failed to update queue.");
       }
 
-      // 3. Refresh and close panel
+      // 3. Invalidate credential cache (new cred was added)
+      setCredentialCache(null);
+
+      // 4. Refresh and close panel
       setShowAddPanel(false);
       setSelectedAddService(null);
       setSelectedAddPlan(null);
@@ -369,10 +342,76 @@ export default function DashboardPage() {
     }
   }
 
+  // ---------- Update credentials ----------
+
+  async function handleUpdateCredentials(data: { serviceId: string; email: string; password: string }) {
+    setUpdatingCredentials(true);
+    try {
+      const res = await authFetch("/api/credentials", {
+        method: "POST",
+        body: JSON.stringify({
+          serviceId: data.serviceId,
+          email: data.email,
+          password: data.password,
+        }),
+      });
+
+      if (!res.ok) {
+        const resData = await res.json();
+        throw new Error(resData.error || "Failed to update credentials.");
+      }
+
+      // Invalidate cache and close panel
+      setCredentialCache(null);
+      setExpandedPanel(null);
+    } catch (err) {
+      throw err; // Let the ServiceCredentialForm display the error
+    } finally {
+      setUpdatingCredentials(false);
+    }
+  }
+
+  // ---------- Request action (cancel/resume) ----------
+
+  async function handleRequestAction(serviceId: string, action: "cancel" | "resume") {
+    setRequestingAction(true);
+    setActionError("");
+
+    try {
+      const res = await authFetch("/api/on-demand", {
+        method: "POST",
+        body: JSON.stringify({ serviceId, action }),
+      });
+
+      if (res.ok) {
+        setExpandedPanel(null);
+        await fetchData();
+        return;
+      }
+
+      const data = await res.json();
+      if (res.status === 403) {
+        if (data.debt_sats) {
+          setActionError(`Outstanding balance of ${data.debt_sats.toLocaleString()} sats. Clear it first.`);
+        } else {
+          setActionError(data.error || "Action blocked.");
+        }
+      } else if (res.status === 409) {
+        setActionError("A cancel or resume is already in progress for this service.");
+      } else {
+        setActionError(data.error || "Something went wrong. Try again or use the Nostr bot.");
+      }
+    } catch {
+      setActionError("Something went wrong. Try again or use the Nostr bot.");
+    } finally {
+      setRequestingAction(false);
+    }
+  }
+
   // ---------- Remove service ----------
 
   async function handleRemoveService(serviceId: string) {
-    setRemoveLoading(true);
+    setRemovingService(true);
     setError("");
 
     try {
@@ -386,12 +425,13 @@ export default function DashboardPage() {
         return;
       }
 
-      setRemoveConfirm(null);
+      setExpandedPanel(null);
+      setCredentialCache(null);
       await fetchData();
     } catch {
       setError("Failed to remove service.");
     } finally {
-      setRemoveLoading(false);
+      setRemovingService(false);
     }
   }
 
@@ -429,14 +469,35 @@ export default function DashboardPage() {
 
   // ---------- Helpers for rendering ----------
 
-  function renderStatusBadge(item: QueueItem) {
-    if (!item.subscription_status) return null;
+  function getCredentialEmail(serviceId: string): string | undefined {
+    if (!credentialCache) return undefined;
+    return credentialCache.find((c) => c.serviceId === serviceId)?.email;
+  }
+
+  function renderQueueItem(item: EnrichedQueueItem, pinned: boolean) {
+    const isExpanded = expandedPanel?.serviceId === item.service_id;
+    const currentPanel = isExpanded ? expandedPanel!.panel : null;
+
     return (
-      <span
-        className={`text-xs font-medium px-2 py-0.5 rounded shrink-0 ${statusColor(item.subscription_status)}`}
-      >
-        {statusLabel(item.subscription_status)}
-      </span>
+      <SortableQueueItem
+        key={item.service_id}
+        item={item}
+        pinned={pinned}
+        expandedPanel={currentPanel}
+        overrideAction={isExpanded ? expandedPanel!.action : undefined}
+        onExpandPanel={(panel, action) => handleExpandPanel(item.service_id, panel, action)}
+        onUpdateCredentials={handleUpdateCredentials}
+        onRequestAction={handleRequestAction}
+        onRemoveService={handleRemoveService}
+        credentialEmail={getCredentialEmail(item.service_id)}
+        credentialLoading={credentialLoading && isExpanded && currentPanel === "credentials"}
+        credentialError={credentialError && isExpanded && currentPanel === "credentials"}
+        updatingCredentials={updatingCredentials}
+        requestingAction={requestingAction}
+        removingService={removingService}
+        userDebtSats={userDebtSats}
+        actionError={isExpanded && currentPanel === "confirm-action" ? actionError : undefined}
+      />
     );
   }
 
@@ -480,37 +541,6 @@ export default function DashboardPage() {
                   </button>
                 )}
               </div>
-
-              {/* Remove confirmation dialog */}
-              {removeConfirm && (
-                <div className="bg-red-900/20 border border-red-700 rounded p-4 mb-4">
-                  <p className="text-sm text-red-300 mb-3">
-                    Remove{" "}
-                    <span className="font-medium text-red-200">
-                      {queue.find((q) => q.service_id === removeConfirm)?.service_name}
-                    </span>
-                    ? This will also delete your saved credentials for this service.
-                  </p>
-                  <div className="flex gap-2">
-                    <button
-                      type="button"
-                      onClick={() => handleRemoveService(removeConfirm)}
-                      disabled={removeLoading}
-                      className="py-1.5 px-3 bg-red-800 text-red-200 text-sm font-medium rounded hover:bg-red-700 transition-colors disabled:opacity-50"
-                    >
-                      {removeLoading ? "Removing..." : "Remove"}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setRemoveConfirm(null)}
-                      disabled={removeLoading}
-                      className="py-1.5 px-3 bg-surface border border-border text-foreground text-sm rounded hover:border-muted transition-colors"
-                    >
-                      Keep
-                    </button>
-                  </div>
-                </div>
-              )}
 
               {/* Add service panel */}
               {showAddPanel && (() => {
@@ -602,17 +632,10 @@ export default function DashboardPage() {
                 </p>
               ) : (
                 <div className="space-y-2">
-                  {/* Pinned items (active/scheduled) */}
-                  {pinnedItems.map((item) => (
-                    <SortableQueueItem
-                      key={item.service_id}
-                      item={{ serviceId: item.service_id, serviceName: item.service_name, planName: item.plan_name ?? undefined }}
-                      pinned
-                      statusBadge={renderStatusBadge(item)}
-                    />
-                  ))}
+                  {/* Pinned items (active jobs) */}
+                  {pinnedItems.map((item) => renderQueueItem(item, true))}
 
-                  {/* Sortable items (queued) */}
+                  {/* Sortable items (no active job) */}
                   {sortableItems.length > 0 && (
                     <DndContext
                       sensors={sensors}
@@ -624,14 +647,7 @@ export default function DashboardPage() {
                         strategy={verticalListSortingStrategy}
                       >
                         <div className="space-y-2">
-                          {sortableItems.map((item) => (
-                            <SortableQueueItem
-                              key={item.service_id}
-                              item={{ serviceId: item.service_id, serviceName: item.service_name, planName: item.plan_name ?? undefined }}
-                              statusBadge={renderStatusBadge(item)}
-                              onRemove={() => setRemoveConfirm(item.service_id)}
-                            />
-                          ))}
+                          {sortableItems.map((item) => renderQueueItem(item, false))}
                         </div>
                       </SortableContext>
                     </DndContext>
@@ -656,39 +672,69 @@ export default function DashboardPage() {
                 When you request a cancel or resume, it will show up here. Each cancel or resume costs 3,000 sats.
               </p>
 
+              {jobsError && (
+                <p className="text-amber-400 text-sm">Could not load recent jobs.</p>
+              )}
+
               {jobs.length > 0 && (
-                <div className="overflow-x-auto">
-                  <table className="w-full">
-                    <thead>
-                      <tr className="border-b border-border">
-                        <th className="text-left text-xs font-medium text-muted px-3 py-2">Service</th>
-                        <th className="text-left text-xs font-medium text-muted px-3 py-2">Action</th>
-                        <th className="text-left text-xs font-medium text-muted px-3 py-2">Status</th>
-                        <th className="text-left text-xs font-medium text-muted px-3 py-2">Date</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {jobs.map((job) => (
-                        <tr key={job.id} className="border-b border-border/50">
-                          <td className="px-3 py-2 text-sm text-foreground">
-                            {job.service_name}
-                          </td>
-                          <td className="px-3 py-2 text-sm text-muted">
-                            {flowTypeLabel(job.flow_type)}
-                          </td>
-                          <td className="px-3 py-2">
-                            <span className={`text-xs font-medium px-2 py-0.5 rounded ${jobStatusBadge(job.status)}`}>
-                              {jobStatusLabel(job.status)}
-                            </span>
-                          </td>
-                          <td className="px-3 py-2 text-sm text-muted">
-                            {formatDate(job.completed_at ?? job.created_at)}
-                          </td>
+                <>
+                  {/* Desktop table (hidden on small screens) */}
+                  <div className="hidden sm:block overflow-x-auto">
+                    <table className="w-full">
+                      <thead>
+                        <tr className="border-b border-border">
+                          <th className="text-left text-xs font-medium text-muted px-3 py-2">Service</th>
+                          <th className="text-left text-xs font-medium text-muted px-3 py-2">Action</th>
+                          <th className="text-left text-xs font-medium text-muted px-3 py-2">Status</th>
+                          <th className="text-left text-xs font-medium text-muted px-3 py-2">Date</th>
                         </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
+                      </thead>
+                      <tbody>
+                        {jobs.map((job) => (
+                          <tr key={job.id} className="border-b border-border/50">
+                            <td className="px-3 py-2 text-sm text-foreground">
+                              {job.service_name}
+                            </td>
+                            <td className="px-3 py-2 text-sm text-muted">
+                              {flowTypeLabel(job.flow_type)}
+                            </td>
+                            <td className="px-3 py-2">
+                              <span className={`text-xs font-medium px-2 py-0.5 rounded ${getJobStatusBadgeClass(job.status)}`}>
+                                {getJobStatusLabel(job.status)}
+                              </span>
+                            </td>
+                            <td className="px-3 py-2 text-sm text-muted">
+                              {formatDate(job.completed_at ?? job.created_at)}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  {/* Mobile stacked cards (shown on small screens) */}
+                  <div className="sm:hidden space-y-2">
+                    {jobs.map((job) => (
+                      <div
+                        key={job.id}
+                        className="border border-border/50 rounded p-3 space-y-1.5"
+                      >
+                        <div className="flex items-center justify-between">
+                          <span className="text-sm font-medium text-foreground">
+                            {job.service_name}
+                          </span>
+                          <span className={`text-xs font-medium px-2 py-0.5 rounded ${getJobStatusBadgeClass(job.status)}`}>
+                            {getJobStatusLabel(job.status)}
+                          </span>
+                        </div>
+                        <div className="flex items-center justify-between text-xs text-muted">
+                          <span>{flowTypeLabel(job.flow_type)}</span>
+                          <span>{formatDate(job.completed_at ?? job.created_at)}</span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </>
               )}
             </section>
 
