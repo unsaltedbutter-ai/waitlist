@@ -117,15 +117,16 @@ def get_current_versions() -> dict[str, str | None]:
 # Latest versions (remote APIs)
 # ---------------------------------------------------------------------------
 
-async def _github_latest(client: httpx.AsyncClient, owner_repo: str) -> tuple[str, str]:
-    """Return (tag, release_body) for the latest release."""
+async def _github_latest(client: httpx.AsyncClient, owner_repo: str) -> tuple[str, str, str]:
+    """Return (tag, release_body, html_url) for the latest release."""
     url = f"{GITHUB_API}/{owner_repo}/releases/latest"
     r = await client.get(url)
     r.raise_for_status()
     data = r.json()
     tag = data["tag_name"].lstrip("v")
     body = data.get("body", "")
-    return tag, body
+    html_url = data.get("html_url", f"https://github.com/{owner_repo}/releases")
+    return tag, body, html_url
 
 
 async def _npm_latest(client: httpx.AsyncClient, package: str) -> str:
@@ -135,48 +136,57 @@ async def _npm_latest(client: httpx.AsyncClient, package: str) -> str:
     return r.json()["version"]
 
 
-async def _node_latest(client: httpx.AsyncClient) -> str:
-    """Get latest LTS Node.js version."""
+async def _node_latest_in_line(client: httpx.AsyncClient, current_major: int | None) -> str:
+    """Get latest Node.js version within the same LTS major line.
+
+    If current_major is known (e.g., 22), return the latest 22.x release.
+    If unknown, return the latest LTS of any line.
+    """
     r = await client.get("https://nodejs.org/dist/index.json")
     r.raise_for_status()
     for entry in r.json():
-        if entry.get("lts"):
-            return entry["version"].lstrip("v")
+        ver = entry["version"].lstrip("v")
+        major = int(ver.split(".")[0])
+        if current_major is not None:
+            if major == current_major:
+                return ver
+        elif entry.get("lts"):
+            return ver
     return r.json()[0]["version"].lstrip("v")
 
 
-async def fetch_latest_versions() -> dict[str, dict]:
-    """Return {name: {"version": str, "body": str}} for each software."""
+async def fetch_latest_versions(current_node_major: int | None = None) -> dict[str, dict]:
+    """Return {name: {"version": str, "body": str, "url": str}} for each software."""
     results = {}
     async with httpx.AsyncClient(
         timeout=20,
         headers={"Accept": "application/vnd.github+json"},
     ) as client:
         try:
-            btcpay_tag, btcpay_body = await _github_latest(
+            btcpay_tag, btcpay_body, btcpay_url = await _github_latest(
                 client, "btcpayserver/btcpayserver"
             )
-            results["btcpay"] = {"version": btcpay_tag, "body": btcpay_body}
+            results["btcpay"] = {"version": btcpay_tag, "body": btcpay_body, "url": btcpay_url}
         except Exception as exc:
             log.error("Failed to fetch BTCPay latest version: %s", exc)
 
         try:
-            lnd_tag, lnd_body = await _github_latest(
+            lnd_tag, lnd_body, lnd_url = await _github_latest(
                 client, "lightningnetwork/lnd"
             )
-            results["lnd"] = {"version": lnd_tag, "body": lnd_body}
+            results["lnd"] = {"version": lnd_tag, "body": lnd_body, "url": lnd_url}
         except Exception as exc:
             log.error("Failed to fetch LND latest version: %s", exc)
 
         try:
             nextjs_ver = await _npm_latest(client, "next")
-            results["nextjs"] = {"version": nextjs_ver, "body": ""}
+            results["nextjs"] = {"version": nextjs_ver, "body": "", "url": "https://github.com/vercel/next.js/releases"}
         except Exception as exc:
             log.error("Failed to fetch Next.js latest version: %s", exc)
 
         try:
-            node_ver = await _node_latest(client)
-            results["nodejs"] = {"version": node_ver, "body": ""}
+            node_ver = await _node_latest_in_line(client, current_node_major)
+            results["nodejs"] = {"version": node_ver, "body": "", "url": "https://nodejs.org/en/blog/release"}
         except Exception as exc:
             log.error("Failed to fetch Node.js latest version: %s", exc)
 
@@ -219,6 +229,34 @@ DISPLAY_NAMES = {
     "nodejs": "Node.js",
 }
 
+# How to update each component (one-line action)
+UPDATE_ACTIONS = {
+    "btcpay": "cd ~/btcpayserver-docker && sudo su -c '. btcpay-setup.sh' (restarts Docker stack)",
+    "lnd": "Updated via BTCPay Docker stack (see BTCPay update procedure)",
+    "nextjs": "Bump version in package.json, test locally, deploy with deploy.sh",
+    "nodejs": "Install new version on VPS, then deploy.sh (PM2 restart)",
+}
+
+
+def _is_major_bump(current: str, latest: str) -> bool:
+    """Check if the update crosses a major version boundary."""
+    try:
+        cur_major = int(current.split(".")[0])
+        lat_major = int(latest.split(".")[0])
+        return lat_major > cur_major
+    except (ValueError, IndexError):
+        return False
+
+
+def _is_minor_bump(current: str, latest: str) -> bool:
+    """Check if the update is a minor version bump (not just patch)."""
+    try:
+        cur_parts = [int(x) for x in _normalize_version(current).split(".")[:2]]
+        lat_parts = [int(x) for x in _normalize_version(latest).split(".")[:2]]
+        return lat_parts[0] == cur_parts[0] and lat_parts[1] > cur_parts[1]
+    except (ValueError, IndexError):
+        return False
+
 
 def compare_and_classify(
     current: dict[str, str | None],
@@ -250,9 +288,14 @@ def compare_and_classify(
         is_critical = bool(SECURITY_KEYWORDS.search(lat.get("body", "")))
         entry = {
             "name": name,
+            "key": key,
             "current": cur,
             "latest": lat_ver,
             "body_snippet": lat.get("body", "")[:200],
+            "url": lat.get("url", ""),
+            "action": UPDATE_ACTIONS.get(key, ""),
+            "is_major": _is_major_bump(cur, lat_ver),
+            "is_minor": _is_minor_bump(cur, lat_ver),
         }
 
         if is_critical:
@@ -283,6 +326,29 @@ def classify_ubuntu(lines: list[str]) -> tuple[list[str], list[str]]:
 # Message formatting
 # ---------------------------------------------------------------------------
 
+def _format_update_entry(u: dict, severity: str) -> list[str]:
+    """Format a single update entry with severity, version, URL, and action."""
+    lines = []
+    bump = ""
+    if u.get("is_major"):
+        bump = " [MAJOR version]"
+    elif u.get("is_minor"):
+        bump = " [minor version]"
+
+    cve = ""
+    if severity == "CRITICAL":
+        m = re.search(r"CVE-\d{4}-\d+", u.get("body_snippet", ""))
+        if m:
+            cve = f" ({m.group()})"
+
+    lines.append(f"  [{severity}] {u['name']} {u['current']} -> {u['latest']}{bump}{cve}")
+    if u.get("url"):
+        lines.append(f"    Release notes: {u['url']}")
+    if u.get("action"):
+        lines.append(f"    How to update: {u['action']}")
+    return lines
+
+
 def format_message(
     critical: list[dict],
     updates: list[dict],
@@ -294,39 +360,39 @@ def format_message(
     if not has_updates:
         return None
 
-    parts = ["Software Updates Available", ""]
+    parts = ["VPS Update Report", ""]
 
     if critical:
-        parts.append("CRITICAL:")
+        parts.append("=== ACTION REQUIRED (security) ===")
         for u in critical:
-            cve = ""
-            m = re.search(r"CVE-\d{4}-\d+", u["body_snippet"])
-            if m:
-                cve = f" — {m.group()}"
-            parts.append(f"  {u['name']} {u['current']} → {u['latest']}{cve}")
+            parts.extend(_format_update_entry(u, "CRITICAL"))
         parts.append("")
 
     if ubuntu_security:
-        parts.append("UBUNTU SECURITY:")
-        parts.append(f"  {len(ubuntu_security)} security packages: {', '.join(ubuntu_security[:10])}")
+        parts.append("=== UBUNTU SECURITY ===")
+        parts.append(f"  {len(ubuntu_security)} packages: {', '.join(ubuntu_security[:10])}")
         if len(ubuntu_security) > 10:
             parts.append(f"  ...and {len(ubuntu_security) - 10} more")
+        parts.append("  How to update: sudo apt upgrade (may require reboot for kernel)")
         parts.append("")
 
     if updates:
-        parts.append("Updates:")
+        parts.append("=== Available Updates ===")
         for u in updates:
-            parts.append(f"  {u['name']} {u['current']} → {u['latest']}")
+            severity = "routine"
+            if u.get("is_major"):
+                severity = "info"
+            parts.extend(_format_update_entry(u, severity))
+            if u.get("is_major"):
+                parts.append("    Note: Major version bump. Test before upgrading. Check LTS EOL dates.")
         parts.append("")
 
     if ubuntu_other:
-        parts.append("Ubuntu packages:")
-        parts.append(f"  {len(ubuntu_other)} packages upgradable")
+        parts.append(f"Ubuntu: {len(ubuntu_other)} non-security packages upgradable")
         parts.append("")
 
     if up_to_date:
-        parts.append("Up to date:")
-        parts.append(f"  {', '.join(up_to_date)}")
+        parts.append(f"Up to date: {', '.join(up_to_date)}")
 
     return "\n".join(parts)
 
@@ -362,6 +428,8 @@ async def send_nostr_dm(message: str) -> None:
     await client.send_event_builder(builder)
     log.info("DM sent to %s", npub)
 
+    # Give relays time to receive the event before disconnecting
+    await asyncio.sleep(2)
     await client.disconnect()
 
 
@@ -390,8 +458,12 @@ async def main() -> None:
     for k, v in current.items():
         log.info("  %s: %s", DISPLAY_NAMES.get(k, k), v or "unknown")
 
+    # Parse current Node.js major for same-line LTS comparison
+    node_cur = current.get("nodejs")
+    node_major = int(node_cur.split(".")[0]) if node_cur else None
+
     log.info("Fetching latest versions...")
-    latest = await fetch_latest_versions()
+    latest = await fetch_latest_versions(current_node_major=node_major)
     for k, v in latest.items():
         log.info("  %s: %s", DISPLAY_NAMES.get(k, k), v["version"])
 

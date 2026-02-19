@@ -627,3 +627,163 @@ The following cannot be automated and require manual intervention:
 | **nostr.env configuration** | After `--setup-bots` | Set `NOSTR_NSEC` for alerting identity. Cannot be generated automatically. |
 | **BTCPay store creation** | Before `setup-btcpay-store.sh` | Create a store in the BTCPay UI first. The script finds and configures it. |
 | **SSL certificate renewal verification** | Periodically | Certbot auto-renews, but verify it is working: `sudo certbot renew --dry-run` |
+
+---
+
+## Update Procedures
+
+`update-checker.py` sends a daily DM with available updates, classified by severity. This section explains how to evaluate and perform each type of update.
+
+### Evaluating Updates
+
+| Severity | Meaning | Timeline |
+|---|---|---|
+| **CRITICAL** | Security CVE in LND, BTCPay, or Node.js. Funds or server security at risk. | Same day. Schedule maintenance window. |
+| **UBUNTU SECURITY** | OS-level security patches. | Within 24-48 hours. |
+| **routine** | Patch or minor version bump within the same release line. | Next regular maintenance window (weekly). |
+| **info** | Major version bump (e.g., Node 22 -> 24). Not urgent. | Plan and test. Only upgrade when current LTS approaches EOL. |
+
+For LND and BTCPay specifically: always read the release notes before updating. Look for:
+- Database migration requirements
+- Breaking API changes
+- Protocol changes that affect channel peers
+- Minimum peer version requirements
+
+### BTCPay Server + LND (Docker Stack)
+
+BTCPay Server and LND are deployed together via the btcpayserver-docker stack. Updating BTCPay typically updates LND as well.
+
+**Downtime**: Docker stack restarts. Lightning payments unavailable for 30-60 seconds. No incoming payments can be processed during restart.
+
+**Pre-update checks** (especially with active customers):
+
+```bash
+# Check for pending HTLCs (in-flight payments)
+~/unsaltedbutter/scripts/lightning-status.sh
+
+# Check for active jobs in the app
+PGPASSWORD=$(cat ~/.unsaltedbutter/db_password) psql -h localhost -U butter -d unsaltedbutter \
+  -c "SELECT count(*) FROM jobs WHERE status IN ('active', 'pending');"
+```
+
+Wait for pending HTLCs to resolve and active jobs to complete before updating.
+
+**Update procedure**:
+
+```bash
+# 1. Read release notes first
+# BTCPay: https://github.com/btcpayserver/btcpayserver/releases
+# LND: https://github.com/lightningnetwork/lnd/releases
+
+# 2. Update the Docker stack
+cd ~/btcpayserver-docker
+sudo su -c '. btcpay-setup.sh'
+
+# 3. Verify containers are running
+sudo docker ps
+
+# 4. Verify LND is synced and channels are active
+~/unsaltedbutter/scripts/lightning-status.sh
+
+# 5. Verify BTCPay is responding
+curl -s https://pay.unsaltedbutter.ai/api/v1/health | python3 -m json.tool
+```
+
+### Next.js
+
+**Downtime**: Near-zero. PM2 restarts the process in seconds.
+
+**Update procedure**:
+
+```bash
+# 1. On your local machine, update package.json
+cd web
+npm install next@latest
+
+# 2. Test locally
+npm run build && npm run dev
+
+# 3. Deploy
+./scripts/deploy.sh <VPS_IP>
+```
+
+For major version bumps (e.g., Next.js 15 -> 16), read the migration guide first. Major versions may require code changes.
+
+### Node.js
+
+The update checker only compares within the same LTS major line (e.g., 22.x -> 22.y). It will not flag a new LTS track (e.g., 22 -> 24) as an urgent update.
+
+**When to upgrade major versions**: When the current LTS enters maintenance mode (typically 18 months after release). Check the Node.js release schedule at https://nodejs.org/en/about/previous-releases.
+
+**Downtime**: PM2 restart (seconds).
+
+**Update procedure**:
+
+```bash
+# 1. On the VPS, install the new version
+ssh butter@<VPS_IP>
+sudo n install <version>  # or: sudo n lts
+
+# 2. Verify
+node --version
+
+# 3. Rebuild and restart
+cd ~/unsaltedbutter/web
+npm ci
+npm run build
+pm2 restart unsaltedbutter
+```
+
+For major version bumps, test the build locally with the new Node version first.
+
+### Ubuntu Packages
+
+**Security packages**: Apply within 24-48 hours.
+
+**Non-security packages**: Batch monthly or as convenient.
+
+**Procedure**:
+
+```bash
+ssh butter@<VPS_IP>
+
+# Review what will be upgraded
+apt list --upgradable
+
+# Apply upgrades
+sudo apt upgrade -y
+
+# If kernel was updated, reboot
+sudo reboot
+```
+
+After reboot, verify services:
+
+```bash
+pm2 list
+sudo docker ps
+~/unsaltedbutter/scripts/health-check.sh
+```
+
+### At Scale (500-5000 customers)
+
+With active customers, updates require coordination:
+
+1. **Announce maintenance**: Send a Nostr DM to users at least 1 hour before planned downtime for Docker stack updates.
+
+2. **Pick low-traffic windows**: Schedule Docker stack restarts during low-traffic hours (03:00-05:00 UTC).
+
+3. **Drain active work first**:
+   - Wait for all active jobs to complete (no mid-action cancels/resumes)
+   - Wait for pending HTLCs to resolve
+   - Pause the job queue (set a maintenance flag or stop the cron timer)
+
+4. **Monitor after update**:
+   - Watch `~/logs/health.log` for the first few health-check cycles
+   - Verify Lightning channels reconnect with peers
+   - Verify payment processing works (create a test invoice)
+
+5. **Rollback plan**:
+   - For BTCPay/LND: Docker stack can be rolled back by checking out the previous btcpayserver-docker version
+   - For Next.js: Redeploy the previous git commit with `deploy.sh`
+   - For Node.js: `sudo n install <previous-version>` and rebuild
