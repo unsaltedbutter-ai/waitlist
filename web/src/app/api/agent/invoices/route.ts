@@ -13,18 +13,11 @@ export const POST = withAgentAuth(async (_req: NextRequest, { body: rawBody }) =
   }>(rawBody);
   if (error) return error;
 
-  const { job_id, amount_sats, user_npub } = parsed;
+  const { job_id, user_npub } = parsed;
 
-  if (!job_id || !user_npub || amount_sats === undefined || amount_sats === null) {
+  if (!job_id || !user_npub) {
     return NextResponse.json(
-      { error: "Missing required fields: job_id, amount_sats, user_npub" },
-      { status: 400 }
-    );
-  }
-
-  if (!Number.isInteger(amount_sats) || amount_sats <= 0) {
-    return NextResponse.json(
-      { error: "amount_sats must be a positive integer" },
+      { error: "Missing required fields: job_id, user_npub" },
       { status: 400 }
     );
   }
@@ -40,6 +33,19 @@ export const POST = withAgentAuth(async (_req: NextRequest, { body: rawBody }) =
   }
 
   try {
+    // Read price from operator_settings
+    const priceResult = await query<{ value: string }>(
+      "SELECT value FROM operator_settings WHERE key = 'action_price_sats'"
+    );
+    const priceRaw = priceResult.rows[0]?.value ?? "3000";
+    const amount_sats = parseInt(priceRaw, 10);
+    if (!Number.isInteger(amount_sats) || amount_sats <= 0) {
+      return NextResponse.json(
+        { error: "Invalid action_price_sats configuration" },
+        { status: 500 }
+      );
+    }
+
     // Verify user exists
     const userResult = await query<{ id: string }>(
       "SELECT id FROM users WHERE nostr_npub = $1",

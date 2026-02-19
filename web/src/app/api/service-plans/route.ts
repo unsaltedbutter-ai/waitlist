@@ -1,22 +1,15 @@
 import { NextResponse } from "next/server";
 import { query } from "@/lib/db";
 
-const SERVICE_LABELS: Record<string, string> = {
-  netflix: "Netflix",
-  hulu: "Hulu",
-  disney_plus: "Disney+",
-  max: "Max",
-  paramount: "Paramount+",
-  peacock: "Peacock",
-  apple_tv: "Apple TV+",
-};
-
 export async function GET() {
   const result = await query(
-    `SELECT id, service_id, display_name, monthly_price_cents, has_ads, is_bundle
-     FROM service_plans
-     WHERE active = TRUE
-     ORDER BY display_order`
+    `SELECT sp.id, sp.service_id, sp.display_name, sp.monthly_price_cents,
+            sp.has_ads, sp.is_bundle,
+            ss.display_name AS service_display_name
+     FROM service_plans sp
+     JOIN streaming_services ss ON ss.id = sp.service_id
+     WHERE sp.active = TRUE AND ss.supported = TRUE
+     ORDER BY sp.display_order`
   );
 
   // Group by service_id
@@ -25,7 +18,7 @@ export async function GET() {
     const sid = row.service_id;
     if (!groups[sid]) {
       groups[sid] = {
-        label: SERVICE_LABELS[sid] ?? sid,
+        label: row.service_display_name,
         serviceId: sid,
         plans: [],
       };

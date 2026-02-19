@@ -9,6 +9,7 @@ const navLinks = [
   { href: "/operator/jobs", label: "Jobs" },
   { href: "/operator/members", label: "Members" },
   { href: "/operator/business", label: "Business" },
+  { href: "/operator/services", label: "Services" },
   { href: "/operator/waitlist", label: "Waitlist" },
   { href: "/operator/health", label: "Health" },
   { href: "/operator/blocklist", label: "Blocklist" },

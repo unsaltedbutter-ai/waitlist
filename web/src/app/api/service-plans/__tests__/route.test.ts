@@ -20,6 +20,7 @@ describe("GET /api/service-plans", () => {
     monthly_price_cents: 699,
     has_ads: true,
     is_bundle: false,
+    service_display_name: "Netflix",
   };
   const netflixPremium = {
     id: "netflix-premium",
@@ -28,6 +29,7 @@ describe("GET /api/service-plans", () => {
     monthly_price_cents: 2299,
     has_ads: false,
     is_bundle: false,
+    service_display_name: "Netflix",
   };
   const huluBasic = {
     id: "hulu-basic",
@@ -36,9 +38,10 @@ describe("GET /api/service-plans", () => {
     monthly_price_cents: 999,
     has_ads: true,
     is_bundle: false,
+    service_display_name: "Hulu",
   };
 
-  it("returns plans grouped by service_id", async () => {
+  it("returns plans grouped by service_id with display_name from JOIN", async () => {
     vi.mocked(query).mockResolvedValueOnce(
       mockQueryResult([netflixBasic, netflixPremium, huluBasic])
     );
@@ -73,25 +76,6 @@ describe("GET /api/service-plans", () => {
     expect(data.groups).toEqual([]);
   });
 
-  it("uses service_id as label fallback for unknown services", async () => {
-    const unknownPlan = {
-      id: "mystery-plan",
-      service_id: "mystery_service",
-      display_name: "Unknown Plan",
-      monthly_price_cents: 499,
-      has_ads: false,
-      is_bundle: false,
-    };
-    vi.mocked(query).mockResolvedValueOnce(mockQueryResult([unknownPlan]));
-
-    const res = await GET();
-    const data = await res.json();
-
-    expect(data.groups).toHaveLength(1);
-    expect(data.groups[0].label).toBe("mystery_service");
-    expect(data.groups[0].id).toBe("mystery_service");
-  });
-
   it("preserves plan fields in each group", async () => {
     vi.mocked(query).mockResolvedValueOnce(mockQueryResult([netflixBasic]));
 
@@ -106,7 +90,7 @@ describe("GET /api/service-plans", () => {
     expect(plan.is_bundle).toBe(false);
   });
 
-  it("queries only active plans ordered by display_order", async () => {
+  it("queries with JOIN on streaming_services filtering active and supported", async () => {
     vi.mocked(query).mockResolvedValueOnce(mockQueryResult([]));
 
     await GET();
@@ -114,39 +98,8 @@ describe("GET /api/service-plans", () => {
     expect(query).toHaveBeenCalledOnce();
     const sql = vi.mocked(query).mock.calls[0][0] as string;
     expect(sql).toContain("active = TRUE");
-    expect(sql).toContain("ORDER BY display_order");
-  });
-
-  it("maps all known service labels correctly", async () => {
-    const services = [
-      { service_id: "netflix", expectedLabel: "Netflix" },
-      { service_id: "hulu", expectedLabel: "Hulu" },
-      { service_id: "disney_plus", expectedLabel: "Disney+" },
-      { service_id: "max", expectedLabel: "Max" },
-      { service_id: "paramount", expectedLabel: "Paramount+" },
-      { service_id: "peacock", expectedLabel: "Peacock" },
-      { service_id: "apple_tv", expectedLabel: "Apple TV+" },
-    ];
-
-    const rows = services.map((s) => ({
-      id: `${s.service_id}-plan`,
-      service_id: s.service_id,
-      display_name: "Plan",
-      monthly_price_cents: 999,
-      has_ads: false,
-      is_bundle: false,
-    }));
-
-    vi.mocked(query).mockResolvedValueOnce(mockQueryResult(rows));
-
-    const res = await GET();
-    const data = await res.json();
-
-    for (const svc of services) {
-      const group = data.groups.find(
-        (g: { id: string }) => g.id === svc.service_id
-      );
-      expect(group.label).toBe(svc.expectedLabel);
-    }
+    expect(sql).toContain("supported = TRUE");
+    expect(sql).toContain("JOIN streaming_services");
+    expect(sql).toContain("ORDER BY");
   });
 });

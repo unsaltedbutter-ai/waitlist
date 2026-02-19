@@ -42,13 +42,15 @@ beforeEach(() => {
 });
 
 describe("POST /api/agent/invoices", () => {
-  it("happy path: creates invoice, stores on job, creates transaction", async () => {
+  it("happy path: reads price from operator_settings, creates invoice", async () => {
     const userId = "user-uuid-1";
     const jobId = "job-uuid-1";
 
-    // User lookup
+    // 1. Price lookup from operator_settings
+    vi.mocked(query).mockResolvedValueOnce(mockQueryResult([{ value: "3000" }]));
+    // 2. User lookup
     vi.mocked(query).mockResolvedValueOnce(mockQueryResult([{ id: userId }]));
-    // Job lookup
+    // 3. Job lookup
     vi.mocked(query).mockResolvedValueOnce(
       mockQueryResult([{ id: jobId, service_id: "netflix", action: "cancel", status: "active", invoice_id: null }])
     );
@@ -63,7 +65,6 @@ describe("POST /api/agent/invoices", () => {
 
     const req = makeRequest({
       job_id: jobId,
-      amount_sats: 3000,
       user_npub: VALID_HEX,
     });
     const res = await POST(req as any, { params: Promise.resolve({}) });
@@ -74,7 +75,7 @@ describe("POST /api/agent/invoices", () => {
     expect(data.bolt11).toBe("lnbc3000sat1...");
     expect(data.amount_sats).toBe(3000);
 
-    // Verify createLightningInvoice was called with the exact request amount
+    // Verify createLightningInvoice was called with DB-sourced amount
     expect(createLightningInvoice).toHaveBeenCalledWith({
       amountSats: 3000,
       metadata: { job_id: jobId, user_npub: VALID_HEX },
@@ -83,95 +84,104 @@ describe("POST /api/agent/invoices", () => {
     // Verify both writes happened inside the transaction
     expect(txQuery).toHaveBeenCalledTimes(2);
 
-    // Verify job was updated with invoice_id
+    // Verify job was updated with invoice_id and DB-sourced amount
     const updateCall = txQuery.mock.calls[0];
     expect(updateCall[0]).toContain("UPDATE jobs SET invoice_id");
     expect(updateCall[1]).toEqual(["btcpay-inv-1", 3000, jobId]);
 
-    // Verify the UPDATE query sets the correct amount_sats value (3000)
-    const updateParams = updateCall[1] as unknown[];
-    expect(updateParams[1]).toBe(3000);
-
-    // Verify transaction row was created
+    // Verify transaction row was created with DB-sourced amount
     const txInsertCall = txQuery.mock.calls[1];
     expect(txInsertCall[0]).toContain("INSERT INTO transactions");
     expect(txInsertCall[1]).toEqual([jobId, userId, "netflix", "cancel", 3000]);
-
-    // Verify the transaction row also has the correct amount_sats
-    const txParams = txInsertCall[1] as unknown[];
-    expect(txParams[4]).toBe(3000);
   });
 
-  it("missing fields: returns 400", async () => {
-    const req = makeRequest({ job_id: "abc" });
+  it("uses custom price from operator_settings", async () => {
+    const userId = "user-uuid-1";
+    const jobId = "job-uuid-1";
+
+    // Price lookup: custom price
+    vi.mocked(query).mockResolvedValueOnce(mockQueryResult([{ value: "5000" }]));
+    // User lookup
+    vi.mocked(query).mockResolvedValueOnce(mockQueryResult([{ id: userId }]));
+    // Job lookup
+    vi.mocked(query).mockResolvedValueOnce(
+      mockQueryResult([{ id: jobId, service_id: "netflix", action: "cancel", status: "active", invoice_id: null }])
+    );
+    vi.mocked(createLightningInvoice).mockResolvedValueOnce({
+      id: "btcpay-inv-2",
+      bolt11: "lnbc5000sat1...",
+    });
+    const txQuery = vi.fn().mockResolvedValue(mockQueryResult([]));
+    vi.mocked(transaction).mockImplementationOnce(async (cb) => cb(txQuery as any));
+
+    const req = makeRequest({ job_id: jobId, user_npub: VALID_HEX });
+    const res = await POST(req as any, { params: Promise.resolve({}) });
+
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data.amount_sats).toBe(5000);
+
+    expect(createLightningInvoice).toHaveBeenCalledWith({
+      amountSats: 5000,
+      metadata: expect.any(Object),
+    });
+  });
+
+  it("ignores amount_sats from body, uses DB value", async () => {
+    const userId = "user-uuid-1";
+    const jobId = "job-uuid-1";
+
+    // Price lookup: 3000 from DB
+    vi.mocked(query).mockResolvedValueOnce(mockQueryResult([{ value: "3000" }]));
+    vi.mocked(query).mockResolvedValueOnce(mockQueryResult([{ id: userId }]));
+    vi.mocked(query).mockResolvedValueOnce(
+      mockQueryResult([{ id: jobId, service_id: "netflix", action: "cancel", status: "active", invoice_id: null }])
+    );
+    vi.mocked(createLightningInvoice).mockResolvedValueOnce({
+      id: "btcpay-inv-3",
+      bolt11: "lnbc...",
+    });
+    const txQuery = vi.fn().mockResolvedValue(mockQueryResult([]));
+    vi.mocked(transaction).mockImplementationOnce(async (cb) => cb(txQuery as any));
+
+    // Body sends 9999, but should be ignored
+    const req = makeRequest({ job_id: jobId, user_npub: VALID_HEX, amount_sats: 9999 });
+    const res = await POST(req as any, { params: Promise.resolve({}) });
+
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data.amount_sats).toBe(3000);
+  });
+
+  it("missing job_id: returns 400", async () => {
+    const req = makeRequest({ user_npub: VALID_HEX });
     const res = await POST(req as any, { params: Promise.resolve({}) });
     expect(res.status).toBe(400);
     const data = await res.json();
     expect(data.error).toMatch(/Missing required fields/);
   });
 
-  it("missing amount_sats: returns 400", async () => {
+  it("missing user_npub: returns 400", async () => {
+    const req = makeRequest({ job_id: "abc" });
+    const res = await POST(req as any, { params: Promise.resolve({}) });
+    expect(res.status).toBe(400);
+  });
+
+  it("returns 500 for invalid price configuration", async () => {
+    vi.mocked(query).mockResolvedValueOnce(mockQueryResult([{ value: "not_a_number" }]));
+
     const req = makeRequest({ job_id: "abc", user_npub: VALID_HEX });
     const res = await POST(req as any, { params: Promise.resolve({}) });
-    expect(res.status).toBe(400);
-  });
-
-  it("missing user_npub: returns 400", async () => {
-    const req = makeRequest({ job_id: "abc", amount_sats: 3000 });
-    const res = await POST(req as any, { params: Promise.resolve({}) });
-    expect(res.status).toBe(400);
-  });
-
-  it("amount_sats = 0: returns 400", async () => {
-    const req = makeRequest({ job_id: "abc", amount_sats: 0, user_npub: VALID_HEX });
-    const res = await POST(req as any, { params: Promise.resolve({}) });
-    expect(res.status).toBe(400);
+    expect(res.status).toBe(500);
     const data = await res.json();
-    expect(data.error).toMatch(/positive integer/);
-  });
-
-  it("negative amount_sats: returns 400", async () => {
-    const req = makeRequest({ job_id: "abc", amount_sats: -100, user_npub: VALID_HEX });
-    const res = await POST(req as any, { params: Promise.resolve({}) });
-    expect(res.status).toBe(400);
-    const data = await res.json();
-    expect(data.error).toMatch(/positive integer/);
-  });
-
-  it("NaN amount_sats (serializes to null): returns 400", async () => {
-    // JSON.stringify(NaN) produces null, so amount_sats becomes null after round-trip
-    const req = makeRequest({ job_id: "abc", amount_sats: NaN, user_npub: VALID_HEX });
-    const res = await POST(req as any, { params: Promise.resolve({}) });
-    expect(res.status).toBe(400);
-  });
-
-  it("Infinity amount_sats (serializes to null): returns 400", async () => {
-    // JSON.stringify(Infinity) produces null, so amount_sats becomes null after round-trip
-    const req = makeRequest({ job_id: "abc", amount_sats: Infinity, user_npub: VALID_HEX });
-    const res = await POST(req as any, { params: Promise.resolve({}) });
-    expect(res.status).toBe(400);
-  });
-
-  it("string amount_sats: returns 400", async () => {
-    const req = makeRequest({ job_id: "abc", amount_sats: "3000", user_npub: VALID_HEX });
-    const res = await POST(req as any, { params: Promise.resolve({}) });
-    expect(res.status).toBe(400);
-    const data = await res.json();
-    expect(data.error).toMatch(/positive integer/);
-  });
-
-  it("float amount_sats: returns 400", async () => {
-    const req = makeRequest({ job_id: "abc", amount_sats: 3000.5, user_npub: VALID_HEX });
-    const res = await POST(req as any, { params: Promise.resolve({}) });
-    expect(res.status).toBe(400);
-    const data = await res.json();
-    expect(data.error).toMatch(/positive integer/);
+    expect(data.error).toMatch(/action_price_sats/);
   });
 
   it("user not found: returns 404", async () => {
+    vi.mocked(query).mockResolvedValueOnce(mockQueryResult([{ value: "3000" }]));
     vi.mocked(query).mockResolvedValueOnce(mockQueryResult([]));
 
-    const req = makeRequest({ job_id: "abc", amount_sats: 3000, user_npub: UNKNOWN_HEX });
+    const req = makeRequest({ job_id: "abc", user_npub: UNKNOWN_HEX });
     const res = await POST(req as any, { params: Promise.resolve({}) });
     expect(res.status).toBe(404);
     const data = await res.json();
@@ -179,10 +189,11 @@ describe("POST /api/agent/invoices", () => {
   });
 
   it("job not found: returns 404", async () => {
+    vi.mocked(query).mockResolvedValueOnce(mockQueryResult([{ value: "3000" }]));
     vi.mocked(query).mockResolvedValueOnce(mockQueryResult([{ id: "user-1" }]));
     vi.mocked(query).mockResolvedValueOnce(mockQueryResult([]));
 
-    const req = makeRequest({ job_id: "nonexistent", amount_sats: 3000, user_npub: VALID_HEX });
+    const req = makeRequest({ job_id: "nonexistent", user_npub: VALID_HEX });
     const res = await POST(req as any, { params: Promise.resolve({}) });
     expect(res.status).toBe(404);
     const data = await res.json();
@@ -190,6 +201,7 @@ describe("POST /api/agent/invoices", () => {
   });
 
   it("BTCPay call fails: returns 502", async () => {
+    vi.mocked(query).mockResolvedValueOnce(mockQueryResult([{ value: "3000" }]));
     vi.mocked(query).mockResolvedValueOnce(mockQueryResult([{ id: "user-1" }]));
     vi.mocked(query).mockResolvedValueOnce(
       mockQueryResult([{ id: "job-1", service_id: "netflix", action: "cancel", status: "active", invoice_id: null }])
@@ -198,7 +210,7 @@ describe("POST /api/agent/invoices", () => {
       new Error("BTCPay unreachable")
     );
 
-    const req = makeRequest({ job_id: "job-1", amount_sats: 3000, user_npub: VALID_HEX });
+    const req = makeRequest({ job_id: "job-1", user_npub: VALID_HEX });
     const res = await POST(req as any, { params: Promise.resolve({}) });
     expect(res.status).toBe(502);
     const data = await res.json();
@@ -216,12 +228,13 @@ describe("POST /api/agent/invoices", () => {
   });
 
   it("duplicate invoice (job already has invoice_id): returns 409", async () => {
+    vi.mocked(query).mockResolvedValueOnce(mockQueryResult([{ value: "3000" }]));
     vi.mocked(query).mockResolvedValueOnce(mockQueryResult([{ id: "user-1" }]));
     vi.mocked(query).mockResolvedValueOnce(
       mockQueryResult([{ id: "job-1", service_id: "netflix", action: "cancel", status: "active", invoice_id: "existing-inv" }])
     );
 
-    const req = makeRequest({ job_id: "job-1", amount_sats: 3000, user_npub: VALID_HEX });
+    const req = makeRequest({ job_id: "job-1", user_npub: VALID_HEX });
     const res = await POST(req as any, { params: Promise.resolve({}) });
     expect(res.status).toBe(409);
     const data = await res.json();
@@ -229,12 +242,13 @@ describe("POST /api/agent/invoices", () => {
   });
 
   it("already-paid job (completed_paid): returns 409", async () => {
+    vi.mocked(query).mockResolvedValueOnce(mockQueryResult([{ value: "3000" }]));
     vi.mocked(query).mockResolvedValueOnce(mockQueryResult([{ id: "user-1" }]));
     vi.mocked(query).mockResolvedValueOnce(
       mockQueryResult([{ id: "job-1", service_id: "netflix", action: "cancel", status: "completed_paid", invoice_id: null }])
     );
 
-    const req = makeRequest({ job_id: "job-1", amount_sats: 3000, user_npub: VALID_HEX });
+    const req = makeRequest({ job_id: "job-1", user_npub: VALID_HEX });
     const res = await POST(req as any, { params: Promise.resolve({}) });
     expect(res.status).toBe(409);
     const data = await res.json();
@@ -242,12 +256,13 @@ describe("POST /api/agent/invoices", () => {
   });
 
   it("already-paid job (completed_eventual): returns 409", async () => {
+    vi.mocked(query).mockResolvedValueOnce(mockQueryResult([{ value: "3000" }]));
     vi.mocked(query).mockResolvedValueOnce(mockQueryResult([{ id: "user-1" }]));
     vi.mocked(query).mockResolvedValueOnce(
       mockQueryResult([{ id: "job-1", service_id: "netflix", action: "cancel", status: "completed_eventual", invoice_id: null }])
     );
 
-    const req = makeRequest({ job_id: "job-1", amount_sats: 3000, user_npub: VALID_HEX });
+    const req = makeRequest({ job_id: "job-1", user_npub: VALID_HEX });
     const res = await POST(req as any, { params: Promise.resolve({}) });
     expect(res.status).toBe(409);
     const data = await res.json();
