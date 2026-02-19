@@ -62,28 +62,39 @@ def _run(cmd: list[str], timeout: int = 15) -> str | None:
         return None
 
 
+def _find_container(pattern: str) -> str | None:
+    """Find a running Docker container by grep pattern (same approach as bash scripts)."""
+    out = _run(["sudo", "docker", "ps", "--format", "{{.Names}}"])
+    if not out:
+        return None
+    for name in out.splitlines():
+        if re.search(pattern, name):
+            return name
+    return None
+
+
 def get_current_versions() -> dict[str, str | None]:
     versions: dict[str, str | None] = {}
 
-    # BTCPay Server
-    out = _run(["docker", "exec", "btcpayserver_btcpayserver_1",
-                "cat", "/etc/btcpayserver_version"])
-    if not out:
-        # Try alternate container name format
-        out = _run(["docker", "exec", "btcpayserver-btcpayserver-1",
-                     "cat", "/etc/btcpayserver_version"])
-    versions["btcpay"] = out
+    # BTCPay Server (discover container dynamically)
+    btcpay = _find_container(r"btcpayserver_\d*$|btcpayserver-\d*$|^generated_btcpayserver")
+    if btcpay:
+        out = _run(["sudo", "docker", "exec", btcpay,
+                    "cat", "/etc/btcpayserver_version"])
+        versions["btcpay"] = out
+    else:
+        versions["btcpay"] = None
 
-    # LND
-    out = _run(["docker", "exec", "btcpayserver_lnd_1",
-                "lncli", "--version"])
-    if not out:
-        out = _run(["docker", "exec", "btcpayserver-lnd-1",
-                     "lncli", "--version"])
-    if out:
-        # "lncli version 0.18.4-beta commit=..." → "0.18.4-beta"
-        m = re.search(r"version\s+([\d.]+(?:-\w+)?)", out)
-        versions["lnd"] = m.group(1) if m else out
+    # LND (discover container dynamically)
+    lnd = _find_container(r"lnd_bitcoin$|_lnd_bitcoin$")
+    if lnd:
+        out = _run(["sudo", "docker", "exec", lnd, "lncli", "--version"])
+        if out:
+            # "lncli version 0.18.4-beta commit=..." -> "0.18.4-beta"
+            m = re.search(r"version\s+([\d.]+(?:-\w+)?)", out)
+            versions["lnd"] = m.group(1) if m else out
+        else:
+            versions["lnd"] = None
     else:
         versions["lnd"] = None
 

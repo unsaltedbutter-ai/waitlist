@@ -122,6 +122,8 @@ async def send_nostr_dm(message: str) -> None:
     ])
     await client.send_event_builder(builder)
 
+    # Give relays time to receive the event before disconnecting
+    await asyncio.sleep(2)
     await client.disconnect()
 
 
