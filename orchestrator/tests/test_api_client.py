@@ -403,6 +403,37 @@ async def test_heartbeat_success(
 
 
 @pytest.mark.asyncio
+async def test_heartbeat_with_payload(
+    client: ApiClient, respx_mock: respx.MockRouter
+) -> None:
+    route = respx_mock.post(f"{BASE_URL}/api/agent/heartbeat").mock(
+        return_value=httpx.Response(200, json={"ok": True})
+    )
+    result = await client.heartbeat(payload={"version": "abc1234", "uptime_s": 600})
+    assert result is True
+
+    sent_body = json.loads(route.calls[0].request.content)
+    assert sent_body["component"] == "orchestrator"
+    assert sent_body["payload"]["version"] == "abc1234"
+    assert sent_body["payload"]["uptime_s"] == 600
+
+
+@pytest.mark.asyncio
+async def test_heartbeat_without_payload_omits_key(
+    client: ApiClient, respx_mock: respx.MockRouter
+) -> None:
+    route = respx_mock.post(f"{BASE_URL}/api/agent/heartbeat").mock(
+        return_value=httpx.Response(200, json={"ok": True})
+    )
+    result = await client.heartbeat()
+    assert result is True
+
+    sent_body = json.loads(route.calls[0].request.content)
+    assert sent_body == {"component": "orchestrator"}
+    assert "payload" not in sent_body
+
+
+@pytest.mark.asyncio
 async def test_heartbeat_failure(
     client: ApiClient, respx_mock: respx.MockRouter
 ) -> None:

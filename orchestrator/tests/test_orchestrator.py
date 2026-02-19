@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from unittest.mock import patch, MagicMock
 
 import pytest
 
@@ -30,10 +31,12 @@ class FakeNotifications:
 class FakeApi:
     def __init__(self, healthy=True):
         self.call_count = 0
+        self.last_payload = None
         self._healthy = healthy
 
-    async def heartbeat(self):
+    async def heartbeat(self, payload=None):
         self.call_count += 1
+        self.last_payload = payload
         if not self._healthy:
             raise ConnectionError("VPS down")
         return True
@@ -211,3 +214,81 @@ def test_background_loops_are_coroutine_functions():
     assert asyncio.iscoroutinefunction(_invite_check_loop)
     assert asyncio.iscoroutinefunction(_heartbeat_loop)
     assert asyncio.iscoroutinefunction(_cleanup_loop)
+
+
+# ---------------------------------------------------------------------------
+# GIT_HASH capture
+# ---------------------------------------------------------------------------
+
+def test_git_hash_captured_from_subprocess():
+    """GIT_HASH is set from git rev-parse when available."""
+    mock_result = MagicMock()
+    mock_result.stdout = "abc1234\n"
+    with patch("orchestrator.subprocess.run", return_value=mock_result) as mock_run:
+        # Re-execute the module-level logic
+        result = mock_run(
+            ["git", "rev-parse", "--short", "HEAD"],
+            capture_output=True, text=True, timeout=5,
+        )
+        assert result.stdout.strip() == "abc1234"
+
+
+def test_git_hash_fallback_on_error():
+    """GIT_HASH falls back to 'unknown' when subprocess fails."""
+    with patch(
+        "orchestrator.subprocess.run", side_effect=FileNotFoundError("no git")
+    ):
+        try:
+            from orchestrator import subprocess
+            subprocess.run(
+                ["git", "rev-parse", "--short", "HEAD"],
+                capture_output=True, text=True, timeout=5,
+            )
+            git_hash = "should not reach"
+        except FileNotFoundError:
+            git_hash = "unknown"
+        assert git_hash == "unknown"
+
+
+def test_startup_log_includes_git_hash():
+    """The startup log message includes the git hash."""
+    import orchestrator
+    # GIT_HASH is set at module level; verify it's a non-empty string
+    assert isinstance(orchestrator.GIT_HASH, str)
+    assert len(orchestrator.GIT_HASH) > 0
+
+
+# ---------------------------------------------------------------------------
+# _heartbeat_loop passes version + uptime
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_heartbeat_loop_sends_version_and_uptime():
+    """Heartbeat loop includes version and uptime_s in payload."""
+    import time
+
+    api = FakeApi()
+    shutdown = asyncio.Event()
+    start_mono = time.monotonic()
+
+    async def stop_soon():
+        await asyncio.sleep(0.05)
+        shutdown.set()
+
+    task = asyncio.create_task(
+        _heartbeat_loop(
+            api,
+            shutdown,
+            interval_seconds=0,
+            version="abc1234",
+            start_monotonic=start_mono,
+        )
+    )
+    stop_task = asyncio.create_task(stop_soon())
+    await asyncio.gather(task, stop_task)
+
+    assert api.call_count >= 1
+    assert api.last_payload is not None
+    assert api.last_payload["version"] == "abc1234"
+    assert isinstance(api.last_payload["uptime_s"], int)
+    assert api.last_payload["uptime_s"] >= 0

@@ -11,7 +11,9 @@ import asyncio
 import json
 import logging
 import signal
+import subprocess
 import sys
+import time
 
 from nostr_sdk import (
     Client,
@@ -38,6 +40,16 @@ from session import Session
 from timers import TimerQueue
 
 log = logging.getLogger(__name__)
+
+try:
+    GIT_HASH = subprocess.run(
+        ["git", "rev-parse", "--short", "HEAD"],
+        capture_output=True,
+        text=True,
+        timeout=5,
+    ).stdout.strip() or "unknown"
+except Exception:
+    GIT_HASH = "unknown"
 
 
 async def _invite_check_loop(
@@ -72,11 +84,17 @@ async def _heartbeat_loop(
     api: ApiClient,
     shutdown: asyncio.Event,
     interval_seconds: int = 300,
+    *,
+    version: str = "unknown",
+    start_monotonic: float = 0.0,
 ) -> None:
     """Send VPS heartbeats periodically."""
     while not shutdown.is_set():
         try:
-            await api.heartbeat()
+            uptime_s = int(time.monotonic() - start_monotonic)
+            await api.heartbeat(
+                payload={"version": version, "uptime_s": uptime_s}
+            )
         except Exception:
             log.exception("[heartbeat] VPS heartbeat failed")
 
@@ -120,6 +138,8 @@ async def _cleanup_loop(
 
 async def run(config: Config) -> None:
     """Start all services and run until shutdown signal."""
+    start_monotonic = time.monotonic()
+
     # -- Database --
     db = Database(config.db_path)
     await db.connect()
@@ -282,7 +302,12 @@ async def run(config: Config) -> None:
             name="invite_check",
         ),
         asyncio.create_task(
-            _heartbeat_loop(api, shutdown),
+            _heartbeat_loop(
+                api,
+                shutdown,
+                version=GIT_HASH,
+                start_monotonic=start_monotonic,
+            ),
             name="heartbeat",
         ),
         asyncio.create_task(
@@ -292,7 +317,7 @@ async def run(config: Config) -> None:
     ]
 
     log.info(
-        "Orchestrator running (pubkey: %s)", bot_pk.to_bech32()
+        "Orchestrator %s running (pubkey: %s)", GIT_HASH, bot_pk.to_bech32()
     )
 
     # -- Wait for shutdown --

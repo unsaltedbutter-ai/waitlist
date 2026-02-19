@@ -80,14 +80,25 @@ function StatusCard({ component }: { component: ComponentStatus }) {
 
       {component.payload && Object.keys(component.payload).length > 0 && (
         <div className="mt-3 border-t border-border pt-3 space-y-1">
-          {Object.entries(component.payload).map(([key, value]) => (
-            <div key={key} className="flex justify-between text-xs">
-              <span className="text-muted">{key}</span>
-              <span className="text-foreground font-mono">
-                {String(value)}
-              </span>
-            </div>
-          ))}
+          {Object.entries(component.payload).map(([key, value]) => {
+            let valueClass = "text-foreground font-mono";
+            if (key === "version") {
+              const vpsHash = process.env.NEXT_PUBLIC_GIT_HASH;
+              if (vpsHash && String(value) === vpsHash) {
+                valueClass = "text-green-400 font-mono";
+              } else if (vpsHash) {
+                valueClass = "text-amber-400 font-mono";
+              }
+            }
+            return (
+              <div key={key} className="flex justify-between text-xs">
+                <span className="text-muted">{key}</span>
+                <span className={valueClass}>
+                  {String(value)}
+                </span>
+              </div>
+            );
+          })}
         </div>
       )}
     </div>
