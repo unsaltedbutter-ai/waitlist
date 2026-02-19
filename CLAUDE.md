@@ -54,9 +54,11 @@ unsaltedbutter.ai/
 |   |-- orchestrator/            <- Python orchestrator stubs (Mac Studio)
 |   +-- web/                     <- Next.js app stubs (VPS)
 |-- web/                         <- Next.js app (BUILT)
-|-- agent/                       <- [TO BUILD] Python agent
-|-- orchestrator/                <- [TO BUILD] Python orchestrator
-+-- scripts/                     <- deployment scripts
+|-- agent/                       <- Python agent (BUILT)
+|-- orchestrator/                <- Python orchestrator (BUILT)
+|-- nostr-bot/                   <- Python Nostr bot (BUILT)
+|-- inference/                   <- Inference server (SKELETON, blocked on hardware)
++-- scripts/                     <- deployment + ops scripts
 ```
 
 ## Tech Stack
@@ -82,4 +84,4 @@ unsaltedbutter.ai/
 - All BTC held by company. Diamond hands.
 
 ## Current Status
-All components built. See MEMORY.md `Build Progress` for test counts. Inference server blocked on Mac Studio hardware.
+All components built and deployed. Inference server blocked on Mac Studio hardware. See MEMORY.md for test counts and remaining work.
