@@ -63,6 +63,7 @@ class ActiveJob:
     job_id: str
     service: str
     action: str
+    plan_id: str = ''
     task: asyncio.Task | None = None
     otp_future: asyncio.Future | None = None
     started_at: float = field(default_factory=time.monotonic)
@@ -188,6 +189,7 @@ class Agent:
         service = data.get("service")
         action = data.get("action")
         credentials = data.get("credentials")
+        plan_id = data.get("plan_id", "")
 
         if not job_id or not service or not action or not credentials:
             return web.json_response(
@@ -207,7 +209,7 @@ class Agent:
                     status=409,
                 )
 
-            active = ActiveJob(job_id=job_id, service=service, action=action)
+            active = ActiveJob(job_id=job_id, service=service, action=action, plan_id=plan_id or '')
             self._active_job = active
             log.info("Accepted job %s (%s/%s)", job_id, service, action)
 
@@ -309,9 +311,15 @@ class Agent:
         error_msg = ""
 
         try:
+            # Derive tier from plan_id: "netflix_premium" -> "premium"
+            tier = ''
+            if active.plan_id:
+                prefix = active.service + '_'
+                tier = active.plan_id.removeprefix(prefix)
+
             # Load playbook
             try:
-                playbook = Playbook.load(active.service, active.action)
+                playbook = Playbook.load(active.service, active.action, tier=tier)
             except FileNotFoundError as exc:
                 error_msg = f"Playbook not found: {exc}"
                 log.error(error_msg)

@@ -96,6 +96,16 @@ async def test_upsert_and_get_job(db: Database):
     assert result["user_npub"] == "npub1alice"
     assert result["service_id"] == "netflix"
     assert result["status"] == "dispatched"
+    assert result["plan_id"] is None  # cancel jobs have no plan
+
+
+@pytest.mark.asyncio
+async def test_upsert_job_with_plan_id(db: Database):
+    job = _make_job(action="resume", plan_id="netflix_premium")
+    await db.upsert_job(job)
+    result = await db.get_job("job-1")
+    assert result["plan_id"] == "netflix_premium"
+    assert result["action"] == "resume"
 
 
 @pytest.mark.asyncio

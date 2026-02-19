@@ -103,7 +103,42 @@ export const POST = withAgentAuth(async (_req: NextRequest, { body }) => {
           await recordStatusChange(job.id, "pending", "dispatched", "agent", txQuery);
         }
 
-        return updateResult.rows;
+        // Enrich resume jobs with plan_id from rotation_queue
+        const resumeIds = updateResult.rows
+          .filter((j) => j.action === "resume")
+          .map((j) => j.id);
+
+        const planMap = new Map<string, { plan_id: string; plan_display_name: string }>();
+        if (resumeIds.length > 0) {
+          const planResult = await txQuery<{
+            job_id: string;
+            plan_id: string;
+            plan_display_name: string;
+          }>(
+            `SELECT j.id AS job_id, rq.plan_id, sp.display_name AS plan_display_name
+             FROM jobs j
+             JOIN rotation_queue rq
+               ON rq.user_id = j.user_id AND rq.service_id = j.service_id
+             JOIN service_plans sp ON sp.id = rq.plan_id
+             WHERE j.id = ANY($1)`,
+            [resumeIds]
+          );
+          for (const row of planResult.rows) {
+            planMap.set(row.job_id, {
+              plan_id: row.plan_id,
+              plan_display_name: row.plan_display_name,
+            });
+          }
+        }
+
+        return updateResult.rows.map((job) => {
+          const plan = planMap.get(job.id);
+          return {
+            ...job,
+            plan_id: plan?.plan_id ?? null,
+            plan_display_name: plan?.plan_display_name ?? null,
+          };
+        });
       });
       claimed = result;
     }

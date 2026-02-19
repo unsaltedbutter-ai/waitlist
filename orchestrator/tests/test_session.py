@@ -221,13 +221,36 @@ async def test_otp_confirm_yes_happy_path(deps):
 
     # Agent dispatched with credentials
     agent.execute.assert_awaited_once_with(
-        "job-1", "netflix", "cancel", {"email": "a@b.com", "password": "pw"}
+        "job-1", "netflix", "cancel", {"email": "a@b.com", "password": "pw"},
+        plan_id=None,
     )
 
     # DM sent (executing message)
     assert send_dm.await_count == 1
     msg = send_dm.call_args[0][1]
     assert "Cancelling" in msg or "Netflix" in msg
+
+
+@pytest.mark.asyncio
+async def test_otp_confirm_yes_resume_passes_plan_id(deps):
+    """Resume jobs should pass plan_id to agent.execute()."""
+    s = deps["session"]
+    db = deps["db"]
+    api = deps["api"]
+    agent = deps["agent"]
+
+    await db.upsert_job(_make_job(action="resume", plan_id="netflix_premium"))
+    await db.upsert_session("npub1alice", OTP_CONFIRM, job_id="job-1")
+
+    api.get_credentials.return_value = {"email": "a@b.com", "password": "pw"}
+    agent.execute.return_value = True
+
+    await s.handle_otp_confirm_yes("npub1alice")
+
+    agent.execute.assert_awaited_once_with(
+        "job-1", "netflix", "resume", {"email": "a@b.com", "password": "pw"},
+        plan_id="netflix_premium",
+    )
 
 
 @pytest.mark.asyncio

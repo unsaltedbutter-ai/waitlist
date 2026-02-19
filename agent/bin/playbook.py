@@ -764,6 +764,18 @@ def cmd_list(args):
 # learn command (VLM-guided recording)
 # ------------------------------------------------------------------
 
+def _slugify_plan(plan: str) -> str:
+    """Turn a plan name into a filename-safe variant slug.
+
+    'Standard with ads' -> 'standard_with_ads'
+    'Premium' -> 'premium'
+    """
+    import re
+    slug = plan.lower().strip()
+    slug = re.sub(r'[^a-z0-9]+', '_', slug)
+    return slug.strip('_')
+
+
 def cmd_learn(args):
     from agent.recording.recorder import PlaybookRecorder
     from agent.recording.vlm_client import VLMClient
@@ -771,6 +783,17 @@ def cmd_learn(args):
     service = args.service
     flow = args.flow
     start_url = args.url
+    plan = args.plan or ''
+    variant = args.variant or ''
+
+    if flow == 'resume' and not plan:
+        print('ERROR: --plan is required for resume flows.')
+        print('  Use the exact plan name shown on the service page,')
+        print('  e.g. --plan Premium  or  --plan "Standard with ads"')
+        sys.exit(1)
+
+    # Slugify plan tier for use in the filename
+    plan_slug = _slugify_plan(plan) if plan else ''
 
     credentials = {
         'email': args.email,
@@ -788,8 +811,9 @@ def cmd_learn(args):
         service=service,
         flow=flow,
         credentials=credentials,
-        plan_tier=args.plan or '',
-        variant=args.variant or '',
+        plan_tier=plan_slug,
+        plan_display=plan,
+        variant=variant,
         max_steps=args.max_steps,
         settle_delay=args.settle_delay,
     )

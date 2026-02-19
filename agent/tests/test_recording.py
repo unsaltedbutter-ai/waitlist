@@ -440,6 +440,31 @@ class TestPlaybookRecorderInit:
         assert rec._playbook_filename() == 'netflix_cancel_home'
         rec.vlm.close()
 
+    def test_playbook_filename_with_plan_tier(self) -> None:
+        rec = self._make_recorder(flow='resume', plan_tier='premium')
+        assert rec._playbook_filename() == 'netflix_resume_premium'
+        rec.vlm.close()
+
+    def test_playbook_filename_plan_and_variant(self) -> None:
+        rec = self._make_recorder(flow='resume', plan_tier='premium', variant='home')
+        assert rec._playbook_filename() == 'netflix_resume_premium_home'
+        rec.vlm.close()
+
+    def test_plan_display_used_in_prompt(self) -> None:
+        rec = self._make_recorder(
+            flow='resume', plan_tier='standard_with_ads',
+            plan_display='Standard with ads',
+        )
+        # The resume prompt should contain the display name, not the slug
+        assert 'Standard with ads' in rec._prompts[1]
+        assert 'standard_with_ads' not in rec._prompts[1]
+        rec.vlm.close()
+
+    def test_plan_display_falls_back_to_tier(self) -> None:
+        rec = self._make_recorder(flow='resume', plan_tier='premium')
+        assert rec.plan_display == 'premium'
+        rec.vlm.close()
+
     def test_prompt_labels(self) -> None:
         rec = self._make_recorder(flow='cancel')
         assert rec._prompt_labels == ['sign-in', 'cancel']
@@ -708,12 +733,99 @@ class TestRecorderIntegration:
         checkpoint_steps = [s for s in result['steps'] if s.get('checkpoint')]
         assert len(checkpoint_steps) >= 2  # at least sign-in click + cancel steps
 
+        # Cancel flow should NOT have tier in output
+        assert 'tier' not in result
+
         # Verify the file was written
         out_path = tmp_path / 'netflix_cancel.json'
         assert out_path.exists()
         with open(out_path) as f:
             saved = json.load(f)
         assert saved == result
+
+    def test_resume_includes_tier(self, monkeypatch, tmp_path) -> None:
+        """Resume playbooks with plan_tier should include 'tier' in output."""
+        responses = [
+            # Sign-in done immediately
+            {'action': 'done', 'state': 'signed in', 'confidence': 0.99,
+             'reasoning': 'done', 'target_description': '', 'bounding_box': None,
+             'text_to_type': '', 'key_to_press': '', 'is_checkpoint': False,
+             'checkpoint_prompt': ''},
+            # Resume done immediately
+            {'action': 'done', 'state': 'resumed', 'confidence': 0.99,
+             'reasoning': 'done', 'target_description': '', 'bounding_box': None,
+             'text_to_type': '', 'key_to_press': '', 'is_checkpoint': False,
+             'checkpoint_prompt': ''},
+        ]
+        call_idx = {'n': 0}
+
+        class MockVLM:
+            def analyze(self, screenshot_b64, system_prompt, user_message=''):
+                idx = call_idx['n']
+                call_idx['n'] += 1
+                if idx < len(responses):
+                    return responses[idx]
+                return {'action': 'done', 'state': 'fallback', 'confidence': 1.0}
+            def close(self):
+                pass
+
+        class FakeSession:
+            pid = 12345
+            process = None
+            profile_dir = str(tmp_path / 'chrome-profile')
+            window_id = 99
+            bounds = {'x': 0, 'y': 0, 'width': 1280, 'height': 900}
+
+        fake_session = FakeSession()
+
+        import agent.recording.recorder as rec_mod
+        monkeypatch.setattr(rec_mod, 'PLAYBOOK_DIR', tmp_path)
+        monkeypatch.setattr(rec_mod, 'PLAYBOOK_REF_DIR', tmp_path / 'ref')
+        monkeypatch.setattr('time.sleep', lambda _: None)
+
+        ss_counter = {'n': 0}
+        def _unique_screenshot(wid):
+            ss_counter['n'] += 1
+            return f'fake_{ss_counter["n"]}'
+
+        monkeypatch.setattr('agent.browser.create_session', lambda: fake_session)
+        monkeypatch.setattr('agent.browser.get_session_window', lambda s: s.bounds)
+        monkeypatch.setattr('agent.browser.navigate', lambda s, url, fast=False: None)
+        monkeypatch.setattr('agent.screenshot.capture_to_base64', _unique_screenshot)
+        monkeypatch.setattr('agent.screenshot.capture_window', lambda wid, path: None)
+        monkeypatch.setattr('agent.input.coords.image_to_screen', lambda ix, iy, bounds: (ix, iy))
+        monkeypatch.setattr('agent.input.mouse.click', lambda x, y: None)
+        monkeypatch.setattr('agent.input.keyboard.type_text', lambda text, speed='medium', accuracy='high': None)
+        monkeypatch.setattr('agent.input.keyboard.press_key', lambda key: None)
+        monkeypatch.setattr('agent.input.scroll.scroll', lambda direction, amount: None)
+        monkeypatch.setattr(
+            PlaybookRecorder, '_load_session',
+            staticmethod(lambda sf: fake_session),
+        )
+        monkeypatch.setattr(
+            PlaybookRecorder, '_save_session',
+            staticmethod(lambda s, sf: None),
+        )
+
+        recorder = PlaybookRecorder(
+            vlm=MockVLM(),
+            service='netflix',
+            flow='resume',
+            credentials={'email': 'test@test.com', 'pass': 'pw'},
+            plan_tier='premium',
+        )
+        recorder.settle_delay = 0
+
+        result = recorder.run('https://www.netflix.com')
+
+        assert result['tier'] == 'premium'
+        assert result['flow'] == 'resume'
+
+        out_path = tmp_path / 'netflix_resume_premium.json'
+        assert out_path.exists()
+        with open(out_path) as f:
+            saved = json.load(f)
+        assert saved['tier'] == 'premium'
 
     def test_variant_in_filename(self, monkeypatch, tmp_path) -> None:
         """Verify variant suffix appears in the output filename."""
@@ -734,3 +846,30 @@ class TestRecorderIntegration:
         vlm.close()
 
 
+# ===========================================================================
+# CLI: _slugify_plan and resume --plan validation
+# ===========================================================================
+
+
+class TestSlugifyPlan:
+    """Plan name to variant slug conversion."""
+
+    def test_simple_name(self) -> None:
+        from agent.bin.playbook import _slugify_plan
+        assert _slugify_plan('Premium') == 'premium'
+
+    def test_name_with_spaces(self) -> None:
+        from agent.bin.playbook import _slugify_plan
+        assert _slugify_plan('Standard with ads') == 'standard_with_ads'
+
+    def test_name_with_special_chars(self) -> None:
+        from agent.bin.playbook import _slugify_plan
+        assert _slugify_plan('Basic (Ad-Supported)') == 'basic_ad_supported'
+
+    def test_already_clean(self) -> None:
+        from agent.bin.playbook import _slugify_plan
+        assert _slugify_plan('standard') == 'standard'
+
+    def test_extra_whitespace(self) -> None:
+        from agent.bin.playbook import _slugify_plan
+        assert _slugify_plan('  Premium  ') == 'premium'

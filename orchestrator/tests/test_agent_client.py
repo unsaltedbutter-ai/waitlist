@@ -70,6 +70,23 @@ async def test_execute_sends_correct_body(client: AgentClient) -> None:
     assert body["action"] == "resume"
     assert body["credentials"]["email"] == "u@x.com"
     assert body["credentials"]["password"] == "pw"
+    assert "plan_id" not in body  # omitted when None
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_execute_sends_plan_id(client: AgentClient) -> None:
+    route = respx.post(f"{AGENT_URL}/execute").mock(
+        return_value=httpx.Response(200, json={"ok": True})
+    )
+    await client.execute(
+        "j50", "netflix", "resume", {"email": "u@x.com", "password": "pw"},
+        plan_id="netflix_premium",
+    )
+    import json
+
+    body = json.loads(route.calls[0].request.content)
+    assert body["plan_id"] == "netflix_premium"
 
 
 @pytest.mark.asyncio

@@ -46,22 +46,27 @@ class AgentClient:
         service: str,
         action: str,
         credentials: dict,
+        plan_id: str | None = None,
     ) -> bool:
         """POST /execute. Dispatch a cancel/resume job to the agent.
 
         credentials: {"email": ..., "password": ...}
+        plan_id: optional service plan id (e.g. "netflix_premium") for resume flows.
         Returns True if accepted (200), False otherwise.
         """
         client = self._ensure_started()
         try:
+            payload: dict = {
+                "job_id": job_id,
+                "service": service,
+                "action": action,
+                "credentials": credentials,
+            }
+            if plan_id:
+                payload["plan_id"] = plan_id
             resp = await client.post(
                 f"{self._base_url}/execute",
-                json={
-                    "job_id": job_id,
-                    "service": service,
-                    "action": action,
-                    "credentials": credentials,
-                },
+                json=payload,
             )
             accepted = resp.status_code == 200
             if not accepted:

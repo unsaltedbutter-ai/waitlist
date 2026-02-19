@@ -130,8 +130,10 @@ class PlaybookRecorder:
         service: Service name (e.g. 'netflix').
         flow: Flow type ('cancel' or 'resume').
         credentials: Dict with 'email', 'pass', etc.
-        plan_tier: Required for resume flows (e.g. 'premium').
-        variant: Output filename suffix (e.g. 'home' -> netflix_cancel_home.json).
+        plan_tier: Slugified plan tier for filenames (e.g. 'premium').
+        plan_display: Raw plan name for VLM prompts (e.g. 'Standard with ads').
+            Falls back to plan_tier if not provided.
+        variant: Route variant suffix (e.g. 'home' -> netflix_resume_premium_home.json).
         max_steps: Maximum number of VLM analysis steps before aborting.
         settle_delay: Seconds to wait after each action for the page to settle.
     """
@@ -143,6 +145,7 @@ class PlaybookRecorder:
         flow: str,
         credentials: dict[str, str],
         plan_tier: str = '',
+        plan_display: str = '',
         variant: str = '',
         max_steps: int = 60,
         settle_delay: float = 2.5,
@@ -152,6 +155,7 @@ class PlaybookRecorder:
         self.flow = flow
         self.credentials = credentials
         self.plan_tier = plan_tier
+        self.plan_display = plan_display or plan_tier
         self.variant = variant
         self.max_steps = max_steps
         self.settle_delay = settle_delay
@@ -167,7 +171,7 @@ class PlaybookRecorder:
         if self.flow == 'cancel':
             chain.append(build_cancel_prompt(self.service))
         elif self.flow == 'resume':
-            chain.append(build_resume_prompt(self.service, self.plan_tier))
+            chain.append(build_resume_prompt(self.service, self.plan_display))
         else:
             raise ValueError(f'Unknown flow: {self.flow!r}. Must be "cancel" or "resume".')
         return chain
@@ -190,8 +194,17 @@ class PlaybookRecorder:
         return self._prompt_labels[self._prompt_idx]
 
     def _playbook_filename(self) -> str:
-        """Build the output filename stem."""
+        """Build the output filename stem.
+
+        Plan tier and variant are independent suffixes:
+          netflix_cancel              (no plan, no variant)
+          netflix_cancel_home         (no plan, variant=home)
+          netflix_resume_premium      (plan=premium, no variant)
+          netflix_resume_premium_home (plan=premium, variant=home)
+        """
         name = f'{self.service}_{self.flow}'
+        if self.plan_tier:
+            name += f'_{self.plan_tier}'
         if self.variant:
             name += f'_{self.variant}'
         return name
@@ -388,7 +401,7 @@ class PlaybookRecorder:
             print(f'\n  Max steps ({self.max_steps}) reached. Stopping.')
 
         # Build playbook dict
-        playbook_data = {
+        playbook_data: dict = {
             'service': self.service,
             'flow': self.flow,
             'version': 1,
@@ -396,6 +409,8 @@ class PlaybookRecorder:
             'last_validated': None,
             'steps': steps,
         }
+        if self.plan_tier:
+            playbook_data['tier'] = self.plan_tier
 
         # Write playbook JSON
         out_path = PLAYBOOK_DIR / f'{pb_name}.json'

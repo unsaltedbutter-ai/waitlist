@@ -135,7 +135,19 @@ class Database:
         self._db.row_factory = aiosqlite.Row
         await self._db.execute("PRAGMA journal_mode=WAL")
         await self._db.executescript(_SCHEMA)
+        await self._ensure_migrations()
         await self._db.commit()
+
+    async def _ensure_migrations(self) -> None:
+        """Idempotent schema migrations for columns added after initial release."""
+        migrations = [
+            "ALTER TABLE jobs ADD COLUMN plan_id TEXT",
+        ]
+        for sql in migrations:
+            try:
+                await self._db.execute(sql)
+            except Exception:
+                pass  # Column already exists
 
     async def close(self) -> None:
         """Close the connection."""
@@ -154,11 +166,11 @@ class Database:
                (id, user_npub, service_id, action, trigger, status,
                 billing_date, access_end_date, outreach_count,
                 next_outreach_at, amount_sats, invoice_id,
-                created_at, updated_at)
+                created_at, updated_at, plan_id)
                VALUES (:id, :user_npub, :service_id, :action, :trigger,
                        :status, :billing_date, :access_end_date,
                        :outreach_count, :next_outreach_at, :amount_sats,
-                       :invoice_id, :created_at, :updated_at)""",
+                       :invoice_id, :created_at, :updated_at, :plan_id)""",
             {
                 "id": job["id"],
                 "user_npub": job["user_npub"],
@@ -174,6 +186,7 @@ class Database:
                 "invoice_id": job.get("invoice_id"),
                 "created_at": job["created_at"],
                 "updated_at": job.get("updated_at", ""),
+                "plan_id": job.get("plan_id"),
             },
         )
         await self._db.commit()

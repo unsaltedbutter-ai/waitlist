@@ -188,8 +188,9 @@ class Session:
         await self._db.update_job_status(job_id, "active")
 
         # Dispatch to agent
+        plan_id = job.get("plan_id")
         accepted = await self._agent.execute(
-            job_id, service_id, action, creds
+            job_id, service_id, action, creds, plan_id=plan_id
         )
         if not accepted:
             await self._fail_job(user_npub, job, "Agent rejected the job")
