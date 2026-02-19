@@ -112,7 +112,7 @@ export function AccountSection({ user, logout, setError }: AccountSectionProps) 
           Danger zone
         </h3>
         <p className="text-sm text-muted">
-          All credentials and queue data will be destroyed immediately.
+          All credentials will be destroyed immediately.
           Type{" "}
           <span className="font-mono text-foreground">destroy</span> to
           confirm.
