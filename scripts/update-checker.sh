@@ -145,6 +145,14 @@ do_run() {
         echo "ERROR: Venv not found at $VENV_DIR. Run with --install first."
         exit 1
     fi
+    if [ -z "$flag" ] && [ ! -f "$ENV_FILE" ]; then
+        echo "ERROR: $ENV_FILE not found. Cannot send DM without Nostr credentials."
+        echo "Run 'deploy.sh --setup-bots' to generate it, or create manually with:"
+        echo "  NOSTR_NSEC=nsec1..."
+        echo "  OPERATOR_NPUB=npub1..."
+        echo "  NOSTR_RELAYS=wss://relay.damus.io,wss://nos.lol"
+        exit 1
+    fi
     exec "$VENV_DIR/bin/python" "$CHECKER" $flag
 }
 

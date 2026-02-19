@@ -141,21 +141,33 @@ async def fetch_latest_versions() -> dict[str, dict]:
         timeout=20,
         headers={"Accept": "application/vnd.github+json"},
     ) as client:
-        btcpay_tag, btcpay_body = await _github_latest(
-            client, "btcpayserver/btcpayserver"
-        )
-        results["btcpay"] = {"version": btcpay_tag, "body": btcpay_body}
+        try:
+            btcpay_tag, btcpay_body = await _github_latest(
+                client, "btcpayserver/btcpayserver"
+            )
+            results["btcpay"] = {"version": btcpay_tag, "body": btcpay_body}
+        except Exception as exc:
+            log.error("Failed to fetch BTCPay latest version: %s", exc)
 
-        lnd_tag, lnd_body = await _github_latest(
-            client, "lightningnetwork/lnd"
-        )
-        results["lnd"] = {"version": lnd_tag, "body": lnd_body}
+        try:
+            lnd_tag, lnd_body = await _github_latest(
+                client, "lightningnetwork/lnd"
+            )
+            results["lnd"] = {"version": lnd_tag, "body": lnd_body}
+        except Exception as exc:
+            log.error("Failed to fetch LND latest version: %s", exc)
 
-        nextjs_ver = await _npm_latest(client, "next")
-        results["nextjs"] = {"version": nextjs_ver, "body": ""}
+        try:
+            nextjs_ver = await _npm_latest(client, "next")
+            results["nextjs"] = {"version": nextjs_ver, "body": ""}
+        except Exception as exc:
+            log.error("Failed to fetch Next.js latest version: %s", exc)
 
-        node_ver = await _node_latest(client)
-        results["nodejs"] = {"version": node_ver, "body": ""}
+        try:
+            node_ver = await _node_latest(client)
+            results["nodejs"] = {"version": node_ver, "body": ""}
+        except Exception as exc:
+            log.error("Failed to fetch Node.js latest version: %s", exc)
 
     return results
 
@@ -384,8 +396,9 @@ async def main() -> None:
         print("\n--- DRY RUN ---")
         print(message)
         print("--- END ---\n")
-    else:
-        await send_nostr_dm(message)
+        return
+
+    await send_nostr_dm(message)
 
     # Update state with notified versions
     for entry in critical + updates:
