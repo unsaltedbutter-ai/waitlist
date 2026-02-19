@@ -256,7 +256,7 @@ class JobContext:
     service: str
     flow: str
     credentials: dict[str, str] = field(default_factory=dict)
-    # credentials keys: email, pass, name, zip, birth, gender, cc, cvv, exp, gift
+    # credentials keys: email, pass, name, zip, birth, gender
 
     def resolve_template(self, template: str) -> str:
         """Replace {email}, {pass}, etc. with actual values from credentials."""

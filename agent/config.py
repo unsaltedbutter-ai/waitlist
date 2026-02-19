@@ -28,8 +28,8 @@ RECORD_DWELL_RADIUS_PX = 5
 # Normal (not sensitive)
 NORMAL_VARS = frozenset({'{email}', '{name}', '{zip}', '{birth}', '{gender}'})
 
-# Sensitive (never screenshot after typing these)
-SENSITIVE_VARS = frozenset({'{pass}', '{gift}', '{cc}', '{cvv}', '{exp}'})
+# Sensitive (password only; we never handle credit cards)
+SENSITIVE_VARS = frozenset({'{pass}'})
 
 # All template vars
 ALL_VARS = NORMAL_VARS | SENSITIVE_VARS
@@ -38,4 +38,4 @@ ALL_VARS = NORMAL_VARS | SENSITIVE_VARS
 KEY_VARS = frozenset({'{tab}', '{return}'})
 
 # Display hint for recording prompts
-VARS_HINT = '{email} {pass} {gift} {name} {zip} {birth} {gender} {cc} {cvv} {exp} {tab} {return}'
+VARS_HINT = '{email} {pass} {name} {zip} {birth} {gender} {tab} {return}'

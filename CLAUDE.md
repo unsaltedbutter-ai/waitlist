@@ -71,7 +71,7 @@ unsaltedbutter.ai/
 
 ## Critical Rules (see CONSTRAINTS.md for full list)
 
-- NEVER log, store plaintext, screenshot, or send to inference: passwords or OTP codes
+- NEVER log or store plaintext passwords or OTP codes
 - NEVER start a cancel/resume if user has outstanding debt (debt_sats > 0)
 - DM user immediately on cancel failure. Resume failures: retry silently, alert operator.
 - All credentials destroyed on account deletion (CASCADE delete, nothing soft-deleted)

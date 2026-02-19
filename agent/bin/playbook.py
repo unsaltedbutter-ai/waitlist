@@ -635,10 +635,6 @@ def cmd_test(args):
             'zip': '10001',
             'birth': '01/01/1990',
             'gender': 'other',
-            'cc': '4111111111111111',
-            'cvv': '123',
-            'exp': '12/28',
-            'gift': 'TEST-GIFT-CODE',
         },
     )
     print(f'  Test email: {test_email}')
