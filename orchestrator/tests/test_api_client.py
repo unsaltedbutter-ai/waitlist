@@ -395,7 +395,7 @@ async def test_get_invoice_not_found(
 async def test_heartbeat_success(
     client: ApiClient, respx_mock: respx.MockRouter
 ) -> None:
-    respx_mock.get(f"{BASE_URL}/api/agent/heartbeat").mock(
+    respx_mock.post(f"{BASE_URL}/api/agent/heartbeat").mock(
         return_value=httpx.Response(200, json={"ok": True})
     )
     result = await client.heartbeat()
@@ -406,7 +406,7 @@ async def test_heartbeat_success(
 async def test_heartbeat_failure(
     client: ApiClient, respx_mock: respx.MockRouter
 ) -> None:
-    respx_mock.get(f"{BASE_URL}/api/agent/heartbeat").mock(
+    respx_mock.post(f"{BASE_URL}/api/agent/heartbeat").mock(
         return_value=httpx.Response(500, json={"error": "down"})
     )
     result = await client.heartbeat()

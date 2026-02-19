@@ -236,10 +236,11 @@ class ApiClient:
     # -- Heartbeat -----------------------------------------------------------
 
     async def heartbeat(self) -> bool:
-        """GET /api/agent/heartbeat. Returns True if 200, False otherwise."""
+        """POST /api/agent/heartbeat. Returns True if 200, False otherwise."""
         path = "/api/agent/heartbeat"
+        body = json.dumps({"component": "orchestrator"})
         try:
-            resp = await self._request("GET", path)
+            resp = await self._request("POST", path, body=body)
             return resp.status_code == 200
         except httpx.HTTPError:
             return False
