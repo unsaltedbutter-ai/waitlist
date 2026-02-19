@@ -1,0 +1,460 @@
+"""Per-user conversation state machine.
+
+One session per user max. Manages transitions through the states:
+IDLE, OTP_CONFIRM, EXECUTING, AWAITING_OTP, INVOICE_SENT.
+"""
+
+from __future__ import annotations
+
+import logging
+from collections.abc import Awaitable, Callable
+
+import messages
+from agent_client import AgentClient
+from api_client import ApiClient
+from config import Config
+from db import Database
+from timers import TimerQueue, OTP_TIMEOUT, PAYMENT_EXPIRY
+
+log = logging.getLogger(__name__)
+
+# Valid session states
+IDLE = "IDLE"
+OTP_CONFIRM = "OTP_CONFIRM"
+EXECUTING = "EXECUTING"
+AWAITING_OTP = "AWAITING_OTP"
+INVOICE_SENT = "INVOICE_SENT"
+
+
+class Session:
+    """Per-user conversation state machine."""
+
+    def __init__(
+        self,
+        db: Database,
+        api: ApiClient,
+        agent: AgentClient,
+        timers: TimerQueue,
+        config: Config,
+        send_dm: Callable[[str, str], Awaitable[None]],
+        send_operator_dm: Callable[[str], Awaitable[None]],
+    ) -> None:
+        self._db = db
+        self._api = api
+        self._agent = agent
+        self._timers = timers
+        self._config = config
+        self._send_dm = send_dm
+        self._send_operator_dm = send_operator_dm
+
+    # ------------------------------------------------------------------
+    # Internal helpers
+    # ------------------------------------------------------------------
+
+    async def _get_session_by_job_id(self, job_id: str) -> dict | None:
+        """Find a session row by its job_id. Queries SQLite directly."""
+        cursor = await self._db._db.execute(
+            "SELECT * FROM sessions WHERE job_id = ?", (job_id,)
+        )
+        row = await cursor.fetchone()
+        return dict(row) if row else None
+
+    async def _fail_job(
+        self,
+        user_npub: str,
+        job: dict,
+        error: str | None,
+    ) -> None:
+        """Common failure handling: update statuses, DM user/operator, delete session."""
+        job_id = job["id"]
+        service_id = job["service_id"]
+        action = job["action"]
+
+        # Update VPS and local job status to failed
+        try:
+            await self._api.update_job_status(job_id, "failed")
+        except Exception:
+            log.exception("Failed to update VPS job status for %s", job_id)
+        await self._db.update_job_status(job_id, "failed")
+
+        # Cancel: DM user immediately (constraint #11). Resume: silent.
+        if action == "cancel":
+            await self._send_dm(
+                user_npub,
+                messages.action_failed_cancel(service_id, error),
+            )
+        else:
+            await self._send_dm(
+                user_npub,
+                messages.action_failed_resume(service_id),
+            )
+
+        # Always notify operator
+        await self._send_operator_dm(
+            messages.operator_job_failed(job_id, service_id, error)
+        )
+
+        # Clean up session
+        await self._db.delete_session(user_npub)
+
+    # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
+
+    async def get_state(self, user_npub: str) -> str:
+        """Return current session state for user, or 'IDLE' if no session."""
+        session = await self._db.get_session(user_npub)
+        if session is None:
+            return IDLE
+        return session["state"]
+
+    async def is_busy(self, user_npub: str) -> bool:
+        """Check if user has an active (non-IDLE) session."""
+        state = await self.get_state(user_npub)
+        return state != IDLE
+
+    async def handle_yes(self, user_npub: str, job_id: str) -> None:
+        """User says yes to outreach. Transition from IDLE to OTP_CONFIRM."""
+        # Create session in DB
+        await self._db.upsert_session(user_npub, OTP_CONFIRM, job_id=job_id)
+
+        # Look up job to get service_id and action
+        job = await self._db.get_job(job_id)
+        if job is None:
+            log.error("handle_yes: job %s not found in local DB", job_id)
+            await self._send_dm(user_npub, messages.error_generic())
+            await self._db.delete_session(user_npub)
+            return
+
+        await self._send_dm(
+            user_npub,
+            messages.otp_confirm(job["service_id"], job["action"]),
+        )
+
+    async def handle_otp_confirm_yes(self, user_npub: str) -> None:
+        """User confirms OTP availability. Transition OTP_CONFIRM -> EXECUTING."""
+        session = await self._db.get_session(user_npub)
+        if session is None or session["state"] != OTP_CONFIRM:
+            log.warning(
+                "handle_otp_confirm_yes: unexpected state for %s", user_npub
+            )
+            return
+
+        job_id = session["job_id"]
+        job = await self._db.get_job(job_id)
+        if job is None:
+            log.error("handle_otp_confirm_yes: job %s not found", job_id)
+            await self._send_dm(user_npub, messages.error_generic())
+            await self._db.delete_session(user_npub)
+            return
+
+        service_id = job["service_id"]
+        action = job["action"]
+
+        # Fetch credentials from VPS API
+        creds = await self._api.get_credentials(user_npub, service_id)
+        if creds is None:
+            await self._send_dm(
+                user_npub,
+                messages.no_credentials(service_id, self._config.base_url),
+            )
+            await self._db.delete_session(user_npub)
+            return
+
+        # Update session state to EXECUTING
+        await self._db.upsert_session(
+            user_npub, EXECUTING, job_id=job_id, otp_attempts=0
+        )
+
+        # DM user
+        await self._send_dm(
+            user_npub, messages.executing(service_id, action)
+        )
+
+        # Update VPS job status to active
+        try:
+            await self._api.update_job_status(job_id, "active")
+        except Exception:
+            log.exception("Failed to update VPS job status for %s", job_id)
+
+        # Update local job status to active
+        await self._db.update_job_status(job_id, "active")
+
+        # Dispatch to agent
+        accepted = await self._agent.execute(
+            job_id, service_id, action, creds
+        )
+        if not accepted:
+            await self._fail_job(user_npub, job, "Agent rejected the job")
+            return
+
+        # Schedule OTP timeout timer
+        await self._timers.schedule_delay(
+            OTP_TIMEOUT, job_id, self._config.otp_timeout_seconds
+        )
+
+    async def handle_otp_confirm_no(self, user_npub: str) -> None:
+        """User declines OTP confirm. Cancel session."""
+        await self._db.delete_session(user_npub)
+        await self._send_dm(user_npub, messages.session_cancelled())
+
+    async def handle_otp_needed(
+        self, job_id: str, service: str, prompt: str | None
+    ) -> None:
+        """Agent callback: needs OTP code. EXECUTING -> AWAITING_OTP."""
+        session = await self._get_session_by_job_id(job_id)
+        if session is None:
+            log.warning("handle_otp_needed: no session for job %s", job_id)
+            return
+
+        user_npub = session["user_npub"]
+        otp_attempts = session["otp_attempts"]
+
+        # Update state to AWAITING_OTP
+        await self._db.upsert_session(
+            user_npub, AWAITING_OTP, job_id=job_id, otp_attempts=otp_attempts
+        )
+
+        # DM user for OTP code
+        await self._send_dm(
+            user_npub, messages.otp_needed(service, prompt)
+        )
+
+        # Cancel any existing OTP timeout, schedule fresh one
+        await self._timers.cancel(OTP_TIMEOUT, job_id)
+        await self._timers.schedule_delay(
+            OTP_TIMEOUT, job_id, self._config.otp_timeout_seconds
+        )
+
+    async def handle_otp_input(self, user_npub: str, code: str) -> None:
+        """User sends OTP digits. AWAITING_OTP -> EXECUTING."""
+        session = await self._db.get_session(user_npub)
+        if session is None or session["state"] != AWAITING_OTP:
+            log.warning(
+                "handle_otp_input: unexpected state for %s", user_npub
+            )
+            return
+
+        job_id = session["job_id"]
+        otp_attempts = session["otp_attempts"] + 1
+
+        # Relay code to agent (in memory only, never persisted)
+        await self._agent.relay_otp(job_id, code)
+
+        # Update state to EXECUTING
+        await self._db.upsert_session(
+            user_npub, EXECUTING, job_id=job_id, otp_attempts=otp_attempts
+        )
+
+        # Cancel OTP timeout timer
+        await self._timers.cancel(OTP_TIMEOUT, job_id)
+
+        # DM acknowledgement
+        await self._send_dm(user_npub, messages.otp_received())
+
+        # Log with redacted content (NEVER log the actual code)
+        await self._db.log_message("inbound", user_npub, "[OTP_REDACTED]")
+
+    async def handle_result(
+        self,
+        job_id: str,
+        success: bool,
+        access_end_date: str | None,
+        error: str | None,
+        duration_seconds: int,
+    ) -> None:
+        """Agent callback: job finished. EXECUTING/AWAITING_OTP -> INVOICE_SENT or IDLE."""
+        session = await self._get_session_by_job_id(job_id)
+        if session is None:
+            log.warning("handle_result: no session for job %s", job_id)
+            return
+
+        user_npub = session["user_npub"]
+
+        # Cancel OTP timeout timer (may or may not exist)
+        await self._timers.cancel(OTP_TIMEOUT, job_id)
+
+        job = await self._db.get_job(job_id)
+        if job is None:
+            log.error("handle_result: job %s not found in local DB", job_id)
+            await self._db.delete_session(user_npub)
+            return
+
+        service_id = job["service_id"]
+        action = job["action"]
+
+        if success:
+            # Send success DM (different per action type)
+            if action == "cancel":
+                await self._send_dm(
+                    user_npub,
+                    messages.action_success_cancel(service_id, access_end_date),
+                )
+            else:
+                await self._send_dm(
+                    user_npub,
+                    messages.action_success_resume(service_id),
+                )
+
+            # Update local job with access_end_date if present
+            update_kwargs = {}
+            if access_end_date:
+                update_kwargs["access_end_date"] = access_end_date
+
+            # Create invoice via VPS API
+            invoice_data = await self._api.create_invoice(
+                job_id, self._config.action_price_sats, user_npub
+            )
+
+            # Update local job with invoice_id and amount
+            await self._db.update_job_status(
+                job_id,
+                "active",
+                invoice_id=invoice_data["invoice_id"],
+                amount_sats=self._config.action_price_sats,
+                **update_kwargs,
+            )
+
+            # Send invoice DM
+            await self._send_dm(
+                user_npub,
+                messages.invoice(
+                    invoice_data["amount_sats"], invoice_data["bolt11"]
+                ),
+            )
+
+            # Transition session to INVOICE_SENT
+            await self._db.upsert_session(
+                user_npub, INVOICE_SENT, job_id=job_id
+            )
+
+            # Schedule payment expiry timer (24h)
+            await self._timers.schedule_delay(
+                PAYMENT_EXPIRY, job_id, self._config.payment_expiry_seconds
+            )
+        else:
+            await self._fail_job(user_npub, job, error)
+
+    async def handle_payment_received(
+        self, job_id: str, amount_sats: int
+    ) -> None:
+        """VPS push: payment received. INVOICE_SENT -> IDLE."""
+        session = await self._get_session_by_job_id(job_id)
+        if session is None:
+            log.warning(
+                "handle_payment_received: no session for job %s", job_id
+            )
+            return
+
+        user_npub = session["user_npub"]
+
+        # Cancel payment expiry timer
+        await self._timers.cancel(PAYMENT_EXPIRY, job_id)
+
+        # VPS already set completed_paid via BTCPay webhook, but update local
+        await self._db.update_job_status(job_id, "completed_paid")
+
+        # DM user
+        await self._send_dm(
+            user_npub, messages.payment_received(amount_sats)
+        )
+
+        # Delete session (back to IDLE)
+        await self._db.delete_session(user_npub)
+
+    async def handle_payment_expired(self, job_id: str) -> None:
+        """Timer or VPS push: payment expired. INVOICE_SENT -> IDLE."""
+        session = await self._get_session_by_job_id(job_id)
+        if session is None:
+            log.warning(
+                "handle_payment_expired: no session for job %s", job_id
+            )
+            return
+
+        user_npub = session["user_npub"]
+
+        # Update VPS job status to completed_reneged
+        try:
+            await self._api.update_job_status(job_id, "completed_reneged")
+        except Exception:
+            log.exception(
+                "Failed to update VPS job status for %s", job_id
+            )
+
+        # Update local job status
+        await self._db.update_job_status(job_id, "completed_reneged")
+
+        # Look up debt_sats from VPS user
+        job = await self._db.get_job(job_id)
+        service_id = job["service_id"] if job else "unknown"
+
+        user_data = await self._api.get_user(user_npub)
+        debt_sats = user_data.get("debt_sats", 0) if user_data else 0
+
+        # DM user
+        await self._send_dm(
+            user_npub,
+            messages.payment_expired(service_id, debt_sats),
+        )
+
+        # Delete session
+        await self._db.delete_session(user_npub)
+
+    async def handle_otp_timeout(self, job_id: str) -> None:
+        """Timer: OTP not received in 15min. AWAITING_OTP -> IDLE."""
+        session = await self._get_session_by_job_id(job_id)
+        if session is None:
+            log.warning(
+                "handle_otp_timeout: no session for job %s", job_id
+            )
+            return
+
+        user_npub = session["user_npub"]
+
+        if session["state"] != AWAITING_OTP:
+            log.warning(
+                "handle_otp_timeout: session for %s is %s, not AWAITING_OTP",
+                user_npub, session["state"],
+            )
+            return
+
+        # Abort the agent job
+        await self._agent.abort(job_id)
+
+        # Update VPS job status to user_abandon
+        try:
+            await self._api.update_job_status(job_id, "user_abandon")
+        except Exception:
+            log.exception(
+                "Failed to update VPS job status for %s", job_id
+            )
+
+        # Update local job status
+        await self._db.update_job_status(job_id, "user_abandon")
+
+        # DM user
+        await self._send_dm(user_npub, messages.otp_timeout())
+
+        # Delete session
+        await self._db.delete_session(user_npub)
+
+    async def cancel_session(self, user_npub: str) -> None:
+        """Force-cancel a session (e.g., user sends 'cancel' mid-flow)."""
+        session = await self._db.get_session(user_npub)
+        if session is None:
+            return
+
+        job_id = session["job_id"]
+        state = session["state"]
+
+        # If EXECUTING or AWAITING_OTP, abort the agent job
+        if state in (EXECUTING, AWAITING_OTP) and job_id:
+            await self._agent.abort(job_id)
+
+        # Cancel all timers for the job
+        if job_id:
+            await self._timers.cancel(OTP_TIMEOUT, job_id)
+            await self._timers.cancel(PAYMENT_EXPIRY, job_id)
+
+        # Delete session
+        await self._db.delete_session(user_npub)
