@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
 Daily update checker for UnsaltedButter VPS infrastructure.
-Checks BTCPay Server, LND, Next.js, Node.js, and Ubuntu packages
-for available updates and sends a Nostr DM to the operator.
+Checks BTCPay Server, LND, Next.js, Node.js, nostr-tools, nostr-sdk,
+and Ubuntu packages for available updates and sends a Nostr DM to the operator.
 """
 
 import argparse
@@ -57,7 +57,10 @@ def save_state(state: dict) -> None:
 def _run(cmd: list[str], timeout: int = 15) -> str | None:
     try:
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
-        return r.stdout.strip() if r.returncode == 0 else None
+        if r.returncode == 0:
+            return r.stdout.strip()
+        log.debug("Command %s failed (rc=%d): %s", cmd[:3], r.returncode, r.stderr.strip()[:200])
+        return None
     except (subprocess.TimeoutExpired, FileNotFoundError):
         return None
 
@@ -76,11 +79,21 @@ def _find_container(pattern: str) -> str | None:
 def get_current_versions() -> dict[str, str | None]:
     versions: dict[str, str | None] = {}
 
-    # BTCPay Server (discover container dynamically)
+    # BTCPay Server (discover container dynamically, try multiple version sources)
     btcpay = _find_container(r"btcpayserver_\d*$|btcpayserver-\d*$|^generated_btcpayserver")
     if btcpay:
-        out = _run(["sudo", "docker", "exec", btcpay,
-                    "cat", "/etc/btcpayserver_version"])
+        # Try version file first
+        out = _run(["sudo", "docker", "exec", btcpay, "cat", "/etc/btcpayserver_version"])
+        if not out:
+            # Fallback: image tag (e.g., "btcpayserver/btcpayserver:1.13.5" -> "1.13.5")
+            out = _run(["sudo", "docker", "inspect", btcpay, "--format", "{{.Config.Image}}"])
+            if out and ":" in out:
+                out = out.split(":")[-1].lstrip("v")
+            else:
+                out = None
+        if not out:
+            # Fallback: BTCPAY_VERSION env var inside container
+            out = _run(["sudo", "docker", "exec", btcpay, "printenv", "BTCPAY_VERSION"])
         versions["btcpay"] = out
     else:
         versions["btcpay"] = None
@@ -109,6 +122,22 @@ def get_current_versions() -> dict[str, str | None]:
     # Node.js
     out = _run(["node", "--version"])
     versions["nodejs"] = out.lstrip("v") if out else None
+
+    # nostr-tools (npm package used by web app)
+    try:
+        pkg = json.loads(PACKAGE_JSON.read_text())
+        dep = pkg.get("dependencies", {}).get("nostr-tools", "")
+        versions["nostr_tools"] = dep.lstrip("^~") if dep else None
+    except (FileNotFoundError, json.JSONDecodeError):
+        versions["nostr_tools"] = None
+
+    # nostr-sdk (Python package used by update-checker venv, orchestrator, nostr-bot)
+    out = _run([sys.executable, "-m", "pip", "show", "nostr-sdk"])
+    if out:
+        m = re.search(r"^Version:\s*(.+)$", out, re.MULTILINE)
+        versions["nostr_sdk"] = m.group(1).strip() if m else None
+    else:
+        versions["nostr_sdk"] = None
 
     return versions
 
@@ -190,6 +219,20 @@ async def fetch_latest_versions(current_node_major: int | None = None) -> dict[s
         except Exception as exc:
             log.error("Failed to fetch Node.js latest version: %s", exc)
 
+        try:
+            nostr_tools_ver = await _npm_latest(client, "nostr-tools")
+            results["nostr_tools"] = {"version": nostr_tools_ver, "body": "", "url": "https://github.com/nbd-wtf/nostr-tools/releases"}
+        except Exception as exc:
+            log.error("Failed to fetch nostr-tools latest version: %s", exc)
+
+        try:
+            r = await client.get("https://pypi.org/pypi/nostr-sdk/json")
+            r.raise_for_status()
+            nostr_sdk_ver = r.json()["info"]["version"]
+            results["nostr_sdk"] = {"version": nostr_sdk_ver, "body": "", "url": "https://pypi.org/project/nostr-sdk/#history"}
+        except Exception as exc:
+            log.error("Failed to fetch nostr-sdk latest version: %s", exc)
+
     return results
 
 
@@ -227,6 +270,8 @@ DISPLAY_NAMES = {
     "lnd": "LND",
     "nextjs": "Next.js",
     "nodejs": "Node.js",
+    "nostr_tools": "nostr-tools",
+    "nostr_sdk": "nostr-sdk",
 }
 
 # How to update each component (one-line action)
@@ -235,6 +280,8 @@ UPDATE_ACTIONS = {
     "lnd": "Updated via BTCPay Docker stack (see BTCPay update procedure)",
     "nextjs": "Bump version in package.json, test locally, deploy with deploy.sh",
     "nodejs": "Install new version on VPS, then deploy.sh (PM2 restart)",
+    "nostr_tools": "Bump in web/package.json, test locally, deploy with deploy.sh",
+    "nostr_sdk": "Update pinned version in requirements.txt files, test, redeploy bots",
 }
 
 
@@ -266,7 +313,7 @@ def compare_and_classify(
     """Return (critical, updates, up_to_date)."""
     critical, updates, up_to_date = [], [], []
 
-    for key in ("btcpay", "lnd", "nextjs", "nodejs"):
+    for key in ("btcpay", "lnd", "nextjs", "nodejs", "nostr_tools", "nostr_sdk"):
         cur = current.get(key)
         lat = latest.get(key, {})
         lat_ver = lat.get("version", "")
