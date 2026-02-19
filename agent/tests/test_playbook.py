@@ -332,6 +332,133 @@ class TestPlaybookListAll:
 
 
 # ---------------------------------------------------------------------------
+# Playbook.load / load_all (multiple variants)
+# ---------------------------------------------------------------------------
+
+
+def _write_playbook(path: Path, service: str, flow: str, tier: str = '') -> None:
+    """Helper: write a minimal playbook JSON file."""
+    data = {
+        'service': service,
+        'flow': flow,
+        'version': 1,
+        'notes': '',
+        'last_validated': None,
+        'steps': [{'action': 'navigate', 'url': f'https://{service}.com'}],
+    }
+    if tier:
+        data['tier'] = tier
+    path.write_text(json.dumps(data))
+
+
+class TestPlaybookLoadAll:
+    """load_all() discovers multiple variant playbooks for (service, flow)."""
+
+    def test_single_playbook(self, tmp_path: Path, monkeypatch) -> None:
+        """One file matches: returns a list of one."""
+        monkeypatch.setattr('agent.playbook.PLAYBOOK_DIR', tmp_path)
+        _write_playbook(tmp_path / 'hulu_cancel.json', 'hulu', 'cancel')
+
+        result = Playbook.load_all('hulu', 'cancel')
+        assert len(result) == 1
+        assert result[0].service == 'hulu'
+
+    def test_multiple_variants(self, tmp_path: Path, monkeypatch) -> None:
+        """Multiple variant files are all returned."""
+        monkeypatch.setattr('agent.playbook.PLAYBOOK_DIR', tmp_path)
+        _write_playbook(tmp_path / 'hulu_cancel.json', 'hulu', 'cancel')
+        _write_playbook(tmp_path / 'hulu_cancel_help.json', 'hulu', 'cancel')
+        _write_playbook(tmp_path / 'hulu_cancel_home.json', 'hulu', 'cancel')
+
+        result = Playbook.load_all('hulu', 'cancel')
+        assert len(result) == 3
+
+    def test_versioned_backup_skipped(self, tmp_path: Path, monkeypatch) -> None:
+        """Files like hulu_cancel_v2.json are skipped (versioned backups)."""
+        monkeypatch.setattr('agent.playbook.PLAYBOOK_DIR', tmp_path)
+        _write_playbook(tmp_path / 'hulu_cancel.json', 'hulu', 'cancel')
+        _write_playbook(tmp_path / 'hulu_cancel_v2.json', 'hulu', 'cancel')
+
+        result = Playbook.load_all('hulu', 'cancel')
+        assert len(result) == 1
+
+    def test_tier_filter(self, tmp_path: Path, monkeypatch) -> None:
+        """tier parameter filters by metadata, not filename."""
+        monkeypatch.setattr('agent.playbook.PLAYBOOK_DIR', tmp_path)
+        _write_playbook(tmp_path / 'hulu_resume_premium_home.json', 'hulu', 'resume', tier='premium')
+        _write_playbook(tmp_path / 'hulu_resume_premium_account.json', 'hulu', 'resume', tier='premium')
+        _write_playbook(tmp_path / 'hulu_resume_ads_home.json', 'hulu', 'resume', tier='ads')
+
+        premium = Playbook.load_all('hulu', 'resume', tier='premium')
+        assert len(premium) == 2
+        assert all(pb.tier == 'premium' for pb in premium)
+
+        ads = Playbook.load_all('hulu', 'resume', tier='ads')
+        assert len(ads) == 1
+
+    def test_no_tier_filter_returns_all(self, tmp_path: Path, monkeypatch) -> None:
+        """Without tier filter, all variants (any tier) are returned."""
+        monkeypatch.setattr('agent.playbook.PLAYBOOK_DIR', tmp_path)
+        _write_playbook(tmp_path / 'hulu_resume.json', 'hulu', 'resume')
+        _write_playbook(tmp_path / 'hulu_resume_premium.json', 'hulu', 'resume', tier='premium')
+
+        result = Playbook.load_all('hulu', 'resume')
+        assert len(result) == 2
+
+    def test_no_matches(self, tmp_path: Path, monkeypatch) -> None:
+        """Empty list when no files match."""
+        monkeypatch.setattr('agent.playbook.PLAYBOOK_DIR', tmp_path)
+        result = Playbook.load_all('nonexistent', 'cancel')
+        assert result == []
+
+    def test_other_service_not_included(self, tmp_path: Path, monkeypatch) -> None:
+        """Files for a different service are not returned."""
+        monkeypatch.setattr('agent.playbook.PLAYBOOK_DIR', tmp_path)
+        _write_playbook(tmp_path / 'hulu_cancel.json', 'hulu', 'cancel')
+        _write_playbook(tmp_path / 'netflix_cancel.json', 'netflix', 'cancel')
+
+        result = Playbook.load_all('hulu', 'cancel')
+        assert len(result) == 1
+        assert result[0].service == 'hulu'
+
+
+class TestPlaybookLoadRandom:
+    """load() picks a random variant from load_all()."""
+
+    def test_load_returns_one(self, tmp_path: Path, monkeypatch) -> None:
+        """load() returns a single Playbook (not a list)."""
+        monkeypatch.setattr('agent.playbook.PLAYBOOK_DIR', tmp_path)
+        _write_playbook(tmp_path / 'hulu_cancel.json', 'hulu', 'cancel')
+        _write_playbook(tmp_path / 'hulu_cancel_help.json', 'hulu', 'cancel')
+
+        pb = Playbook.load('hulu', 'cancel')
+        assert isinstance(pb, Playbook)
+        assert pb.service == 'hulu'
+
+    def test_load_no_match_raises(self, tmp_path: Path, monkeypatch) -> None:
+        """FileNotFoundError when no playbooks match."""
+        monkeypatch.setattr('agent.playbook.PLAYBOOK_DIR', tmp_path)
+        with pytest.raises(FileNotFoundError, match='No playbooks found'):
+            Playbook.load('nonexistent', 'cancel')
+
+    def test_load_with_tier(self, tmp_path: Path, monkeypatch) -> None:
+        """load() with tier only picks from matching tier."""
+        monkeypatch.setattr('agent.playbook.PLAYBOOK_DIR', tmp_path)
+        _write_playbook(tmp_path / 'hulu_resume_premium.json', 'hulu', 'resume', tier='premium')
+        _write_playbook(tmp_path / 'hulu_resume_ads.json', 'hulu', 'resume', tier='ads')
+
+        pb = Playbook.load('hulu', 'resume', tier='premium')
+        assert pb.tier == 'premium'
+
+    def test_load_real_netflix_still_works(self) -> None:
+        """Existing netflix_cancel.json loads via the new random-choice path."""
+        pb = Playbook.load('netflix', 'cancel')
+        assert pb.service == 'netflix'
+        assert pb.flow == 'cancel'
+        assert len(pb.steps) > 0
+
+
+# ---------------------------------------------------------------------------
 # JobContext
 # ---------------------------------------------------------------------------
 

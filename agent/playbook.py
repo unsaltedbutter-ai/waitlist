@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import random
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -143,14 +144,50 @@ class Playbook:
 
     @staticmethod
     def load(service: str, flow: str, tier: str = '') -> Playbook:
-        """Load a playbook from agent/playbooks/<service>_<flow>[_<tier>].json."""
-        filename = f'{service}_{flow}'
-        if tier:
-            filename += f'_{tier}'
-        path = PLAYBOOK_DIR / f'{filename}.json'
-        if not path.exists():
-            raise FileNotFoundError(f'Playbook not found: {path}')
-        return Playbook.from_file(path)
+        """Load a random playbook for (service, flow[, tier]).
+
+        When multiple variant files exist (e.g. hulu_cancel_help.json,
+        hulu_cancel_home.json), one is chosen at random. This makes the
+        bot less fingerprint-able.
+        """
+        candidates = Playbook.load_all(service, flow, tier=tier)
+        if not candidates:
+            label = f'{service}_{flow}'
+            if tier:
+                label += f' (tier={tier})'
+            raise FileNotFoundError(f'No playbooks found for {label} in {PLAYBOOK_DIR}')
+        return random.choice(candidates)
+
+    @staticmethod
+    def load_all(service: str, flow: str, tier: str = '') -> list[Playbook]:
+        """Load every playbook variant for (service, flow).
+
+        Matches {service}_{flow}.json and {service}_{flow}_*.json,
+        skipping versioned backups (*_v{N}.json). When *tier* is
+        non-empty, only playbooks whose tier metadata matches are
+        returned.
+        """
+        prefix = f'{service}_{flow}'
+        paths = sorted(PLAYBOOK_DIR.glob(f'{prefix}.json'))
+        paths += sorted(PLAYBOOK_DIR.glob(f'{prefix}_*.json'))
+
+        results: list[Playbook] = []
+        for path in paths:
+            # Skip versioned backups like netflix_cancel_v2.json
+            stem = path.stem
+            suffix = stem[len(prefix):]  # '' or '_help' or '_v2'
+            if suffix:
+                tag = suffix.lstrip('_')
+                if tag and tag[0] == 'v' and tag[1:].isdigit():
+                    continue
+            try:
+                pb = Playbook.from_file(path)
+            except (json.JSONDecodeError, KeyError):
+                continue
+            if tier and pb.tier != tier:
+                continue
+            results.append(pb)
+        return results
 
     @staticmethod
     def from_file(path: Path) -> Playbook:
