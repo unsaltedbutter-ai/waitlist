@@ -272,7 +272,9 @@ install_cron() {
 }
 
 # -- Clean old ~/scripts/ cron entries -----------------------------
-crontab -l 2>/dev/null | grep -v '/butter/scripts/' | crontab - 2>/dev/null || true
+# Remove entries pointing to /home/butter/scripts/ (old ad-hoc path).
+# Won't match /home/butter/unsaltedbutter/scripts/ (the repo path).
+crontab -l 2>/dev/null | grep -vF '/home/butter/scripts/' | crontab - 2>/dev/null || true
 echo "Old ~/scripts/ cron entries cleaned"
 
 # -- Install all cron jobs -----------------------------------------
@@ -290,7 +292,13 @@ install_cron "lnd-balance.sh" \
 install_cron "backup-daily.sh" \
     "0 3 * * * ${REMOTE_DIR}/scripts/backup-daily.sh >> \$HOME/logs/backup.log 2>&1"
 
-echo "Cron jobs: update-checker (10:00), health-check (*/15), lnd-balance (06:00), backup (03:00)"
+install_cron "backup-offsite.sh" \
+    "0 4 * * * ${REMOTE_DIR}/scripts/backup-offsite.sh 2>&1"
+
+install_cron "lightning-backup.sh" \
+    "0 */6 * * * ${REMOTE_DIR}/scripts/lightning-backup.sh >> \$HOME/logs/scb.log 2>&1"
+
+echo "Cron jobs: update-checker (10:00), health-check (*/15), lnd-balance (06:00), backup (03:00), offsite (04:00), lightning-backup (*/6h)"
 
 # -- Sudoers for apt-get update ---------------------------------
 SUDOERS="/etc/sudoers.d/update-checker"
@@ -342,12 +350,14 @@ echo "Daily cron timer: installed and started (10:00 UTC / 5:00 AM EST)"
 echo ""
 echo "=== Setup Complete ==="
 echo ""
-echo "  Venv:              $UC_VENV"
-echo "  update-checker.py  daily 10:00 UTC"
-echo "  health-check.sh    every 15 min"
-echo "  lnd-balance.sh     daily 06:00 UTC"
-echo "  backup-daily.sh    daily 03:00 UTC"
-echo "  daily cron timer   unsaltedbutter-daily-cron.timer (10:00 UTC)"
+echo "  Venv:                $UC_VENV"
+echo "  update-checker.py    daily 10:00 UTC"
+echo "  health-check.sh      every 15 min"
+echo "  lnd-balance.sh       daily 06:00 UTC"
+echo "  backup-daily.sh      daily 03:00 UTC"
+echo "  backup-offsite.sh    daily 04:00 UTC"
+echo "  lightning-backup.sh  every 6 hours"
+echo "  daily cron timer     unsaltedbutter-daily-cron.timer (10:00 UTC)"
 echo ""
 echo "  Test nostr-alert:"
 echo "    ${UC_VENV}/bin/python ${REMOTE_DIR}/scripts/nostr-alert.py --dry-run --key test 'Test alert'"
@@ -493,7 +503,7 @@ sudo systemctl is-active nginx && echo "nginx is running ✓"
 
 echo ""
 echo "=== Cron Jobs ==="
-for script in update-checker.py health-check.sh lnd-balance.sh backup-daily.sh; do
+for script in update-checker.py health-check.sh lnd-balance.sh backup-daily.sh backup-offsite.sh lightning-backup.sh; do
     if crontab -l 2>/dev/null | grep -qF "$script"; then
         echo "$script ✓"
     else
