@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useAuth, authFetch } from "@/lib/hooks/use-auth";
 import {
   DndContext,
@@ -127,6 +127,10 @@ export default function DashboardPage() {
   // Remove state
   const [removingService, setRemovingService] = useState(false);
 
+  // Drag reorder: in-flight guard to prevent concurrent PUTs
+  const reorderInFlightRef = useRef(false);
+  const pendingReorderRef = useRef<{ order: string[]; rollback: EnrichedQueueItem[] } | null>(null);
+
   // ---------- Data fetching ----------
 
   const fetchData = useCallback(async () => {
@@ -247,6 +251,23 @@ export default function DashboardPage() {
     })
   );
 
+  const flushReorder = useCallback(async () => {
+    while (pendingReorderRef.current) {
+      const { order, rollback } = pendingReorderRef.current;
+      pendingReorderRef.current = null;
+      try {
+        await authFetch("/api/queue", {
+          method: "PUT",
+          body: JSON.stringify({ order }),
+        });
+      } catch {
+        setQueue(rollback);
+        setError("Failed to save queue order. Please try again.");
+      }
+    }
+    reorderInFlightRef.current = false;
+  }, []);
+
   const handleDragEnd = useCallback(
     async (event: DragEndEvent) => {
       const { active, over } = event;
@@ -270,19 +291,29 @@ export default function DashboardPage() {
       const previousQueue = queue; // capture before optimistic update
       setQueue(fullReordered);
 
+      const order = fullReordered.map((q) => q.service_id);
+
+      // If a PUT is already in flight, queue this order (replacing any
+      // previously queued order). Only the final state matters.
+      if (reorderInFlightRef.current) {
+        pendingReorderRef.current = { order, rollback: previousQueue };
+        return;
+      }
+
+      reorderInFlightRef.current = true;
       try {
         await authFetch("/api/queue", {
           method: "PUT",
-          body: JSON.stringify({
-            order: fullReordered.map((q) => q.service_id),
-          }),
+          body: JSON.stringify({ order }),
         });
       } catch {
-        setQueue(previousQueue); // revert to captured state
+        setQueue(previousQueue);
         setError("Failed to save queue order. Please try again.");
       }
+      // Flush any order that was queued while this PUT was in flight
+      await flushReorder();
     },
-    [queue, pinnedItems, sortableItems]
+    [queue, pinnedItems, sortableItems, flushReorder]
   );
 
   // ---------- Add service ----------

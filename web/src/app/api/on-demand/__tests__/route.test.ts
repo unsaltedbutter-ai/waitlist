@@ -146,4 +146,21 @@ describe("POST /api/on-demand", () => {
 
     expect(createOnDemandJob).toHaveBeenCalledWith("test-user", "", "");
   });
+
+  // M-5: User not found (stale JWT, deleted account)
+  it("returns 404 when user not found (stale JWT / deleted account)", async () => {
+    vi.mocked(createOnDemandJob).mockResolvedValue({
+      ok: false,
+      status: 404,
+      error: "User not found",
+    });
+
+    const req = makeRequest({ serviceId: "netflix", action: "cancel" });
+    const res = await POST(req as any, { params: Promise.resolve({}) });
+
+    expect(res.status).toBe(404);
+    const data = await res.json();
+    expect(data.error).toBe("User not found");
+    expect(data.debt_sats).toBeUndefined();
+  });
 });

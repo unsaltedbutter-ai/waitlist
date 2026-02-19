@@ -75,20 +75,24 @@ export function QueueItemOverflowMenu({
           >
             Update credentials
           </button>
-          <button
-            type="button"
-            onClick={() => handleAction(onRequestCancel)}
-            className="w-full text-left px-3 py-2 text-sm text-amber-400 hover:bg-border/30 transition-colors"
-          >
-            Request cancel
-          </button>
-          <button
-            type="button"
-            onClick={() => handleAction(onRequestResume)}
-            className="w-full text-left px-3 py-2 text-sm text-blue-400 hover:bg-border/30 transition-colors"
-          >
-            Request resume
-          </button>
+          {!hasActiveJob && (
+            <>
+              <button
+                type="button"
+                onClick={() => handleAction(onRequestCancel)}
+                className="w-full text-left px-3 py-2 text-sm text-amber-400 hover:bg-border/30 transition-colors"
+              >
+                Request cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => handleAction(onRequestResume)}
+                className="w-full text-left px-3 py-2 text-sm text-blue-400 hover:bg-border/30 transition-colors"
+              >
+                Request resume
+              </button>
+            </>
+          )}
           {onRemoveService && !hasActiveJob && (
             <>
               <div className="border-t border-border my-1" />

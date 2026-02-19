@@ -4,12 +4,12 @@ interface AccessDateLineProps {
   accessEndDate: string | null | undefined;
 }
 
-function formatShortDate(iso: string): string {
+export function formatShortDate(iso: string): string {
   const d = new Date(iso + "T00:00:00");
   return d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
 }
 
-function daysUntil(iso: string): number {
+export function daysUntil(iso: string): number {
   const target = new Date(iso + "T00:00:00");
   const now = new Date();
   now.setHours(0, 0, 0, 0);
@@ -27,6 +27,14 @@ export function AccessDateLine({ accessEndDate }: AccessDateLineProps) {
     return (
       <span className="text-xs text-muted/60">
         Access ended {formatted}
+      </span>
+    );
+  }
+
+  if (days === 0) {
+    return (
+      <span className="text-xs text-amber-400">
+        Access until {formatted} (Ends today)
       </span>
     );
   }

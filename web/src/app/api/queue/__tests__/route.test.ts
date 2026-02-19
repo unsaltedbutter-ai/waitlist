@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { mockQueryResult } from "@/__test-utils__/fixtures";
+import { TERMINAL_STATUSES, COMPLETED_STATUSES } from "@/lib/constants";
 
 vi.mock("@/lib/db", () => ({
   query: vi.fn(),
@@ -320,6 +321,42 @@ describe("PUT /api/queue", () => {
     expect(onboardCall).toBeTruthy();
     expect(onboardCall![0]).toContain("onboarded_at IS NULL");
   });
+
+  // H-3 / M-7: Transaction error propagates as 500
+  it("returns 500 when transaction throws (simulates rollback / DB failure)", async () => {
+    mockServices(["netflix", "hulu"]);
+    mockCreds(["netflix", "hulu"]);
+    mockExistingPlanIds();
+
+    vi.mocked(transaction).mockRejectedValueOnce(
+      new Error("could not serialize access due to concurrent update")
+    );
+
+    const req = makeRequest({ order: ["netflix", "hulu"] });
+    const res = await PUT(req as any, { params: Promise.resolve({}) });
+    expect(res.status).toBe(500);
+    const data = await res.json();
+    expect(data.error).toBe("Internal server error");
+  });
+
+  it("returns 500 when a query inside the transaction callback throws", async () => {
+    mockServices(["netflix"]);
+    mockCreds(["netflix"]);
+    mockExistingPlanIds();
+
+    vi.mocked(transaction).mockImplementationOnce(async (cb) => {
+      const txQuery = vi.fn()
+        .mockResolvedValueOnce(mockQueryResult([])) // DELETE succeeds
+        .mockRejectedValueOnce(new Error("unique_violation")); // INSERT fails
+      return cb(txQuery as any);
+    });
+
+    const req = makeRequest({ order: ["netflix"] });
+    const res = await PUT(req as any, { params: Promise.resolve({}) });
+    expect(res.status).toBe(500);
+    const data = await res.json();
+    expect(data.error).toBe("Internal server error");
+  });
 });
 
 // Finding 4.1: database connection failure on GET (no try/catch in route)
@@ -516,5 +553,55 @@ describe("GET /api/queue", () => {
     // so last_access_end_date is also null
     expect(item.last_access_end_date).toBeNull();
     expect(item.last_completed_action).toBeNull();
+  });
+
+  // H-2: Empty queue returns 200 with { queue: [] }
+  it("returns 200 with empty array when user has no queue entries", async () => {
+    vi.mocked(query).mockResolvedValueOnce(mockQueryResult([]));
+
+    const req = new Request("http://localhost/api/queue");
+    const res = await GET(req as any, { params: Promise.resolve({}) });
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data.queue).toEqual([]);
+  });
+
+  // H-1: SQL parameter binding verification
+  it("passes correct parameter count and ordering to the enriched queue query", async () => {
+    vi.mocked(query).mockResolvedValueOnce(mockQueryResult([]));
+
+    const req = new Request("http://localhost/api/queue");
+    await GET(req as any, { params: Promise.resolve({}) });
+
+    expect(query).toHaveBeenCalledOnce();
+    const [sql, params] = vi.mocked(query).mock.calls[0];
+
+    // Parameter array: [userId, ...TERMINAL_STATUSES, ...COMPLETED_STATUSES]
+    const expectedLength = 1 + TERMINAL_STATUSES.length + COMPLETED_STATUSES.length;
+    expect(params).toHaveLength(expectedLength);
+
+    // $1 = userId
+    expect(params![0]).toBe("test-user");
+
+    // $2..$N = TERMINAL_STATUSES in order
+    for (let i = 0; i < TERMINAL_STATUSES.length; i++) {
+      expect(params![1 + i]).toBe(TERMINAL_STATUSES[i]);
+    }
+
+    // Remaining params = COMPLETED_STATUSES in order
+    const completedOffset = 1 + TERMINAL_STATUSES.length;
+    for (let i = 0; i < COMPLETED_STATUSES.length; i++) {
+      expect(params![completedOffset + i]).toBe(COMPLETED_STATUSES[i]);
+    }
+
+    // Verify SQL placeholders match: terminal placeholders start at $2
+    const terminalPlaceholders = TERMINAL_STATUSES.map((_, i) => `$${i + 2}`).join(", ");
+    expect(sql).toContain(terminalPlaceholders);
+
+    // Completed placeholders start after terminal statuses
+    const completedPlaceholders = COMPLETED_STATUSES.map(
+      (_, i) => `$${TERMINAL_STATUSES.length + 2 + i}`
+    ).join(", ");
+    expect(sql).toContain(completedPlaceholders);
   });
 });

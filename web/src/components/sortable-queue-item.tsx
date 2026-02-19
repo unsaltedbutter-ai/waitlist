@@ -38,7 +38,7 @@ export interface SortableQueueItemProps {
 
 type PrimaryAction = "cancel" | "resume";
 
-function getPrimaryAction(item: EnrichedQueueItem): PrimaryAction {
+export function getPrimaryAction(item: EnrichedQueueItem): PrimaryAction {
   if (item.last_completed_action === "cancel") {
     return "resume";
   }
