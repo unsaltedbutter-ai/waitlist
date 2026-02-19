@@ -259,16 +259,16 @@ echo "Installing update-checker dependencies..."
 echo "Update checker dependencies installed."
 
 # -- install_cron helper ----------------------------------------
+# Usage: install_cron <match_string> <cron_line> <comment>
 install_cron() {
     local match="$1"
     local cron_line="$2"
-    if crontab -l 2>/dev/null | grep -qF "$match"; then
-        (crontab -l 2>/dev/null | grep -vF "$match"; echo "$cron_line") | crontab -
-        echo "Cron ($match): updated"
-    else
-        (crontab -l 2>/dev/null; echo "$cron_line") | crontab -
-        echo "Cron ($match): installed"
-    fi
+    local comment="$3"
+    # Remove any existing entry (and its comment line) for this script
+    crontab -l 2>/dev/null | grep -vF "$match" | crontab - 2>/dev/null || true
+    # Append comment + cron line
+    (crontab -l 2>/dev/null; echo "# $comment"; echo "$cron_line") | crontab -
+    echo "Cron ($match): installed"
 }
 
 # -- Clean old ~/scripts/ cron entries -----------------------------
@@ -280,23 +280,29 @@ echo "Old ~/scripts/ cron entries cleaned"
 # -- Install all cron jobs -----------------------------------------
 mkdir -p "$HOME/logs"
 
-install_cron "update-checker.py" \
-    "0 10 * * * ${UC_VENV}/bin/python ${REMOTE_DIR}/scripts/update-checker.py >> \$HOME/logs/update-checker.log 2>&1"
-
-install_cron "health-check.sh" \
-    "*/15 * * * * ${REMOTE_DIR}/scripts/health-check.sh >> \$HOME/logs/health.log 2>&1"
-
-install_cron "lnd-balance.sh" \
-    "0 6 * * * ${REMOTE_DIR}/scripts/lnd-balance.sh >> \$HOME/logs/lnd-balance.log 2>&1"
-
 install_cron "backup-daily.sh" \
-    "0 3 * * * ${REMOTE_DIR}/scripts/backup-daily.sh >> \$HOME/logs/backup.log 2>&1"
+    "0 3 * * * ${REMOTE_DIR}/scripts/backup-daily.sh >> \$HOME/logs/backup.log 2>&1" \
+    "Daily backup: app PG, BTCPay PG, LND SCB, nginx config (03:00 UTC)"
 
 install_cron "backup-offsite.sh" \
-    "0 4 * * * ${REMOTE_DIR}/scripts/backup-offsite.sh 2>&1"
+    "0 4 * * * ${REMOTE_DIR}/scripts/backup-offsite.sh 2>&1" \
+    "Daily offsite sync to Hetzner Storage Box (04:00 UTC, after local backup)"
+
+install_cron "lnd-balance.sh" \
+    "0 6 * * * ${REMOTE_DIR}/scripts/lnd-balance.sh >> \$HOME/logs/lnd-balance.log 2>&1" \
+    "Daily LND balance log + inbound liquidity alert (06:00 UTC)"
+
+install_cron "update-checker.py" \
+    "0 10 * * * ${UC_VENV}/bin/python ${REMOTE_DIR}/scripts/update-checker.py >> \$HOME/logs/update-checker.log 2>&1" \
+    "Daily software update check + Nostr DM report (10:00 UTC)"
+
+install_cron "health-check.sh" \
+    "*/15 * * * * ${REMOTE_DIR}/scripts/health-check.sh >> \$HOME/logs/health.log 2>&1" \
+    "Health check: disk, memory, Docker, PM2, nginx (every 15 min)"
 
 install_cron "lightning-backup.sh" \
-    "0 */6 * * * ${REMOTE_DIR}/scripts/lightning-backup.sh >> \$HOME/logs/scb.log 2>&1"
+    "0 */6 * * * ${REMOTE_DIR}/scripts/lightning-backup.sh >> \$HOME/logs/scb.log 2>&1" \
+    "Verified LND SCB export via lncli (every 6 hours)"
 
 echo "Cron jobs: update-checker (10:00), health-check (*/15), lnd-balance (06:00), backup (03:00), offsite (04:00), lightning-backup (*/6h)"
 
