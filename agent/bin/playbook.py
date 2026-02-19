@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""Playbook CLI: record, test, and list playbook files.
+"""Playbook CLI: record, test, learn, and list playbook files.
 
 Commands:
     record  --service <s> --flow <f> [--tier <t>]   Record steps by dwell-detection
+    learn   --service <s> --flow <f> --url <u> ...  VLM-guided automated recording
     test    --service <s> --flow <f> [--tier <t>]   Interactive dry-run
     list                                             Table of all playbooks
 """
@@ -760,6 +761,52 @@ def cmd_list(args):
 
 
 # ------------------------------------------------------------------
+# learn command (VLM-guided recording)
+# ------------------------------------------------------------------
+
+def cmd_learn(args):
+    from agent.recording.recorder import PlaybookRecorder
+    from agent.recording.vlm_client import VLMClient
+
+    service = args.service
+    flow = args.flow
+    start_url = args.url
+
+    credentials = {
+        'email': args.email,
+        'pass': args.password,
+    }
+
+    vlm = VLMClient(
+        base_url=args.vlm_url,
+        api_key=args.vlm_key,
+        model=args.vlm_model,
+    )
+
+    recorder = PlaybookRecorder(
+        vlm=vlm,
+        service=service,
+        flow=flow,
+        credentials=credentials,
+        plan_tier=args.plan or '',
+        variant=args.variant or '',
+        max_steps=args.max_steps,
+        settle_delay=args.settle_delay,
+    )
+
+    try:
+        recorder.run(start_url)
+    except KeyboardInterrupt:
+        print('\nRecording aborted.')
+    finally:
+        vlm.close()
+        # Zero out credentials
+        for key in list(credentials.keys()):
+            credentials[key] = '\x00' * len(credentials[key])
+        credentials.clear()
+
+
+# ------------------------------------------------------------------
 # main
 # ------------------------------------------------------------------
 
@@ -789,6 +836,27 @@ def main():
     p_test.add_argument('--accuracy', choices=['high', 'average', 'low'], default=None,
                         help='Override typing accuracy')
 
+    p_learn = sub.add_parser('learn', help='VLM-guided automated recording')
+    p_learn.add_argument('--service', required=True, help='Service name (e.g. netflix)')
+    p_learn.add_argument('--flow', required=True, choices=['cancel', 'resume'],
+                         help='Flow type')
+    p_learn.add_argument('--url', required=True, help='Starting URL (e.g. login page)')
+    p_learn.add_argument('--email', required=True, help='Account email')
+    p_learn.add_argument('--password', required=True, help='Account password')
+    p_learn.add_argument('--vlm-url', required=True, dest='vlm_url',
+                         help='VLM API base URL (e.g. https://api.x.ai/v1)')
+    p_learn.add_argument('--vlm-key', required=True, dest='vlm_key',
+                         help='VLM API key')
+    p_learn.add_argument('--vlm-model', required=True, dest='vlm_model',
+                         help='VLM model name (e.g. grok-2-vision-latest)')
+    p_learn.add_argument('--plan', default='', help='Plan tier for resume flows')
+    p_learn.add_argument('--variant', default='',
+                         help='Output filename suffix (e.g. home -> netflix_cancel_home.json)')
+    p_learn.add_argument('--max-steps', type=int, default=60, dest='max_steps',
+                         help='Maximum VLM analysis steps (default: 60)')
+    p_learn.add_argument('--settle-delay', type=float, default=2.5, dest='settle_delay',
+                         help='Seconds to wait after each action (default: 2.5)')
+
     sub.add_parser('list', help='List all playbooks')
 
     args = parser.parse_args()
@@ -799,6 +867,7 @@ def main():
 
     dispatch = {
         'record': cmd_record,
+        'learn': cmd_learn,
         'test': cmd_test,
         'list': cmd_list,
     }
