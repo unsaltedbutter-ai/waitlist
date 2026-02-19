@@ -127,7 +127,25 @@ else
     echo "  Funds returned to both parties in a single on-chain transaction."
     echo "  Requires peer to be online and responsive."
 fi
-[ -n "$FEE_FLAG" ] && echo "  Fee rate: $FEE_FLAG"
+
+# Show current fee conditions
+FEE_DATA=$(curl -sf https://mempool.space/api/v1/fees/recommended 2>/dev/null || echo "")
+if [ -n "$FEE_DATA" ]; then
+    echo ""
+    echo "Current mempool fees (sat/vB):"
+    echo "$FEE_DATA" | python3 -c "
+import sys, json
+d = json.load(sys.stdin)
+print(f'    Next block: {d[\"fastestFee\"]}    30 min: {d[\"halfHourFee\"]}    1 hour: {d[\"hourFee\"]}    Economy: {d[\"economyFee\"]}')
+" 2>/dev/null || true
+fi
+
+if [ -n "$FEE_FLAG" ]; then
+    echo "  Selected fee rate: $FEE_FLAG"
+else
+    echo "  Fee rate: LND auto-estimate (target 6 blocks)"
+    echo "  Tip: Use --sat-per-vbyte N for a lower rate if you are not in a hurry."
+fi
 
 echo ""
 read -r -p "Proceed with close? (y/N): " confirm
