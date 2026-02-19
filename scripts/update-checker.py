@@ -403,7 +403,9 @@ def format_message(
     ubuntu_security: list[str],
     ubuntu_other: list[str],
 ) -> str | None:
-    has_updates = critical or updates or ubuntu_security or ubuntu_other
+    # Non-security Ubuntu packages alone don't justify a DM (too noisy).
+    # They piggyback when there are real updates to report.
+    has_updates = critical or updates or ubuntu_security
     if not has_updates:
         return None
 
