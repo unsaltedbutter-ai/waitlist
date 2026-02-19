@@ -79,10 +79,51 @@ CONNECT_OUTPUT=$($LNCLI connect "$NODE_URI" 2>&1) || {
     fi
 }
 
-echo "Opening channel for ${AMOUNT_SATS} sats..."
+# Resolve peer alias
+ALIAS=$($LNCLI getnodeinfo --pub_key "$PUBKEY" 2>/dev/null | lnd_json node alias 2>/dev/null || echo "")
+ALIAS_STR=""
+if [ -n "$ALIAS" ]; then
+    ALIAS_STR=" ($ALIAS)"
+fi
+
+# Show on-chain balance for context
+WALLET=$($LNCLI walletbalance 2>/dev/null)
+ONCHAIN=$(echo "$WALLET" | lnd_json confirmed_balance 2>/dev/null || echo "?")
+
+echo "Open channel:"
+echo "  Peer:     ${PUBKEY:0:16}...${PUBKEY: -6}${ALIAS_STR}"
+echo "  Amount:   $(printf "%'d" "$AMOUNT_SATS") sats"
+echo "  On-chain: $(printf "%'d" "$ONCHAIN") sats available"
 [ -n "$PRIVATE_FLAG" ] && echo "  Private (unannounced) channel"
-[ -n "$FEE_FLAG" ] && echo "  Fee rate: $FEE_FLAG"
 echo ""
+
+# Show current fee conditions
+FEE_DATA=$(curl -sf https://mempool.space/api/v1/fees/recommended 2>/dev/null || echo "")
+if [ -n "$FEE_DATA" ]; then
+    echo "Current mempool fees (sat/vB):"
+    echo "$FEE_DATA" | python3 -c "
+import sys, json
+d = json.load(sys.stdin)
+print(f'    Next block: {d[\"fastestFee\"]}    30 min: {d[\"halfHourFee\"]}    1 hour: {d[\"hourFee\"]}    Economy: {d[\"economyFee\"]}')
+" 2>/dev/null || true
+fi
+
+if [ -n "$FEE_FLAG" ]; then
+    echo "  Selected fee rate: $FEE_FLAG"
+else
+    echo "  Fee rate: LND auto-estimate (target 6 blocks)"
+    echo "  Tip: Use --sat-per-vbyte N for a lower rate if you are not in a hurry."
+fi
+
+echo ""
+read -r -p "Proceed with open? (y/N): " confirm
+if [[ ! "$confirm" =~ ^[yY]$ ]]; then
+    echo "Cancelled."
+    exit 0
+fi
+
+echo ""
+echo "Opening channel..."
 
 # shellcheck disable=SC2086
 RESULT=$($LNCLI openchannel $PRIVATE_FLAG $FEE_FLAG "$PUBKEY" "$AMOUNT_SATS")
@@ -99,5 +140,8 @@ else
 fi
 
 echo ""
+if [ -n "$TXID" ]; then
+    echo "Monitor at: https://mempool.space/tx/$TXID"
+fi
 echo "Monitor pending channels with:"
-echo "  $0 (or) docker exec btcpayserver_lnd_bitcoin lncli -n mainnet --macaroonpath=/data/admin.macaroon --tlscertpath=/data/tls.cert pendingchannels"
+echo "  ./lightning-status.sh"
