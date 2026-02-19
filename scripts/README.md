@@ -77,12 +77,14 @@ All alerting goes through Nostr DMs to the operator (NIP-04). No Sentry, no Data
 | `lightning-send-sats.sh` | Sends sats via BOLT11 invoice or Lightning Address (LNURL-pay resolution). Interactive confirmation. |
 | `lightning-onchain-receive-address.sh` | Generates a new on-chain address (p2wkh or p2tr) for funding the LND wallet. |
 | `lightning-lookup-payment.sh` | Customer support tool: look up payments by hash, decode invoices, show pending/recent invoices. |
+| `lightning-close-channel.sh` | Closes a channel (cooperative or force). Interactive confirmation, shows balance summary before closing. |
 | `lightning-set-fees.sh` | View or update routing fee policy for channels. |
 
 ### Utility
 
 | Script | What it does |
 |---|---|
+| `preflight-check.sh` | Pre-maintenance readiness check. Checks HTLCs, active jobs, pending channels, containers, LND sync. GO/WAIT verdict. |
 | `invite-npub.sh` | Creates a waitlist invite for an npub. With `--operator`, also creates user row and sets `OPERATOR_USER_ID`. |
 | `nostr.env.example` | Template for `~/.unsaltedbutter/nostr.env` (Nostr bot identity, relays, operator npub, zap config, DB URL). |
 | `nginx/unsaltedbutter.conf` | nginx config: reverse proxy for Next.js and BTCPay, rate limiting (10 req/s per IP on /api/), HSTS, scanner blocking. |
@@ -658,15 +660,16 @@ BTCPay Server and LND are deployed together via the btcpayserver-docker stack. U
 **Pre-update checks** (especially with active customers):
 
 ```bash
-# Check for pending HTLCs (in-flight payments)
-~/unsaltedbutter/scripts/lightning-status.sh
-
-# Check for active jobs in the app
-PGPASSWORD=$(cat ~/.unsaltedbutter/db_password) psql -h localhost -U butter -d unsaltedbutter \
-  -c "SELECT count(*) FROM jobs WHERE status IN ('active', 'pending');"
+~/unsaltedbutter/scripts/preflight-check.sh
 ```
 
-Wait for pending HTLCs to resolve and active jobs to complete before updating.
+This checks pending HTLCs, active/pending jobs, pending channels, Docker container health, LND sync status, and PM2 status. It gives a clear GO or WAIT verdict. Do not proceed until it says GO.
+
+For scripting (e.g., in an update script), use `--quiet` and check the exit code:
+
+```bash
+~/unsaltedbutter/scripts/preflight-check.sh --quiet && echo "Safe to proceed" || echo "Not ready"
+```
 
 **Update procedure**:
 
