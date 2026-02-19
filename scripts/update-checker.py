@@ -160,7 +160,7 @@ async def _github_latest(client: httpx.AsyncClient, owner_repo: str) -> tuple[st
 
 async def _npm_latest(client: httpx.AsyncClient, package: str) -> str:
     url = f"{NPM_REGISTRY}/{package}/latest"
-    r = await client.get(url)
+    r = await client.get(url, headers={"Accept": "application/json"})
     r.raise_for_status()
     return r.json()["version"]
 
@@ -171,7 +171,7 @@ async def _node_latest_in_line(client: httpx.AsyncClient, current_major: int | N
     If current_major is known (e.g., 22), return the latest 22.x release.
     If unknown, return the latest LTS of any line.
     """
-    r = await client.get("https://nodejs.org/dist/index.json")
+    r = await client.get("https://nodejs.org/dist/index.json", headers={"Accept": "application/json"})
     r.raise_for_status()
     for entry in r.json():
         ver = entry["version"].lstrip("v")
@@ -226,7 +226,7 @@ async def fetch_latest_versions(current_node_major: int | None = None) -> dict[s
             log.error("Failed to fetch nostr-tools latest version: %s", exc)
 
         try:
-            r = await client.get("https://pypi.org/pypi/nostr-sdk/json")
+            r = await client.get("https://pypi.org/pypi/nostr-sdk/json", headers={"Accept": "application/json"})
             r.raise_for_status()
             nostr_sdk_ver = r.json()["info"]["version"]
             results["nostr_sdk"] = {"version": nostr_sdk_ver, "body": "", "url": "https://pypi.org/project/nostr-sdk/#history"}
