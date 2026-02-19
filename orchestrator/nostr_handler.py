@@ -90,6 +90,14 @@ class NostrHandler(HandleNotification):
         self._user_lock_last_used: dict[str, float] = {}
         # Maximum idle time (seconds) before a user lock is eligible for cleanup.
         self._lock_idle_seconds: float = 300.0
+        # Event deduplication: map event_id_hex -> monotonic timestamp when first seen.
+        # Relays can deliver the same event multiple times (from different relays
+        # or on reconnection). We skip events we have already processed.
+        self._seen_events: dict[str, float] = {}
+        self._seen_events_ttl: float = 600.0  # 10 minutes
+        # Only prune stale entries every N events to avoid O(n) on every call.
+        self._seen_events_check_counter: int = 0
+        self._seen_events_prune_interval: int = 50
 
     def wire(
         self,
@@ -138,10 +146,43 @@ class NostrHandler(HandleNotification):
             del self._user_lock_last_used[npub_hex]
         return len(to_remove)
 
+    # -- Event deduplication ----------------------------------------------------
+
+    def _is_duplicate(self, event_id_hex: str) -> bool:
+        """Check if we have already processed this event ID.
+
+        Returns True if the event was already seen (caller should skip it).
+        Returns False if the event is new (registers it for future checks).
+
+        Periodically prunes entries older than _seen_events_ttl to bound
+        memory usage without paying O(n) on every call.
+        """
+        now = time.monotonic()
+
+        # Periodic cleanup of expired entries.
+        self._seen_events_check_counter += 1
+        if self._seen_events_check_counter >= self._seen_events_prune_interval:
+            self._seen_events_check_counter = 0
+            cutoff = now - self._seen_events_ttl
+            stale = [eid for eid, ts in self._seen_events.items() if ts < cutoff]
+            for eid in stale:
+                del self._seen_events[eid]
+
+        if event_id_hex in self._seen_events:
+            return True
+
+        self._seen_events[event_id_hex] = now
+        return False
+
     # -- HandleNotification interface ------------------------------------------
 
     async def handle(self, relay_url: RelayUrl, subscription_id: str, event: Event):
-        """Route events by kind."""
+        """Route events by kind. Skips duplicate events silently."""
+        event_id_hex = event.id().to_hex()
+        if self._is_duplicate(event_id_hex):
+            log.debug("Skipping duplicate event %s", event_id_hex[:16])
+            return
+
         kind = event.kind()
         try:
             if kind == Kind(4):

@@ -678,8 +678,8 @@ async def test_concurrent_dms_same_user_serialized(mock_decrypt, handler):
     """Two concurrent DMs from the same user are serialized (not parallel)."""
     import asyncio
 
-    event1 = _make_event(kind_value=4, author_hex=USER_PK, content="enc1")
-    event2 = _make_event(kind_value=4, author_hex=USER_PK, content="enc2")
+    event1 = _make_event(kind_value=4, author_hex=USER_PK, content="enc1", event_id_hex="a1" * 32)
+    event2 = _make_event(kind_value=4, author_hex=USER_PK, content="enc2", event_id_hex="a2" * 32)
 
     execution_log = []
     barrier = asyncio.Event()
@@ -722,8 +722,8 @@ async def test_concurrent_dms_different_users_parallel(mock_decrypt, handler):
     import asyncio
 
     other_user = "11" * 32
-    event_user = _make_event(kind_value=4, author_hex=USER_PK, content="enc1")
-    event_other = _make_event(kind_value=4, author_hex=other_user, content="enc2")
+    event_user = _make_event(kind_value=4, author_hex=USER_PK, content="enc1", event_id_hex="b1" * 32)
+    event_other = _make_event(kind_value=4, author_hex=other_user, content="enc2", event_id_hex="b2" * 32)
 
     execution_log = []
     both_started = asyncio.Event()
@@ -764,3 +764,104 @@ async def test_vps_dm_does_not_acquire_user_lock(mock_decrypt, handler):
 
     # VPS bot should not have a lock created
     assert VPS_BOT_PK not in handler._user_locks
+
+
+# ==============================================================================
+# Event deduplication
+# ==============================================================================
+
+
+@pytest.mark.asyncio
+@patch("nostr_handler.nip04_decrypt", return_value="first time")
+async def test_first_event_is_processed(mock_decrypt, handler):
+    """A new event ID is processed normally on first receipt."""
+    event_id = "ab" * 32
+    event = _make_event(kind_value=4, author_hex=USER_PK, event_id_hex=event_id)
+
+    await handler.handle(RELAY_URL, SUB_ID, event)
+
+    handler._test_commands.handle_dm.assert_awaited_once()
+    assert event_id in handler._seen_events
+
+
+@pytest.mark.asyncio
+@patch("nostr_handler.nip04_decrypt", return_value="hello again")
+async def test_duplicate_event_is_skipped(mock_decrypt, handler):
+    """A duplicate event ID (same event delivered twice) is silently skipped."""
+    event_id = "ab" * 32
+    event1 = _make_event(kind_value=4, author_hex=USER_PK, event_id_hex=event_id)
+    event2 = _make_event(kind_value=4, author_hex=USER_PK, event_id_hex=event_id)
+
+    await handler.handle(RELAY_URL, SUB_ID, event1)
+    await handler.handle(RELAY_URL, SUB_ID, event2)
+
+    # handle_dm should only be called once (the second event is a duplicate)
+    handler._test_commands.handle_dm.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+@patch("nostr_handler.nip04_decrypt", return_value="expired then new")
+async def test_expired_event_can_be_reprocessed(mock_decrypt, handler):
+    """After TTL expires, the same event ID is treated as new again."""
+    import time as _time
+
+    event_id = "ab" * 32
+    event = _make_event(kind_value=4, author_hex=USER_PK, event_id_hex=event_id)
+
+    # Process the event the first time
+    await handler.handle(RELAY_URL, SUB_ID, event)
+    assert handler._test_commands.handle_dm.await_count == 1
+
+    # Backdate the seen timestamp so it looks expired
+    handler._seen_events[event_id] = _time.monotonic() - handler._seen_events_ttl - 1
+
+    # Force a prune cycle by setting the counter just below the threshold
+    handler._seen_events_check_counter = handler._seen_events_prune_interval - 1
+
+    # Re-deliver the same event; it should be processed again after TTL expiry
+    await handler.handle(RELAY_URL, SUB_ID, event)
+    assert handler._test_commands.handle_dm.await_count == 2
+
+
+@pytest.mark.asyncio
+@patch("nostr_handler.nip04_decrypt", return_value="dedup across kinds")
+async def test_duplicate_skipped_across_different_relays(mock_decrypt, handler):
+    """Same event ID from two different relay URLs is still deduplicated."""
+    event_id = "ab" * 32
+    event = _make_event(kind_value=4, author_hex=USER_PK, event_id_hex=event_id)
+
+    relay_a = MagicMock()
+    relay_b = MagicMock()
+
+    await handler.handle(relay_a, SUB_ID, event)
+    await handler.handle(relay_b, SUB_ID, event)
+
+    handler._test_commands.handle_dm.assert_awaited_once()
+
+
+def test_is_duplicate_prunes_stale_entries(handler):
+    """_is_duplicate prunes entries older than TTL on the prune interval."""
+    import time as _time
+
+    # Seed some old entries
+    old_ts = _time.monotonic() - handler._seen_events_ttl - 100
+    for i in range(5):
+        handler._seen_events[f"old_{i}"] = old_ts
+
+    # Seed a fresh entry
+    handler._seen_events["fresh"] = _time.monotonic()
+
+    # Set counter so next call triggers a prune
+    handler._seen_events_check_counter = handler._seen_events_prune_interval - 1
+
+    # Call with a new event (triggers prune, then registers this event)
+    result = handler._is_duplicate("new_event")
+    assert result is False
+
+    # Old entries should be pruned
+    for i in range(5):
+        assert f"old_{i}" not in handler._seen_events
+
+    # Fresh entry and the new event should remain
+    assert "fresh" in handler._seen_events
+    assert "new_event" in handler._seen_events

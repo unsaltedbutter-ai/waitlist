@@ -49,6 +49,19 @@ _TERMINAL_STATUSES = (
     "failed",
 )
 
+# Whitelist of column names that update_job_status may interpolate into SQL.
+# Any kwarg key not in this set raises ValueError, preventing SQL injection
+# via attacker-controlled column names.
+_ALLOWED_JOB_COLUMNS = frozenset({
+    "outreach_count",
+    "next_outreach_at",
+    "amount_sats",
+    "invoice_id",
+    "access_end_date",
+    "billing_date",
+    "status",
+})
+
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS jobs (
     id              TEXT PRIMARY KEY,
@@ -186,7 +199,17 @@ class Database:
         return [dict(r) for r in await cursor.fetchall()]
 
     async def update_job_status(self, job_id: str, status: str, **kwargs) -> None:
-        """Update a job's status and any extra fields passed as kwargs."""
+        """Update a job's status and any extra fields passed as kwargs.
+
+        Only columns listed in _ALLOWED_JOB_COLUMNS may be passed as
+        kwarg keys. Passing anything else raises ValueError to prevent
+        column name injection into the SQL statement.
+        """
+        disallowed = set(kwargs.keys()) - _ALLOWED_JOB_COLUMNS
+        if disallowed:
+            raise ValueError(
+                f"Disallowed column(s) in update_job_status: {sorted(disallowed)}"
+            )
         sets = ["status = ?", "updated_at = datetime('now')"]
         params: list = [status]
         for key, value in kwargs.items():

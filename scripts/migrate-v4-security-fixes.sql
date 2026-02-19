@@ -72,7 +72,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_jobs_active_user_service
 ON jobs (user_id, service_id)
 WHERE status NOT IN (
   'completed_paid', 'completed_eventual', 'completed_reneged',
-  'user_skip', 'user_abandon', 'implied_skip'
+  'user_skip', 'user_abandon', 'implied_skip', 'failed'
 );
 
 COMMIT;

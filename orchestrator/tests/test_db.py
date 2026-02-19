@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 import pytest_asyncio
 
-from db import Database, _redact_sensitive, OTP_REDACTED
+from db import Database, _redact_sensitive, OTP_REDACTED, _ALLOWED_JOB_COLUMNS
 
 
 @pytest_asyncio.fixture
@@ -121,6 +121,44 @@ async def test_update_job_status(db: Database):
     assert result["status"] == "active"
     assert result["outreach_count"] == 2
     assert result["amount_sats"] == 3000
+
+
+@pytest.mark.asyncio
+async def test_update_job_status_rejects_disallowed_column(db: Database):
+    """Passing a column name not in the whitelist must raise ValueError."""
+    await db.upsert_job(_make_job())
+    with pytest.raises(ValueError, match="Disallowed column"):
+        await db.update_job_status(
+            "job-1", "active", outreach_count=1, evil_column="DROP TABLE jobs"
+        )
+    # Verify the job was NOT modified (the ValueError stopped execution)
+    result = await db.get_job("job-1")
+    assert result["status"] == "dispatched"
+    assert result["outreach_count"] == 0
+
+
+@pytest.mark.asyncio
+async def test_update_job_status_allows_all_whitelisted_columns(db: Database):
+    """Every column in the whitelist should be accepted without error."""
+    await db.upsert_job(_make_job())
+    await db.update_job_status(
+        "job-1",
+        "active",
+        outreach_count=3,
+        next_outreach_at="2026-02-20T00:00:00",
+        amount_sats=3000,
+        invoice_id="inv-123",
+        access_end_date="2026-03-01",
+        billing_date="2026-02-28",
+    )
+    result = await db.get_job("job-1")
+    assert result["status"] == "active"
+    assert result["outreach_count"] == 3
+    assert result["next_outreach_at"] == "2026-02-20T00:00:00"
+    assert result["amount_sats"] == 3000
+    assert result["invoice_id"] == "inv-123"
+    assert result["access_end_date"] == "2026-03-01"
+    assert result["billing_date"] == "2026-02-28"
 
 
 @pytest.mark.asyncio
