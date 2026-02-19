@@ -45,6 +45,8 @@ class TestPlaybookStepFromDict:
         assert step.may_repeat is False
         assert step.max_repeats == 3
         assert step.wait_after_sec == (1.0, 2.0)
+        assert step.max_points == 1
+        assert step.random_dwell is False
         assert step.ref_region is None
 
     def test_full_step(self) -> None:
@@ -139,6 +141,8 @@ class TestPlaybookStepToDict:
             'wait_after_sec': [3.0, 5.0],
             'fallback': 'infer',
             'expected_title_contains': 'Account',
+            'max_points': 4,
+            'random_dwell': True,
             'ref_region': [10, 20, 30, 40],
         }
         step = PlaybookStep.from_dict(original)
@@ -152,7 +156,30 @@ class TestPlaybookStepToDict:
         assert d['may_repeat'] is True
         assert d['max_repeats'] == 5
         assert d['wait_after_sec'] == [3.0, 5.0]
+        assert d['max_points'] == 4
+        assert d['random_dwell'] is True
         assert d['ref_region'] == [10, 20, 30, 40]
+
+    def test_max_points_and_random_dwell_roundtrip(self) -> None:
+        """max_points and random_dwell survive from_dict -> to_dict."""
+        step = PlaybookStep.from_dict({
+            'action': 'wander',
+            'target_description': 'Account menu',
+            'max_points': 5,
+            'random_dwell': True,
+        })
+        assert step.max_points == 5
+        assert step.random_dwell is True
+        d = step.to_dict()
+        assert d['max_points'] == 5
+        assert d['random_dwell'] is True
+
+    def test_max_points_default_omitted(self) -> None:
+        """Default max_points=1 and random_dwell=False are omitted from to_dict."""
+        step = PlaybookStep(action='wander')
+        d = step.to_dict()
+        assert 'max_points' not in d
+        assert 'random_dwell' not in d
 
 
 # ---------------------------------------------------------------------------

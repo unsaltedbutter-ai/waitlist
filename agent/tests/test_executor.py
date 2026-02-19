@@ -274,7 +274,7 @@ class TestBasicExecution(_PatchedTestBase):
         self.mocks['keyboard_press_key'].assert_called()
 
     def test_hover_step(self) -> None:
-        """hover step moves mouse without clicking."""
+        """hover (legacy alias) moves mouse without clicking."""
         pb = Playbook(
             service='test', flow='cancel', version=1,
             notes='', last_validated=None,
@@ -289,6 +289,24 @@ class TestBasicExecution(_PatchedTestBase):
         result = self.executor.run(pb, self.ctx)
         assert result.success is True
         self.mocks['mouse_move_to'].assert_called_once()
+        self.mocks['mouse_click'].assert_not_called()
+
+    def test_wander_step(self) -> None:
+        """wander action moves mouse without clicking (same as hover)."""
+        pb = Playbook(
+            service='test', flow='cancel', version=1,
+            notes='', last_validated=None,
+            steps=(
+                PlaybookStep(
+                    action='wander',
+                    target_description='Account menu',
+                    ref_region=(100, 50, 200, 80),
+                ),
+            ),
+        )
+        result = self.executor.run(pb, self.ctx)
+        assert result.success is True
+        self.mocks['mouse_move_to'].assert_called()
         self.mocks['mouse_click'].assert_not_called()
 
     def test_scroll_step(self) -> None:
@@ -923,3 +941,131 @@ class TestExecutionResultShape(_PatchedTestBase):
         for i, sr in enumerate(result.step_results):
             assert sr.index == i
             assert sr.action == 'navigate'
+
+
+# ---------------------------------------------------------------------------
+# Wander (multi-point hover)
+# ---------------------------------------------------------------------------
+
+
+class TestWander(_PatchedTestBase):
+    """wander action: multi-point hover with optional random dwell skip."""
+
+    def test_wander_max_points_moves_multiple(self) -> None:
+        """wander with max_points=3 moves 1-3 times (never clicks)."""
+        pb = Playbook(
+            service='test', flow='cancel', version=1,
+            notes='', last_validated=None,
+            steps=(
+                PlaybookStep(
+                    action='wander',
+                    target_description='Account menu',
+                    ref_region=(100, 50, 200, 80),
+                    max_points=3,
+                ),
+            ),
+        )
+        # Force randint to return max (3 points)
+        with patch('agent.executor.random.randint', return_value=3):
+            result = self.executor.run(pb, self.ctx)
+        assert result.success is True
+        # 1 initial move + 2 extra = 3 total move_to calls
+        assert self.mocks['mouse_move_to'].call_count == 3
+        self.mocks['mouse_click'].assert_not_called()
+
+    def test_wander_max_points_one_moves_once(self) -> None:
+        """wander with max_points=1 (default) moves exactly once."""
+        pb = Playbook(
+            service='test', flow='cancel', version=1,
+            notes='', last_validated=None,
+            steps=(
+                PlaybookStep(
+                    action='wander',
+                    target_description='Menu',
+                    ref_region=(100, 50, 200, 80),
+                ),
+            ),
+        )
+        with patch('agent.executor.random.randint', return_value=1):
+            result = self.executor.run(pb, self.ctx)
+        assert result.success is True
+        self.mocks['mouse_move_to'].assert_called_once()
+
+    def test_wander_random_dwell_skips(self) -> None:
+        """wander with random_dwell=True skips when coin flip < 0.5."""
+        pb = Playbook(
+            service='test', flow='cancel', version=1,
+            notes='', last_validated=None,
+            steps=(
+                PlaybookStep(
+                    action='wander',
+                    target_description='Menu',
+                    ref_region=(100, 50, 200, 80),
+                    random_dwell=True,
+                ),
+            ),
+        )
+        with patch('agent.executor.random.random', return_value=0.2):  # < 0.5 -> skip
+            result = self.executor.run(pb, self.ctx)
+        assert result.success is True
+        # Skipped: no mouse movement, no inference call
+        self.mocks['mouse_move_to'].assert_not_called()
+        assert result.inference_count == 0
+
+    def test_wander_random_dwell_executes(self) -> None:
+        """wander with random_dwell=True proceeds when coin flip >= 0.5."""
+        pb = Playbook(
+            service='test', flow='cancel', version=1,
+            notes='', last_validated=None,
+            steps=(
+                PlaybookStep(
+                    action='wander',
+                    target_description='Menu',
+                    ref_region=(100, 50, 200, 80),
+                    random_dwell=True,
+                ),
+            ),
+        )
+        with patch('agent.executor.random.random', return_value=0.8):  # >= 0.5 -> proceed
+            result = self.executor.run(pb, self.ctx)
+        assert result.success is True
+        self.mocks['mouse_move_to'].assert_called()
+        assert result.inference_count >= 1
+
+    def test_hover_alias_still_works(self) -> None:
+        """'hover' action is a working alias for 'wander'."""
+        pb = Playbook(
+            service='test', flow='cancel', version=1,
+            notes='', last_validated=None,
+            steps=(
+                PlaybookStep(
+                    action='hover',
+                    target_description='Menu',
+                    ref_region=(100, 50, 200, 80),
+                    max_points=2,
+                ),
+            ),
+        )
+        with patch('agent.executor.random.randint', return_value=2):
+            result = self.executor.run(pb, self.ctx)
+        assert result.success is True
+        assert self.mocks['mouse_move_to'].call_count == 2
+        self.mocks['mouse_click'].assert_not_called()
+
+    def test_click_unchanged_by_wander_refactor(self) -> None:
+        """click action still works (regression guard for _find_and_convert change)."""
+        pb = Playbook(
+            service='test', flow='cancel', version=1,
+            notes='', last_validated=None,
+            steps=(
+                PlaybookStep(
+                    action='click',
+                    target_description='Sign In',
+                    ref_region=(500, 300, 700, 350),
+                ),
+            ),
+        )
+        result = self.executor.run(pb, self.ctx)
+        assert result.success is True
+        self.mocks['mouse_click'].assert_called_once()
+        self.mocks['mouse_move_to'].assert_not_called()

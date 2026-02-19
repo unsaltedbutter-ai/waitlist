@@ -67,6 +67,25 @@ class TestFindElementResult:
             assert x == 100
             assert 100 <= y <= 200
 
+    def test_random_points_returns_correct_count(self) -> None:
+        """random_points(n) returns exactly n points."""
+        result = FindElementResult(x1=0, y1=0, x2=200, y2=200, confidence=0.9)
+        for n in (1, 3, 7):
+            pts = result.random_points(n)
+            assert len(pts) == n
+
+    def test_random_points_all_within_bounds(self) -> None:
+        """Every point from random_points is inside the bounding box."""
+        result = FindElementResult(x1=50, y1=60, x2=150, y2=180, confidence=0.9)
+        for x, y in result.random_points(200):
+            assert 50 <= x <= 150, f'x={x} outside [50, 150]'
+            assert 60 <= y <= 180, f'y={y} outside [60, 180]'
+
+    def test_random_points_zero(self) -> None:
+        """random_points(0) returns an empty list."""
+        result = FindElementResult(x1=0, y1=0, x2=100, y2=100, confidence=0.9)
+        assert result.random_points(0) == []
+
 
 # ---------------------------------------------------------------------------
 # CheckpointResult

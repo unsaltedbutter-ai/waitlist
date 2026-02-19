@@ -39,6 +39,10 @@ class PlaybookStep:
     fallback: str = ''  # 'infer' = full VLM if step can't be resolved
     expected_title_contains: str = ''
 
+    # Wander: move to 1..max_points random spots in the bounding box (no click).
+    max_points: int = 1           # wander picks random 1..max_points
+    random_dwell: bool = False    # if True, 50% chance wander is skipped entirely
+
     # Reference region from recording (image-pixel coords): [x1, y1, x2, y2]
     # Used by CoordinateInferenceClient for playback without VLM.
     ref_region: tuple[int, int, int, int] | None = None
@@ -78,6 +82,8 @@ class PlaybookStep:
             wait_after_sec=wait,
             fallback=d.get('fallback', ''),
             expected_title_contains=d.get('expected_title_contains', ''),
+            max_points=d.get('max_points', 1),
+            random_dwell=d.get('random_dwell', False),
             ref_region=ref,
         )
 
@@ -110,6 +116,10 @@ class PlaybookStep:
             d['fallback'] = self.fallback
         if self.expected_title_contains:
             d['expected_title_contains'] = self.expected_title_contains
+        if self.max_points != 1:
+            d['max_points'] = self.max_points
+        if self.random_dwell:
+            d['random_dwell'] = True
         if self.ref_region is not None:
             d['ref_region'] = list(self.ref_region)
         return d

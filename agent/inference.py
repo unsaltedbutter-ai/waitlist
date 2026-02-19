@@ -45,6 +45,10 @@ class FindElementResult:
         y = int(min(max(random.gauss(cy, sy), self.y1), self.y2))
         return x, y
 
+    def random_points(self, n: int) -> list[tuple[int, int]]:
+        """Return *n* independent Gaussian-sampled points within the bounding box."""
+        return [self.random_point() for _ in range(n)]
+
 
 @dataclass(frozen=True)
 class CheckpointResult:

@@ -21,7 +21,7 @@ from agent.config import (
     STEP_TIMEOUT,
     TOTAL_EXECUTION_TIMEOUT,
 )
-from agent.inference import InferenceClient
+from agent.inference import FindElementResult, InferenceClient
 from agent.input import coords, keyboard, mouse, scroll, window
 from agent.profile import NORMAL, HumanProfile
 from agent.playbook import (
@@ -243,7 +243,8 @@ class PlaybookExecutor:
             'select_payment_method': self._handle_click,  # alias
             'handle_retention': self._handle_retention,
             'verify_success': self._handle_verify_success,
-            'hover': self._handle_hover,
+            'wander': self._handle_wander,
+            'hover': self._handle_wander,   # legacy alias
             'scroll': self._handle_scroll,
             'press_key': self._handle_press_key,
             'wait': self._handle_wait,
@@ -274,7 +275,7 @@ class PlaybookExecutor:
         self, step: PlaybookStep, session: BrowserSession, ctx: JobContext,
     ) -> int:
         """Screenshot, VLM find_element (bounding box), pick random point, click. 1 VLM call."""
-        screen_x, screen_y = self._find_and_convert(step, session, ctx)
+        screen_x, screen_y, _elem = self._find_and_convert(step, session, ctx)
         mouse.click(int(screen_x), int(screen_y), fast=self._profile.mouse_fast)
         return 1
 
@@ -301,7 +302,7 @@ class PlaybookExecutor:
 
         if step.ref_region or step.target_description:
             # Mode A: find the field, click it, clear it
-            screen_x, screen_y = self._find_and_convert(step, session, ctx)
+            screen_x, screen_y, _elem = self._find_and_convert(step, session, ctx)
             inference_calls = 1
 
             mouse.click(int(screen_x), int(screen_y), fast=self._profile.mouse_fast)
@@ -346,7 +347,7 @@ class PlaybookExecutor:
                 break
 
             # Find and click the cancel/continue button
-            screen_x, screen_y = self._find_and_convert(step, session, ctx)
+            screen_x, screen_y, _elem = self._find_and_convert(step, session, ctx)
             inference_calls += 1
             mouse.click(int(screen_x), int(screen_y), fast=self._profile.mouse_fast)
 
@@ -372,12 +373,33 @@ class PlaybookExecutor:
         log.info('verify_success: confirmed (confidence=%.2f)', result.confidence)
         return 1
 
-    def _handle_hover(
+    def _handle_wander(
         self, step: PlaybookStep, session: BrowserSession, ctx: JobContext,
     ) -> int:
-        """Move mouse to random point in bounding box without clicking. 1 VLM call."""
-        screen_x, screen_y = self._find_and_convert(step, session, ctx)
+        """Move mouse to 1..max_points random spots in the bounding box (no click).
+
+        If random_dwell is True, there is a 50% chance the entire wander is
+        skipped at runtime (returns 0 inference calls).
+        """
+        if step.random_dwell and random.random() < 0.5:
+            log.debug('wander: random_dwell coin flip says skip')
+            return 0
+
+        screen_x, screen_y, elem = self._find_and_convert(step, session, ctx)
+
+        n = random.randint(1, step.max_points)
+        # First point is the one _find_and_convert already picked
         mouse.move_to(int(screen_x), int(screen_y), fast=self._profile.mouse_fast)
+
+        # Additional points (if n > 1) sampled from the same bounding box
+        if n > 1:
+            extra_img_points = elem.random_points(n - 1)
+            browser.get_session_window(session)
+            for img_x, img_y in extra_img_points:
+                time.sleep(random.uniform(0.15, 0.6))
+                sx, sy = coords.image_to_screen(img_x, img_y, session.bounds)
+                mouse.move_to(int(sx), int(sy), fast=self._profile.mouse_fast)
+
         return 1
 
     def _handle_scroll(
@@ -427,10 +449,13 @@ class PlaybookExecutor:
 
     def _find_and_convert(
         self, step: PlaybookStep, session: BrowserSession, ctx: JobContext,
-    ) -> tuple[float, float]:
+    ) -> tuple[float, float, 'FindElementResult']:
         """
         Screenshot, ask inference to find element (bounding box),
         pick random point within box, convert to screen coords.
+
+        Returns (screen_x, screen_y, FindElementResult) so callers
+        can generate additional points from the same bounding box.
         """
         shot_b64 = screenshot.capture_to_base64(session.window_id)
 
@@ -456,7 +481,7 @@ class PlaybookExecutor:
         screen_x, screen_y = coords.image_to_screen(
             img_x, img_y, session.bounds,
         )
-        return screen_x, screen_y
+        return screen_x, screen_y, result
 
     def _run_checkpoint(
         self, idx: int, step: PlaybookStep, session: BrowserSession,
