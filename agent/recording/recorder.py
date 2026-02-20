@@ -152,6 +152,7 @@ class PlaybookRecorder:
         variant: str = '',
         max_steps: int = 60,
         settle_delay: float = 2.5,
+        verbose: bool = False,
     ) -> None:
         self.vlm = vlm
         self.service = service
@@ -162,6 +163,7 @@ class PlaybookRecorder:
         self.variant = variant
         self.max_steps = max_steps
         self.settle_delay = settle_delay
+        self.verbose = verbose
 
         # Build prompt chain
         self._prompts = self._build_prompt_chain()
@@ -256,7 +258,10 @@ class PlaybookRecorder:
         step_num = 0
 
         print(f'\nRecording: {pb_name} (phase: {self._current_label})')
-        print(f'Max steps: {self.max_steps}, settle delay: {self.settle_delay}s\n')
+        print(f'Max steps: {self.max_steps}, settle delay: {self.settle_delay}s')
+        print(f'Image max width: {self.vlm.MAX_IMAGE_WIDTH}px\n')
+        if self.verbose:
+            self._dump_prompt(ref_dir, self._current_label, self._current_prompt)
 
         for iteration in range(self.max_steps):
             # Wait for page to settle
@@ -307,6 +312,8 @@ class PlaybookRecorder:
                     self._prompt_idx += 1
                     stuck.reset()
                     print(f'\n  Phase transition: {self._prompt_labels[self._prompt_idx - 1]} -> {self._current_label}\n')
+                    if self.verbose:
+                        self._dump_prompt(ref_dir, self._current_label, self._current_prompt)
                     continue
                 else:
                     # Flow complete
@@ -352,14 +359,21 @@ class PlaybookRecorder:
                         print(f'    [debug] initial_bbox={scaled_bbox} refined_bbox={refined}')
                         scaled_bbox = refined
 
-                # Pick a random point inside the bbox (center-biased Gaussian)
+                # Inset bbox by 10% to avoid clicking near edges, then
+                # pick a random point (center-biased Gaussian)
                 bw = scaled_bbox[2] - scaled_bbox[0]
                 bh = scaled_bbox[3] - scaled_bbox[1]
-                cx = (scaled_bbox[0] + scaled_bbox[2]) / 2 + random.gauss(0, bw * 0.15)
-                cy = (scaled_bbox[1] + scaled_bbox[3]) / 2 + random.gauss(0, bh * 0.15)
-                # Clamp inside the bbox
-                cx = max(scaled_bbox[0], min(cx, scaled_bbox[2]))
-                cy = max(scaled_bbox[1], min(cy, scaled_bbox[3]))
+                inset_x = bw * 0.10
+                inset_y = bh * 0.10
+                safe_x1 = scaled_bbox[0] + inset_x
+                safe_y1 = scaled_bbox[1] + inset_y
+                safe_x2 = scaled_bbox[2] - inset_x
+                safe_y2 = scaled_bbox[3] - inset_y
+                cx = (safe_x1 + safe_x2) / 2 + random.gauss(0, bw * 0.10)
+                cy = (safe_y1 + safe_y2) / 2 + random.gauss(0, bh * 0.10)
+                # Clamp inside the inset box
+                cx = max(safe_x1, min(cx, safe_x2))
+                cy = max(safe_y1, min(cy, safe_y2))
                 sx, sy = coords.image_to_screen(cx, cy, session.bounds)
                 print(f'    [debug] bbox={scaled_bbox} '
                       f'center=({cx:.0f},{cy:.0f}) scale={scale_factor:.2f} '
@@ -593,6 +607,17 @@ class PlaybookRecorder:
             return 'the password'
 
         return None
+
+    @staticmethod
+    def _dump_prompt(ref_dir, label: str, prompt: str) -> None:
+        """Print prompt to screen and write to ref directory as prompt_<label>.txt."""
+        print(f'--- SYSTEM PROMPT ({label}) ---')
+        print(prompt)
+        print('--- END PROMPT ---\n')
+        path = ref_dir / f'prompt_{label.replace("-", "_")}.txt'
+        with open(path, 'w') as f:
+            f.write(prompt)
+        print(f'  Prompt saved: {path}')
 
     @staticmethod
     def _save_debug_overlay(

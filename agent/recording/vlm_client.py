@@ -11,6 +11,7 @@ import io
 import json
 import logging
 import re
+import time
 
 import httpx
 from PIL import Image
@@ -78,9 +79,10 @@ class VLMClient:
     and parses the JSON response.
     """
 
-    # Max pixel width for screenshots sent to the VLM.  Retina captures are
-    # typically 3000+ px wide; resizing to 1280 keeps payloads well under API
-    # limits while retaining enough detail for UI element recognition.
+    # Max pixel width for screenshots sent to the VLM.  1280px is a good
+    # balance: large enough for UI element detection, small enough for fast
+    # transfer and fewer visual tokens (~1,200 vs ~4,700 at 2560px).
+    # JPEG at quality 85 keeps payloads under ~150KB.
     MAX_IMAGE_WIDTH = 1280
 
     def __init__(
@@ -97,6 +99,7 @@ class VLMClient:
         if self.base_url.endswith('/v1'):
             self.base_url = self.base_url[:-3]
         self.model = model
+        self._normalized_coords = 'qwen' in model.lower()
         self.max_tokens = max_tokens
         self.temperature = temperature
         self._client = httpx.Client(
@@ -112,14 +115,15 @@ class VLMClient:
         self,
         screenshot_b64: str,
         system_prompt: str,
-        user_message: str = 'Analyze this screenshot and respond with the JSON action.',
+        user_message: str = '',
     ) -> tuple[dict, float]:
         """Send a screenshot to the VLM and return the parsed JSON response.
 
         Args:
             screenshot_b64: Base64-encoded PNG screenshot.
             system_prompt: System prompt describing the task.
-            user_message: User-role text accompanying the image.
+            user_message: User-role text accompanying the image. If empty,
+                a default message including image dimensions is generated.
 
         Returns:
             Tuple of (parsed JSON dict, scale_factor). The scale_factor is
@@ -132,7 +136,16 @@ class VLMClient:
             ValueError: If JSON cannot be extracted from the response.
         """
         # Resize oversized screenshots to stay under API payload limits
-        image_b64, scale_factor = self._resize_if_needed(screenshot_b64)
+        image_b64, scale_factor, sent_size = self._resize_if_needed(screenshot_b64)
+
+        if not user_message:
+            w, h = sent_size
+            user_message = (
+                f'This screenshot is {w}x{h} pixels. '
+                f'All bounding_box coordinates must be in absolute pixels '
+                f'within this {w}x{h} image (origin at top-left corner). '
+                f'Analyze this screenshot and respond with the JSON action.'
+            )
 
         payload = {
             'model': self.model,
@@ -155,20 +168,41 @@ class VLMClient:
             ],
         }
 
+        t0 = time.monotonic()
         resp = self._client.post('/v1/chat/completions', json=payload)
-        resp.raise_for_status()
+        self.last_inference_ms = int((time.monotonic() - t0) * 1000)
+        if resp.status_code != 200:
+            body = resp.text[:500]
+            log.error('VLM API error %d: %s', resp.status_code, body)
+            raise RuntimeError(f'VLM API {resp.status_code}: {body}')
 
         data = resp.json()
         raw_text = data['choices'][0]['message']['content']
         log.debug('VLM raw response: %s', raw_text[:500])
 
-        return _extract_json(raw_text), scale_factor
+        parsed = _extract_json(raw_text)
 
-    def _resize_if_needed(self, screenshot_b64: str) -> tuple[str, float]:
+        # Qwen-VL models return bounding boxes in 0-1000 normalized coords.
+        # Convert to absolute pixels in the sent image space so callers
+        # get consistent pixel coordinates regardless of model.
+        if self._normalized_coords and 'bounding_box' in parsed:
+            bbox = parsed['bounding_box']
+            if bbox and len(bbox) == 4:
+                w, h = sent_size
+                parsed['bounding_box'] = [
+                    bbox[0] * w / 1000,
+                    bbox[1] * h / 1000,
+                    bbox[2] * w / 1000,
+                    bbox[3] * h / 1000,
+                ]
+
+        return parsed, scale_factor
+
+    def _resize_if_needed(self, screenshot_b64: str) -> tuple[str, float, tuple[int, int]]:
         """Downscale a base64 PNG to JPEG at MAX_IMAGE_WIDTH if wider.
 
-        Returns (base64_jpeg, scale_factor) where scale_factor is
-        original_width / sent_width (1.0 if no resize needed).
+        Returns (base64_jpeg, scale_factor, (sent_width, sent_height)) where
+        scale_factor is original_width / sent_width (1.0 if no resize needed).
         """
         raw = base64.b64decode(screenshot_b64)
         img = Image.open(io.BytesIO(raw))
@@ -182,10 +216,12 @@ class VLMClient:
                        int(new_size[0] * scale_factor), int(new_size[1] * scale_factor),
                        *new_size, scale_factor)
 
+        sent_size = (img.width, img.height)
+
         # Convert to JPEG (much smaller than PNG for screenshots)
         buf = io.BytesIO()
         img.convert('RGB').save(buf, format='JPEG', quality=85)
-        return base64.b64encode(buf.getvalue()).decode('ascii'), scale_factor
+        return base64.b64encode(buf.getvalue()).decode('ascii'), scale_factor, sent_size
 
     def close(self) -> None:
         """Close the underlying HTTP client."""

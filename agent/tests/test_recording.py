@@ -123,12 +123,12 @@ class TestBuildResumePrompt:
         # Should instruct to click Change when wrong plan is shown
         assert 'DIFFERENT plan' in prompt
 
-    def test_success_detection_before_plan_selection(self) -> None:
-        """Success/welcome check should appear before plan selection in the prompt."""
+    def test_account_navigation_before_completion(self) -> None:
+        """Account navigation should appear before completion check in the prompt."""
         prompt = build_resume_prompt('netflix', 'premium')
-        success_pos = prompt.find('SUCCESS CHECK')
-        plan_pos = prompt.find('plan review')
-        assert success_pos < plan_pos, 'Success detection must come before plan selection'
+        account_pos = prompt.find('navigate to Account')
+        completion_pos = prompt.find('COMPLETION CHECK')
+        assert account_pos < completion_pos, 'Account navigation must come before completion check'
 
     def test_onboarding_means_done(self) -> None:
         prompt = build_resume_prompt('netflix', 'premium')
@@ -138,6 +138,12 @@ class TestBuildResumePrompt:
     def test_welcome_message_triggers_done(self) -> None:
         prompt = build_resume_prompt('netflix', '')
         assert 'Welcome to netflix' in prompt or 'Welcome back' in prompt
+
+    def test_browse_page_not_done(self) -> None:
+        """The prompt must warn that seeing content does NOT mean done."""
+        prompt = build_resume_prompt('peacock', 'premium')
+        assert 'home/browse page' in prompt.lower() or 'browse page' in prompt.lower()
+        assert 'NOT' in prompt
 
 
 class TestServiceHints:
@@ -380,8 +386,8 @@ class TestVLMClientAnalyze:
 
         monkeypatch.setattr(httpx.Client, 'post', mock_post)
 
-        # 5120px wide image, MAX_IMAGE_WIDTH is 2560 -> scale_factor = 2.0
-        big_png = _make_test_png_b64(width=5120, height=2880)
+        # 2560px wide image, MAX_IMAGE_WIDTH is 1280 -> scale_factor = 2.0
+        big_png = _make_test_png_b64(width=2560, height=1440)
         with VLMClient(
             base_url='https://api.example.com',
             api_key='test-key',
@@ -883,6 +889,7 @@ class TestRecorderIntegration:
         class MockVLM:
             last_inference_ms = 0
             _normalized_coords = False
+            MAX_IMAGE_WIDTH = 1280
 
             def analyze(self, screenshot_b64, system_prompt, user_message=''):
                 idx = call_idx['n']
@@ -916,9 +923,11 @@ class TestRecorderIntegration:
         recorder.flow = 'cancel'
         recorder.credentials = {'email': 'test@netflix.com', 'pass': 'hunter2'}
         recorder.plan_tier = ''
+        recorder.plan_display = ''
         recorder.variant = ''
         recorder.max_steps = 60
         recorder.settle_delay = 0  # no waiting in tests
+        recorder.verbose = False
         recorder._prompts = recorder._build_prompt_chain()
         recorder._prompt_idx = 0
         recorder._prompt_labels = recorder._build_prompt_labels()
@@ -1028,6 +1037,7 @@ class TestRecorderIntegration:
         class MockVLM:
             last_inference_ms = 0
             _normalized_coords = False
+            MAX_IMAGE_WIDTH = 1280
 
             def analyze(self, screenshot_b64, system_prompt, user_message=''):
                 idx = call_idx['n']

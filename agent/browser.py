@@ -27,6 +27,7 @@ CHROME_ARGS = [
     '--no-default-browser-check',
     '--disable-features=PasswordManager',
     '--disable-infobars',
+    '--disable-notifications',
 ]
 
 

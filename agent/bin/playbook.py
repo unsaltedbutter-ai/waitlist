@@ -811,6 +811,7 @@ def cmd_learn(args):
         base_url=args.vlm_url,
         api_key=args.vlm_key,
         model=args.vlm_model,
+        temperature=args.vlm_temperature,
     )
 
     recorder = PlaybookRecorder(
@@ -823,6 +824,7 @@ def cmd_learn(args):
         variant=variant,
         max_steps=args.max_steps,
         settle_delay=args.settle_delay,
+        verbose=args.verbose,
     )
 
     try:
@@ -887,6 +889,10 @@ def main():
                          help='Maximum VLM analysis steps (default: 60)')
     p_learn.add_argument('--settle-delay', type=float, default=2.5, dest='settle_delay',
                          help='Seconds to wait after each action (default: 2.5)')
+    p_learn.add_argument('--vlm-temperature', type=float, default=0.1, dest='vlm_temperature',
+                         help='VLM temperature (default: 0.1, Kimi K2.5 requires 1.0)')
+    p_learn.add_argument('--verbose', action='store_true',
+                         help='Print full system prompts for each phase')
 
     sub.add_parser('list', help='List all playbooks')
 

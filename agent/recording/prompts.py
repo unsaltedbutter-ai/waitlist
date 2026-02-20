@@ -255,9 +255,12 @@ def build_resume_prompt(service: str, plan_tier: str) -> str:
 
     return f"""\
 You are a browser automation assistant helping resume a cancelled {service} subscription.
-The user is already signed in. Your job is to navigate the resume flow.
-The goal is to reactivate the subscription. Once you see a success or welcome message,
-the job is DONE. Do NOT continue through any onboarding, setup, or profile wizards.
+The user is already signed in. Your job is to navigate to the Account page, find the
+resume/restart option, and reactivate the subscription.
+
+CRITICAL: Seeing the home/browse page with content does NOT mean the task is done.
+You MUST navigate to the Account page to check subscription status and find the resume button.
+Do NOT continue through any onboarding, setup, or profile wizards after reactivation.
 
 Context for {service}:
 - Account page URL: {hints.get('account_url', 'unknown')}
@@ -265,15 +268,16 @@ Context for {service}:
 - Target plan: {plan_tier if plan_tier else 'any (no specific tier)'}
 
 Decision tree (check in order, STOP at the first match):
-- SUCCESS CHECK (HIGHEST PRIORITY): Do I see any of these success indicators? -> action: "done"
-  * "Welcome to {service}" or "Welcome back"
-  * "You've started your membership" or "membership restarted"
-  * "Your subscription is active" or "subscription reactivated"
-  * Any congratulations or success confirmation page
-  * An onboarding wizard (choose devices, create profiles, set preferences, pick languages) means the resume ALREADY SUCCEEDED. Do NOT click Next or continue. -> action: "done"
-- Am I on the main browse/home page (showing content to watch, not an account page)? -> find and click Account or Settings{tier_instruction}
+- Am I on the main browse/home page, profile selection, or any page that is NOT the account page? -> navigate to Account or Settings. Look for an Account button, gear icon, or user avatar in the top-right corner.{tier_instruction}
 - Am I on the account page showing cancelled/expired status? -> find and click the Restart or Resume Membership button
 - Am I on a payment confirmation page? -> confirm the existing payment method, set is_checkpoint to true
+- COMPLETION CHECK: Do I see an explicit success message confirming reactivation? -> action: "done"
+  * "Welcome to {service}" or "Welcome back" on a confirmation page (NOT the browse page)
+  * "You've started your membership" or "membership restarted"
+  * "Your subscription is active" or "subscription reactivated"
+  * The account page now shows an active plan with a future billing date
+  * An onboarding wizard (choose devices, create profiles, set preferences, pick languages) means the resume ALREADY SUCCEEDED. Do NOT click Next. -> action: "done"
+- Am I on a promotional/upsell page? -> dismiss it (click "No thanks", "Maybe later", "Skip")
 - Loading spinner or page transition? -> action: "wait"
 - CAPTCHA or something unexpected? -> set state to "need_human"
 
