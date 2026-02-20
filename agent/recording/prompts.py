@@ -21,8 +21,9 @@ SERVICE_HINTS: dict[str, dict[str, str]] = {
         'cancel_url': 'https://www.netflix.com/cancelplan',
         'account_url': 'https://www.netflix.com/account',
         'signin_button': 'Sign In',
-        'email_field': 'Email or phone number',
+        'email_field': 'Email or mobile number',
         'password_field': 'Password',
+        'multi_step_login': True,
         'cancel_button_labels': 'Cancel Membership, Continue Cancellation, Finish Cancellation',
         'resume_button_labels': 'Restart Membership, Resume, Rejoin',
         'profile_selection': 'May show profile picker after login. Click the first/main profile.',
@@ -137,6 +138,8 @@ You MUST respond with exactly one JSON object (no markdown fences, no extra text
 
 Rules:
 - bounding_box coordinates are in image pixels (origin top-left)
+- IMPORTANT: The screenshot includes the browser tab bar and address bar at the top (~150 pixels). These are NOT part of the web page. Never target anything in the browser chrome area. Only interact with web page content below the address bar.
+- CRITICAL: When targeting form fields (email, password), the bounding_box MUST cover the actual text INPUT BOX (the rectangular field with a border where you type text, often containing gray placeholder text like "Email or mobile number"). NEVER target heading text, labels, or instructions above the field.
 - For type_text, NEVER include actual credentials. Use semantic descriptions like "the email address" or "the password"
 - Set is_checkpoint to true when a significant page transition is expected (login submitted, page navigated, form submitted)
 - Set action to "done" when the current phase is complete
@@ -176,12 +179,16 @@ Context for {service}:
 - Email field is typically labeled: {hints['email_field']}
 - Password field is typically labeled: {hints['password_field']}
 
+IMPORTANT: Some services use multi-step login (email on one page, password on a separate page after clicking Continue/Next). Only interact with fields that are ACTUALLY VISIBLE on the current screenshot. Never assume a field exists if you cannot see it.
+
 Decision tree (check in order):
 - Am I already signed in (seeing the main browse page, account page, or dashboard)? -> action: "done"
-- Am I on a sign-in page with an empty email field? -> click the email field
-- The email field has text and the password field is empty? -> click the password field
+- Am I on a sign-in page with an empty email field? -> click the email text INPUT BOX (the rectangular form field with placeholder text "{hints['email_field']}"). Do NOT click heading text or labels above the input box.
+- The email field has text and I can see a password INPUT BOX on the page? -> click the password text INPUT BOX (the rectangular form field with placeholder text "{hints['password_field']}")
+- The email field has text but there is NO password field visible, and I see a "Continue" or "Next" button? -> click that button, set is_checkpoint to true
 - Both email and password fields have text? -> click the {hints['signin_button']} button, set is_checkpoint to true
 - Am I on a "Who is watching?" profile selection screen? -> click the first/main profile{profile_note}
+- Page says to check email, tap a link, or use a sign-in link sent via email (passwordless login)? -> set state to "need_human"
 - No sign-in form visible but I see a "Sign In" link or button? -> click it
 - CAPTCHA, 2FA, phone verification, or something unexpected? -> set state to "need_human"
 
@@ -238,21 +245,35 @@ def build_resume_prompt(service: str, plan_tier: str) -> str:
 
     tier_instruction = ''
     if plan_tier:
-        tier_instruction = f'\n- Plan selection page? -> select the "{plan_tier}" plan'
+        tier_instruction = (
+            f'\n- Am I on a plan review/confirmation page showing a DIFFERENT plan than '
+            f'"{plan_tier}"? -> click "Change" or "Change Plan" to switch plans, '
+            f'set is_checkpoint to true'
+            f'\n- Am I on a plan selection page (list of available plans)? -> '
+            f'click the "{plan_tier}" plan'
+        )
 
     return f"""\
 You are a browser automation assistant helping resume a cancelled {service} subscription.
 The user is already signed in. Your job is to navigate the resume flow.
+The goal is to reactivate the subscription. Once you see a success or welcome message,
+the job is DONE. Do NOT continue through any onboarding, setup, or profile wizards.
 
 Context for {service}:
 - Account page URL: {hints.get('account_url', 'unknown')}
 - Common resume button labels: {resume_labels}
+- Target plan: {plan_tier if plan_tier else 'any (no specific tier)'}
 
-Decision tree (check in order):
-- Am I on the main browse/home page? -> find and click Account or Settings
-- Am I on the account page showing cancelled/expired status? -> find and click the Restart or Resume Membership button{tier_instruction}
+Decision tree (check in order, STOP at the first match):
+- SUCCESS CHECK (HIGHEST PRIORITY): Do I see any of these success indicators? -> action: "done"
+  * "Welcome to {service}" or "Welcome back"
+  * "You've started your membership" or "membership restarted"
+  * "Your subscription is active" or "subscription reactivated"
+  * Any congratulations or success confirmation page
+  * An onboarding wizard (choose devices, create profiles, set preferences, pick languages) means the resume ALREADY SUCCEEDED. Do NOT click Next or continue. -> action: "done"
+- Am I on the main browse/home page (showing content to watch, not an account page)? -> find and click Account or Settings{tier_instruction}
+- Am I on the account page showing cancelled/expired status? -> find and click the Restart or Resume Membership button
 - Am I on a payment confirmation page? -> confirm the existing payment method, set is_checkpoint to true
-- Do I see a success/confirmation message (subscription reactivated, welcome back)? -> action: "done"
 - Loading spinner or page transition? -> action: "wait"
 - CAPTCHA or something unexpected? -> set state to "need_human"
 

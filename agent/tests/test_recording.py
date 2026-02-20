@@ -61,7 +61,7 @@ class TestBuildSigninPrompt:
     def test_uses_service_hints(self) -> None:
         prompt = build_signin_prompt('netflix')
         assert 'Sign In' in prompt
-        assert 'Email or phone number' in prompt
+        assert 'Email or mobile number' in prompt
 
     def test_unknown_service_uses_defaults(self) -> None:
         prompt = build_signin_prompt('unknownservice')
@@ -109,10 +109,35 @@ class TestBuildResumePrompt:
         prompt = build_resume_prompt('netflix', '')
         # Should still produce a valid prompt without plan-specific instructions
         assert 'netflix' in prompt.lower() or 'Netflix' in prompt
+        # Should not include plan change instructions
+        assert 'Change Plan' not in prompt
 
     def test_contains_response_schema(self) -> None:
         prompt = build_resume_prompt('hulu', 'basic')
         assert '"action"' in prompt
+
+    def test_plan_mismatch_triggers_change(self) -> None:
+        prompt = build_resume_prompt('netflix', 'Standard with ads')
+        assert 'Change' in prompt
+        assert 'Standard with ads' in prompt
+        # Should instruct to click Change when wrong plan is shown
+        assert 'DIFFERENT plan' in prompt
+
+    def test_success_detection_before_plan_selection(self) -> None:
+        """Success/welcome check should appear before plan selection in the prompt."""
+        prompt = build_resume_prompt('netflix', 'premium')
+        success_pos = prompt.find('SUCCESS CHECK')
+        plan_pos = prompt.find('plan review')
+        assert success_pos < plan_pos, 'Success detection must come before plan selection'
+
+    def test_onboarding_means_done(self) -> None:
+        prompt = build_resume_prompt('netflix', 'premium')
+        assert 'onboarding' in prompt.lower()
+        assert 'ALREADY SUCCEEDED' in prompt
+
+    def test_welcome_message_triggers_done(self) -> None:
+        prompt = build_resume_prompt('netflix', '')
+        assert 'Welcome to netflix' in prompt or 'Welcome back' in prompt
 
 
 class TestServiceHints:
@@ -307,6 +332,32 @@ class TestVLMClientAnalyze:
         text_part = body['messages'][1]['content'][1]
         assert text_part['text'] == 'custom message'
 
+    def test_default_user_message_includes_dimensions(self, monkeypatch) -> None:
+        """When no user_message is provided, the default includes image dimensions."""
+        import httpx
+
+        captured_kwargs: dict = {}
+
+        def mock_post(self_client, url, **kwargs):
+            captured_kwargs.update(kwargs)
+            return TestVLMClientAnalyze._make_response(
+                {'choices': [{'message': {'content': '{"action": "done"}'}}]},
+            )
+
+        monkeypatch.setattr(httpx.Client, 'post', mock_post)
+
+        test_png = _make_test_png_b64(width=200, height=100)
+        with VLMClient(
+            base_url='https://api.example.com',
+            api_key='test-key',
+            model='test-model',
+        ) as client:
+            client.analyze(screenshot_b64=test_png, system_prompt='test')
+
+        text_part = captured_kwargs['json']['messages'][1]['content'][1]
+        assert '200x100' in text_part['text']
+        assert 'absolute pixels' in text_part['text']
+
     def test_oversized_image_returns_scale_factor(self, monkeypatch) -> None:
         """Verify that an image wider than MAX_IMAGE_WIDTH returns a scale factor > 1."""
         import httpx
@@ -329,8 +380,8 @@ class TestVLMClientAnalyze:
 
         monkeypatch.setattr(httpx.Client, 'post', mock_post)
 
-        # 2560px wide image, MAX_IMAGE_WIDTH is 1280 -> scale_factor = 2.0
-        big_png = _make_test_png_b64(width=2560, height=1440)
+        # 5120px wide image, MAX_IMAGE_WIDTH is 2560 -> scale_factor = 2.0
+        big_png = _make_test_png_b64(width=5120, height=2880)
         with VLMClient(
             base_url='https://api.example.com',
             api_key='test-key',
@@ -344,6 +395,83 @@ class TestVLMClientAnalyze:
         assert scale_factor == 2.0
         # VLM returns coords in resized space; caller is responsible for scaling
         assert result['bounding_box'] == [100, 50, 200, 80]
+
+    def test_qwen_model_denormalizes_bbox(self, monkeypatch) -> None:
+        """Qwen-VL models return 0-1000 normalized coords; should convert to pixels."""
+        import httpx
+
+        mock_json = {
+            'choices': [{
+                'message': {
+                    'content': json.dumps({
+                        'state': 'page',
+                        'action': 'click',
+                        'bounding_box': [321, 335, 666, 398],
+                        'confidence': 0.95,
+                    }),
+                },
+            }],
+        }
+
+        def mock_post(self_client, url, **kwargs):
+            return TestVLMClientAnalyze._make_response(mock_json)
+
+        monkeypatch.setattr(httpx.Client, 'post', mock_post)
+
+        # 200x100 image (won't be resized), model name contains 'qwen'
+        test_png = _make_test_png_b64(width=200, height=100)
+        with VLMClient(
+            base_url='https://api.example.com',
+            api_key='test-key',
+            model='qwen/qwen3-vl-32b-instruct',
+        ) as client:
+            result, scale_factor = client.analyze(
+                screenshot_b64=test_png,
+                system_prompt='test prompt',
+            )
+
+        assert scale_factor == 1.0
+        # 321/1000 * 200 = 64.2, 335/1000 * 100 = 33.5, etc.
+        bbox = result['bounding_box']
+        assert abs(bbox[0] - 64.2) < 0.1
+        assert abs(bbox[1] - 33.5) < 0.1
+        assert abs(bbox[2] - 133.2) < 0.1
+        assert abs(bbox[3] - 39.8) < 0.1
+
+    def test_non_qwen_model_preserves_bbox(self, monkeypatch) -> None:
+        """Non-Qwen models return absolute pixel coords; should not convert."""
+        import httpx
+
+        mock_json = {
+            'choices': [{
+                'message': {
+                    'content': json.dumps({
+                        'state': 'page',
+                        'action': 'click',
+                        'bounding_box': [100, 200, 300, 250],
+                        'confidence': 0.9,
+                    }),
+                },
+            }],
+        }
+
+        def mock_post(self_client, url, **kwargs):
+            return TestVLMClientAnalyze._make_response(mock_json)
+
+        monkeypatch.setattr(httpx.Client, 'post', mock_post)
+
+        test_png = _make_test_png_b64(width=200, height=100)
+        with VLMClient(
+            base_url='https://api.example.com',
+            api_key='test-key',
+            model='grok-2-vision',
+        ) as client:
+            result, _scale = client.analyze(
+                screenshot_b64=test_png,
+                system_prompt='test prompt',
+            )
+
+        assert result['bounding_box'] == [100, 200, 300, 250]
 
 
 # ===========================================================================
@@ -412,6 +540,82 @@ class TestResolveCredential:
         )
         assert template == '{zip}'
         assert actual == '10001'
+
+
+# ===========================================================================
+# Auto-type inference tests
+# ===========================================================================
+
+
+class TestInferCredentialFromTarget:
+    """_infer_credential_from_target: detect credential fields from click targets."""
+
+    def _make_recorder(self) -> PlaybookRecorder:
+        vlm = VLMClient(
+            base_url='https://stub.example.com',
+            api_key='stub',
+            model='stub',
+        )
+        rec = PlaybookRecorder(
+            vlm=vlm, service='netflix', flow='cancel',
+            credentials={'email': 'x@y.com', 'pass': 'pw'},
+        )
+        return rec
+
+    def test_email_field(self) -> None:
+        rec = self._make_recorder()
+        assert rec._infer_credential_from_target('Email or phone number field') == 'the email address'
+        rec.vlm.close()
+
+    def test_password_field(self) -> None:
+        rec = self._make_recorder()
+        assert rec._infer_credential_from_target('Password field') == 'the password'
+        rec.vlm.close()
+
+    def test_email_input_box(self) -> None:
+        rec = self._make_recorder()
+        assert rec._infer_credential_from_target('Email input box') == 'the email address'
+        rec.vlm.close()
+
+    def test_username_field(self) -> None:
+        rec = self._make_recorder()
+        assert rec._infer_credential_from_target('Username field') == 'the email address'
+        rec.vlm.close()
+
+    def test_button_not_matched(self) -> None:
+        rec = self._make_recorder()
+        assert rec._infer_credential_from_target('Sign In button') is None
+        rec.vlm.close()
+
+    def test_link_not_matched(self) -> None:
+        rec = self._make_recorder()
+        assert rec._infer_credential_from_target('Cancel Membership link') is None
+        rec.vlm.close()
+
+    def test_menu_not_matched(self) -> None:
+        rec = self._make_recorder()
+        assert rec._infer_credential_from_target('Account menu') is None
+        rec.vlm.close()
+
+    def test_password_reset_button_not_matched(self) -> None:
+        """A button with 'password' in it should not trigger auto-type."""
+        rec = self._make_recorder()
+        assert rec._infer_credential_from_target('Reset Password button') is None
+        rec.vlm.close()
+
+    def test_continue_button_near_email_field_not_matched(self) -> None:
+        """Button description mentioning nearby email field should not trigger."""
+        rec = self._make_recorder()
+        assert rec._infer_credential_from_target(
+            'the red Continue button below the email input field'
+        ) is None
+        rec.vlm.close()
+
+    def test_case_insensitive(self) -> None:
+        rec = self._make_recorder()
+        assert rec._infer_credential_from_target('EMAIL FIELD') == 'the email address'
+        assert rec._infer_credential_from_target('PASSWORD INPUT') == 'the password'
+        rec.vlm.close()
 
 
 # ===========================================================================
@@ -558,9 +762,14 @@ class TestRecorderIntegration:
     """
 
     def _mock_vlm_responses(self) -> list[dict]:
-        """Scripted VLM responses simulating a Netflix cancel flow."""
+        """Scripted VLM responses simulating a Netflix cancel flow.
+
+        Auto-type means the recorder types credentials immediately after
+        clicking an input field, so the VLM sees the field already filled
+        and skips to the next action (no separate type_text steps).
+        """
         return [
-            # Step 1: on login page, click email field
+            # Step 1: click email field (auto-types email)
             {
                 'state': 'Netflix login page with empty email field',
                 'action': 'click',
@@ -573,20 +782,7 @@ class TestRecorderIntegration:
                 'is_checkpoint': False,
                 'checkpoint_prompt': '',
             },
-            # Step 2: type email
-            {
-                'state': 'Email field is focused',
-                'action': 'type_text',
-                'target_description': 'Email field',
-                'bounding_box': [400, 300, 700, 330],
-                'text_to_type': 'the email address',
-                'key_to_press': '',
-                'confidence': 0.93,
-                'reasoning': 'Email field is focused, need to type email',
-                'is_checkpoint': False,
-                'checkpoint_prompt': '',
-            },
-            # Step 3: click password field
+            # Step 2: click password field (auto-types password)
             {
                 'state': 'Email entered, password field empty',
                 'action': 'click',
@@ -599,20 +795,7 @@ class TestRecorderIntegration:
                 'is_checkpoint': False,
                 'checkpoint_prompt': '',
             },
-            # Step 4: type password
-            {
-                'state': 'Password field is focused',
-                'action': 'type_text',
-                'target_description': 'Password field',
-                'bounding_box': [400, 360, 700, 390],
-                'text_to_type': 'the password',
-                'key_to_press': '',
-                'confidence': 0.92,
-                'reasoning': 'Password field focused, typing password',
-                'is_checkpoint': False,
-                'checkpoint_prompt': '',
-            },
-            # Step 5: click Sign In
+            # Step 3: click Sign In
             {
                 'state': 'Both fields filled',
                 'action': 'click',
@@ -625,7 +808,7 @@ class TestRecorderIntegration:
                 'is_checkpoint': True,
                 'checkpoint_prompt': 'Am I logged into Netflix?',
             },
-            # Step 6: sign-in done (transition to cancel prompt)
+            # Step 4: sign-in done (transition to cancel prompt)
             {
                 'state': 'Signed in, seeing Netflix browse page',
                 'action': 'done',
@@ -638,7 +821,7 @@ class TestRecorderIntegration:
                 'is_checkpoint': False,
                 'checkpoint_prompt': '',
             },
-            # Step 7: on browse page, click Account
+            # Step 5: on browse page, click Account
             {
                 'state': 'Netflix browse page',
                 'action': 'click',
@@ -651,7 +834,7 @@ class TestRecorderIntegration:
                 'is_checkpoint': False,
                 'checkpoint_prompt': '',
             },
-            # Step 8: click Cancel Membership
+            # Step 6: click Cancel Membership
             {
                 'state': 'Account settings page',
                 'action': 'click',
@@ -664,7 +847,7 @@ class TestRecorderIntegration:
                 'is_checkpoint': True,
                 'checkpoint_prompt': 'Am I on the cancel confirmation page?',
             },
-            # Step 9: click Finish Cancellation
+            # Step 7: click Finish Cancellation
             {
                 'state': 'Cancel confirmation page',
                 'action': 'click',
@@ -677,7 +860,7 @@ class TestRecorderIntegration:
                 'is_checkpoint': True,
                 'checkpoint_prompt': 'Is cancellation confirmed?',
             },
-            # Step 10: cancel done
+            # Step 8: cancel done
             {
                 'state': 'Cancellation confirmed',
                 'action': 'done',
@@ -698,6 +881,9 @@ class TestRecorderIntegration:
         call_idx = {'n': 0}
 
         class MockVLM:
+            last_inference_ms = 0
+            _normalized_coords = False
+
             def analyze(self, screenshot_b64, system_prompt, user_message=''):
                 idx = call_idx['n']
                 call_idx['n'] += 1
@@ -788,11 +974,21 @@ class TestRecorderIntegration:
                 assert 'test@netflix.com' not in step.get('value', '')
                 assert 'hunter2' not in step.get('value', '')
 
-        # Check that template vars are used
+        # Check that auto-type produced template vars
         type_steps = [s for s in result['steps'] if s['action'] == 'type_text']
         values = [s['value'] for s in type_steps]
         assert '{email}' in values
         assert '{pass}' in values
+
+        # Auto-typed steps should immediately follow their click
+        step_actions = [s['action'] for s in result['steps']]
+        # navigate, click(email), type_text(email), click(password), type_text(password), ...
+        email_click_idx = next(
+            i for i, s in enumerate(result['steps'])
+            if s['action'] == 'click' and 'email' in s.get('target_description', '').lower()
+        )
+        assert result['steps'][email_click_idx + 1]['action'] == 'type_text'
+        assert result['steps'][email_click_idx + 1]['value'] == '{email}'
 
         # Check password step is marked sensitive
         pass_steps = [s for s in type_steps if s['value'] == '{pass}']
@@ -830,6 +1026,9 @@ class TestRecorderIntegration:
         call_idx = {'n': 0}
 
         class MockVLM:
+            last_inference_ms = 0
+            _normalized_coords = False
+
             def analyze(self, screenshot_b64, system_prompt, user_message=''):
                 idx = call_idx['n']
                 call_idx['n'] += 1
