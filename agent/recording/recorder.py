@@ -81,13 +81,16 @@ class _StuckDetector:
 
     def check(self, state: str, action: str, screenshot_b64: str) -> bool:
         """Returns True if we appear to be stuck."""
-        # Check state+action repetition
-        entry = (state, action)
-        self._history.append(entry)
-        if len(self._history) >= self.threshold:
-            recent = self._history[-self.threshold:]
-            if all(e == recent[0] for e in recent):
-                return True
+        # Check state+action repetition (skip "wait" since repeated
+        # waits are normal for slow page loads; screenshot hash check
+        # below still catches truly frozen pages)
+        if action != 'wait':
+            entry = (state, action)
+            self._history.append(entry)
+            if len(self._history) >= self.threshold:
+                recent = self._history[-self.threshold:]
+                if all(e == recent[0] for e in recent):
+                    return True
 
         # Check screenshot hash repetition
         img_hash = hashlib.md5(screenshot_b64[:10000].encode()).hexdigest()
@@ -342,6 +345,7 @@ class PlaybookRecorder:
             step_num = len(steps)
             ref_path = ref_dir / f'step_{step_num:02d}.png'
             ss.capture_window(session.window_id, str(ref_path))
+            self._shrink_ref_image(ref_path)
 
             if action == 'click' and bbox:
                 # Scale VLM bbox from resized image back to original screenshot pixels.
@@ -439,21 +443,19 @@ class PlaybookRecorder:
                 steps.append(step_data)
                 print(f'    -> Step {step_num}: type_text "{template_var}"')
 
-            elif action == 'scroll_down':
-                scroll_mod.scroll('down', 3)
+            elif action in ('scroll_down', 'scroll_up'):
+                direction = 'down' if action == 'scroll_down' else 'up'
+                # Scroll 75% of the visible window height so below-fold
+                # content moves to the top of the viewport in one action.
+                px_per_click = 30
+                window_h = session.bounds.get('height', 900)
+                scroll_clicks = max(5, int(window_h * 0.75 / px_per_click))
+                scroll_mod.scroll(direction, scroll_clicks)
                 steps.append({
                     'action': 'scroll',
-                    'target_description': 'down 3',
+                    'target_description': f'{direction} {scroll_clicks}',
                 })
-                print(f'    -> Step {step_num}: scroll down')
-
-            elif action == 'scroll_up':
-                scroll_mod.scroll('up', 3)
-                steps.append({
-                    'action': 'scroll',
-                    'target_description': 'up 3',
-                })
-                print(f'    -> Step {step_num}: scroll up')
+                print(f'    -> Step {step_num}: scroll {direction} ({scroll_clicks} clicks, ~{scroll_clicks * px_per_click}px)')
 
             elif action == 'press_key' and key_to_press:
                 keyboard.press_key(key_to_press)
@@ -618,6 +620,20 @@ class PlaybookRecorder:
         with open(path, 'w') as f:
             f.write(prompt)
         print(f'  Prompt saved: {path}')
+
+    def _shrink_ref_image(self, path) -> None:
+        """Downscale a saved reference screenshot to match the VLM input size."""
+        try:
+            from PIL import Image
+            max_w = self.vlm.MAX_IMAGE_WIDTH
+            img = Image.open(str(path))
+            if img.width > max_w:
+                ratio = max_w / img.width
+                new_size = (max_w, int(img.height * ratio))
+                img = img.resize(new_size, Image.LANCZOS)
+                img.save(str(path))
+        except Exception as exc:
+            log.warning('Could not shrink ref image: %s', exc)
 
     @staticmethod
     def _save_debug_overlay(

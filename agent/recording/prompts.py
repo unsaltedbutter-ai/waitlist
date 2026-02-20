@@ -143,7 +143,8 @@ Rules:
 - For type_text, NEVER include actual credentials. Use semantic descriptions like "the email address" or "the password"
 - Set is_checkpoint to true when a significant page transition is expected (login submitted, page navigated, form submitted)
 - Set action to "done" when the current phase is complete
-- Set action to "wait" if the page is still loading
+- Set action to "wait" ONLY if you see a loading spinner or the page is visibly transitioning
+- If the page looks fully loaded but you cannot see the button or element you need, use "scroll_down" (not "wait"). Content below the fold requires scrolling, not waiting.
 - If you see a CAPTCHA, 2FA prompt, or something unexpected, set state to "need_human"\
 """
 
