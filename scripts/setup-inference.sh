@@ -13,7 +13,8 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 COMPONENT_DIR="$PROJECT_ROOT/inference"
 VENV_DIR="$COMPONENT_DIR/venv"
-ENV_FILE="$COMPONENT_DIR/.env"
+ENV_DIR="$HOME/.unsaltedbutter"
+ENV_FILE="$ENV_DIR/inference.env"
 MIN_PYTHON="3.11"
 
 # ── Helpers ───────────────────────────────────────────────────
@@ -160,15 +161,18 @@ main() {
     echo "Dependencies installed."
 
     # 5. Env file
+    mkdir -p "$ENV_DIR"
     NEEDS_CONFIG=false
     if [ ! -f "$ENV_FILE" ]; then
-        cp "$COMPONENT_DIR/.env.example" "$ENV_FILE"
+        cp "$PROJECT_ROOT/env-examples/inference.env.example" "$ENV_FILE"
+        chmod 600 "$ENV_FILE"
         echo ""
-        echo "Created $ENV_FILE from .env.example."
+        echo "Created $ENV_FILE from env-examples/inference.env.example (chmod 600)."
         echo ">>> EDIT $ENV_FILE with your actual values before running. <<<"
         NEEDS_CONFIG=true
     else
-        echo "Config: $ENV_FILE (exists)"
+        chmod 600 "$ENV_FILE"
+        echo "Config: $ENV_FILE (exists, permissions verified)"
         local backend
         backend="$(grep '^MODEL_BACKEND=' "$ENV_FILE" 2>/dev/null | cut -d= -f2)"
         echo "         backend: ${backend:-not set}"
@@ -205,7 +209,7 @@ main() {
         echo "Run: cd $COMPONENT_DIR && venv/bin/python -m uvicorn server:app --host 0.0.0.0 --port 8420"
         echo ""
         echo "Mock mode (no GPU required):"
-        echo "  MODEL_BACKEND=mock in .env"
+        echo "  MODEL_BACKEND=mock in $ENV_FILE"
     fi
 }
 

@@ -15,6 +15,7 @@ PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 COMPONENT_DIR="$PROJECT_ROOT/orchestrator"
 VENV_DIR="$COMPONENT_DIR/venv"
 ENV_DIR="$HOME/.unsaltedbutter"
+SHARED_ENV_FILE="$ENV_DIR/shared.env"
 ENV_FILE="$ENV_DIR/orchestrator.env"
 MIN_PYTHON="3.11"
 SERVICE_NAME="unsaltedbutter-orchestrator"
@@ -83,7 +84,13 @@ check_only() {
         ok=false
     fi
 
-    # Env file
+    # Env files
+    if [ -f "$SHARED_ENV_FILE" ]; then
+        echo "Shared:  $SHARED_ENV_FILE"
+    else
+        echo "Shared:  NOT FOUND at $SHARED_ENV_FILE"
+        ok=false
+    fi
     if [ -f "$ENV_FILE" ]; then
         echo "Config:  $ENV_FILE"
         local perms
@@ -93,22 +100,22 @@ check_only() {
         else
             echo "         permissions: $perms (should be 600)"
         fi
-        # Check required vars
-        local missing=()
-        for var in API_BASE_URL AGENT_HMAC_SECRET NOSTR_NSEC VPS_BOT_PUBKEY ZAP_PROVIDER_PUBKEY OPERATOR_NPUB; do
-            if ! grep -q "^${var}=.\+" "$ENV_FILE" 2>/dev/null; then
-                missing+=("$var")
-            fi
-        done
-        if [ ${#missing[@]} -gt 0 ]; then
-            echo "         MISSING: ${missing[*]}"
-            ok=false
-        else
-            echo "         all required vars present"
-        fi
     else
         echo "Config:  NOT FOUND at $ENV_FILE"
         ok=false
+    fi
+    # Check required vars across both env files
+    local missing=()
+    for var in API_BASE_URL AGENT_HMAC_SECRET NOSTR_NSEC VPS_BOT_PUBKEY ZAP_PROVIDER_PUBKEY OPERATOR_NPUB; do
+        if ! grep -qh "^${var}=.\+" "$SHARED_ENV_FILE" "$ENV_FILE" 2>/dev/null; then
+            missing+=("$var")
+        fi
+    done
+    if [ ${#missing[@]} -gt 0 ]; then
+        echo "         MISSING: ${missing[*]}"
+        ok=false
+    else
+        echo "         all required vars present"
     fi
 
     echo ""
@@ -175,19 +182,33 @@ main() {
     sdk_ver="$("$VENV_DIR/bin/pip" show nostr-sdk 2>/dev/null | grep '^Version:' | awk '{print $2}')"
     echo "  nostr-sdk: $sdk_ver"
 
-    # 6. Env file
+    # 6. Env files
     mkdir -p "$ENV_DIR"
-    if [ ! -f "$ENV_FILE" ]; then
-        cp "$COMPONENT_DIR/.env.example" "$ENV_FILE"
-        chmod 600 "$ENV_FILE"
+    NEEDS_CONFIG=false
+
+    # shared.env (common identity, relays, URLs for all Mac Mini components)
+    if [ ! -f "$SHARED_ENV_FILE" ]; then
+        cp "$PROJECT_ROOT/env-examples/shared.env.example" "$SHARED_ENV_FILE"
+        chmod 600 "$SHARED_ENV_FILE"
         echo ""
-        echo "Created $ENV_FILE from .env.example (chmod 600)."
-        echo ">>> EDIT $ENV_FILE with your actual values before running. <<<"
+        echo "Created $SHARED_ENV_FILE from env-examples/shared.env.example (chmod 600)."
+        echo ">>> EDIT $SHARED_ENV_FILE with your actual values. <<<"
+        NEEDS_CONFIG=true
+    else
+        chmod 600 "$SHARED_ENV_FILE"
+        echo "Shared: $SHARED_ENV_FILE (exists, permissions verified)"
+    fi
+
+    # orchestrator.env (component-specific)
+    if [ ! -f "$ENV_FILE" ]; then
+        cp "$PROJECT_ROOT/env-examples/orchestrator.env.example" "$ENV_FILE"
+        chmod 600 "$ENV_FILE"
+        echo "Created $ENV_FILE from env-examples/orchestrator.env.example (chmod 600)."
+        echo ">>> EDIT $ENV_FILE with your actual values. <<<"
         NEEDS_CONFIG=true
     else
         chmod 600 "$ENV_FILE"
         echo "Config: $ENV_FILE (exists, permissions verified)"
-        NEEDS_CONFIG=false
     fi
 
     # 7. Smoke test (import check, no network)
@@ -215,13 +236,15 @@ main() {
     echo ""
     echo "Component:  $COMPONENT_DIR"
     echo "Venv:       $VENV_DIR"
+    echo "Shared:     $SHARED_ENV_FILE"
     echo "Config:     $ENV_FILE"
     echo ""
 
     if [ "$NEEDS_CONFIG" = true ]; then
         echo "NEXT STEPS:"
-        echo "  1. Edit $ENV_FILE with your real values"
-        echo "  2. Run: cd $COMPONENT_DIR && venv/bin/python orchestrator.py"
+        echo "  1. Edit $SHARED_ENV_FILE (Nostr identity, relays, VPS URL)"
+        echo "  2. Edit $ENV_FILE (orchestrator-specific: agent URL, callback port)"
+        echo "  3. Run: cd $COMPONENT_DIR && venv/bin/python orchestrator.py"
     else
         echo "Run: cd $COMPONENT_DIR && venv/bin/python orchestrator.py"
     fi
@@ -255,6 +278,7 @@ WorkingDirectory=$COMPONENT_DIR
 ExecStart=$VENV_DIR/bin/python orchestrator.py
 Restart=always
 RestartSec=10
+EnvironmentFile=$SHARED_ENV_FILE
 EnvironmentFile=$ENV_FILE
 
 # Hardening

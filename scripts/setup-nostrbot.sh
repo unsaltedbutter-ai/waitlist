@@ -13,7 +13,8 @@ PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 BOT_DIR="$PROJECT_ROOT/nostr-bot"
 VENV_DIR="$BOT_DIR/venv"
 ENV_DIR="$HOME/.unsaltedbutter"
-ENV_FILE="$ENV_DIR/nostr.env"
+SHARED_ENV_FILE="$ENV_DIR/shared.env"
+ENV_FILE="$ENV_DIR/nostr-bot.env"
 MIN_PYTHON="3.11"
 
 # ── OS detection ──────────────────────────────────────────────
@@ -123,20 +124,32 @@ main() {
     "$VENV_DIR/bin/pip" install -r "$BOT_DIR/requirements.txt" --quiet
     echo "Dependencies installed."
 
-    # 6. Create env file from example if it doesn't exist
-    #    Bot loads from ~/.unsaltedbutter/nostr.env (keeps secrets out of repo)
+    # 6. Env files
     mkdir -p "$ENV_DIR"
-    if [ ! -f "$ENV_FILE" ]; then
-        cp "$BOT_DIR/.env.example" "$ENV_FILE"
-        chmod 600 "$ENV_FILE"
+    NEEDS_CONFIG=false
+
+    # shared.env (common identity, relays, URLs for all Mac Mini components)
+    if [ ! -f "$SHARED_ENV_FILE" ]; then
+        cp "$PROJECT_ROOT/env-examples/shared.env.example" "$SHARED_ENV_FILE"
+        chmod 600 "$SHARED_ENV_FILE"
         echo ""
-        echo "Created $ENV_FILE from .env.example (chmod 600)."
-        echo ">>> EDIT $ENV_FILE with your actual values before running the bot. <<<"
+        echo "Created $SHARED_ENV_FILE from env-examples/shared.env.example (chmod 600)."
+        echo ">>> EDIT $SHARED_ENV_FILE with your actual values. <<<"
+        NEEDS_CONFIG=true
+    else
+        chmod 600 "$SHARED_ENV_FILE"
+        echo "Shared: $SHARED_ENV_FILE (exists, permissions verified)"
+    fi
+
+    # nostr-bot.env (component-specific overrides, usually empty)
+    if [ ! -f "$ENV_FILE" ]; then
+        cp "$PROJECT_ROOT/env-examples/nostr-bot.env.example" "$ENV_FILE"
+        chmod 600 "$ENV_FILE"
+        echo "Created $ENV_FILE from env-examples/nostr-bot.env.example (chmod 600)."
         NEEDS_CONFIG=true
     else
         chmod 600 "$ENV_FILE"
         echo "Config: $ENV_FILE (exists, permissions verified)"
-        NEEDS_CONFIG=false
     fi
 
     # 7. Run tests
@@ -166,19 +179,13 @@ main() {
     echo ""
     echo "Bot directory:  $BOT_DIR"
     echo "Venv:           $VENV_DIR"
+    echo "Shared:         $SHARED_ENV_FILE"
     echo "Config:         $ENV_FILE"
     echo ""
 
     if [ "$NEEDS_CONFIG" = true ]; then
         echo "NEXT STEPS:"
-        echo "  1. Edit $ENV_FILE with your real values:"
-        echo "     - NOSTR_NSEC          (bot's private key)"
-        echo "     - API_BASE_URL       (VPS URL, e.g. https://unsaltedbutter.ai)"
-        echo "     - AGENT_HMAC_SECRET  (shared HMAC secret with VPS)"
-        echo "     - ZAP_PROVIDER_PUBKEY (Lightning provider's nostr pubkey)"
-        echo "     - BOT_LUD16          (Lightning address for zaps)"
-        echo "     - VPS_BOT_PUBKEY     (hex pubkey of VPS private Nostr bot)"
-        echo "     - OPERATOR_NPUB      (operator's npub for admin commands)"
+        echo "  1. Edit $SHARED_ENV_FILE (Nostr identity, relays, VPS URL, HMAC secret)"
         echo "  2. Run the bot:"
         echo "     cd $BOT_DIR && venv/bin/python bot.py"
     else
@@ -219,7 +226,8 @@ WorkingDirectory=$BOT_DIR
 ExecStart=$VENV_DIR/bin/python bot.py
 Restart=always
 RestartSec=10
-EnvironmentFile=$ENV_DIR/nostr.env
+EnvironmentFile=$SHARED_ENV_FILE
+EnvironmentFile=$ENV_FILE
 
 # Hardening
 NoNewPrivileges=yes

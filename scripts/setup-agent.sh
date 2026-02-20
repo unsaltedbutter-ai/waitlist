@@ -13,7 +13,9 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 COMPONENT_DIR="$PROJECT_ROOT/agent"
 VENV_DIR="$COMPONENT_DIR/venv"
-ENV_FILE="$COMPONENT_DIR/.env"
+ENV_DIR="$HOME/.unsaltedbutter"
+SHARED_ENV_FILE="$ENV_DIR/shared.env"
+ENV_FILE="$ENV_DIR/agent.env"
 MIN_PYTHON="3.11"
 
 # ── Helpers ───────────────────────────────────────────────────
@@ -76,7 +78,13 @@ check_only() {
         ok=false
     fi
 
-    # Env file
+    # Env files
+    if [ -f "$SHARED_ENV_FILE" ]; then
+        echo "Shared:  $SHARED_ENV_FILE"
+    else
+        echo "Shared:  NOT FOUND at $SHARED_ENV_FILE"
+        ok=false
+    fi
     if [ -f "$ENV_FILE" ]; then
         echo "Config:  $ENV_FILE"
     else
@@ -158,16 +166,33 @@ main() {
     "$VENV_DIR/bin/pip" install -r "$COMPONENT_DIR/requirements.txt" --quiet
     echo "Dependencies installed."
 
-    # 5. Env file
+    # 5. Env files
+    mkdir -p "$ENV_DIR"
     NEEDS_CONFIG=false
-    if [ ! -f "$ENV_FILE" ]; then
-        cp "$COMPONENT_DIR/.env.example" "$ENV_FILE"
+
+    # shared.env (common identity, relays, URLs for all Mac Mini components)
+    if [ ! -f "$SHARED_ENV_FILE" ]; then
+        cp "$PROJECT_ROOT/env-examples/shared.env.example" "$SHARED_ENV_FILE"
+        chmod 600 "$SHARED_ENV_FILE"
         echo ""
-        echo "Created $ENV_FILE from .env.example."
-        echo ">>> EDIT $ENV_FILE with your actual values before running. <<<"
+        echo "Created $SHARED_ENV_FILE from env-examples/shared.env.example (chmod 600)."
+        echo ">>> EDIT $SHARED_ENV_FILE with your actual values. <<<"
         NEEDS_CONFIG=true
     else
-        echo "Config: $ENV_FILE (exists)"
+        chmod 600 "$SHARED_ENV_FILE"
+        echo "Shared: $SHARED_ENV_FILE (exists, permissions verified)"
+    fi
+
+    # agent.env (component-specific)
+    if [ ! -f "$ENV_FILE" ]; then
+        cp "$PROJECT_ROOT/env-examples/agent.env.example" "$ENV_FILE"
+        chmod 600 "$ENV_FILE"
+        echo "Created $ENV_FILE from env-examples/agent.env.example (chmod 600)."
+        echo ">>> EDIT $ENV_FILE with your actual values. <<<"
+        NEEDS_CONFIG=true
+    else
+        chmod 600 "$ENV_FILE"
+        echo "Config: $ENV_FILE (exists, permissions verified)"
     fi
 
     # 6. Chrome check
@@ -194,16 +219,16 @@ main() {
     echo ""
     echo "Component:  $COMPONENT_DIR"
     echo "Venv:       $VENV_DIR"
+    echo "Shared:     $SHARED_ENV_FILE"
     echo "Config:     $ENV_FILE"
     echo ""
 
     if [ "$NEEDS_CONFIG" = true ]; then
         echo "NEXT STEPS:"
-        echo "  1. Edit $ENV_FILE:"
-        echo "     - STUDIO_URL  (Mac Studio inference endpoint)"
-        echo "     - AGENT_PORT  (port for orchestrator dispatch, default 8421)"
-        echo "  2. Grant Accessibility + Screen Recording permissions in System Settings"
-        echo "  3. Run: cd $COMPONENT_DIR && venv/bin/python server.py"
+        echo "  1. Edit $SHARED_ENV_FILE (Nostr identity, relays, VPS URL)"
+        echo "  2. Edit $ENV_FILE (agent-specific: STUDIO_URL, CHROME_PATH)"
+        echo "  3. Grant Accessibility + Screen Recording permissions in System Settings"
+        echo "  4. Run: cd $COMPONENT_DIR && venv/bin/python server.py"
     else
         echo "Run: cd $COMPONENT_DIR && venv/bin/python server.py"
     fi
