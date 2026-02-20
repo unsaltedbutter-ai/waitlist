@@ -182,7 +182,7 @@ main() {
     # 7. Smoke test
     echo ""
     echo "Running import smoke test..."
-    if "$VENV_DIR/bin/python" -c "import config; import pyautogui; import httpx; print('All imports OK')" 2>&1; then
+    if PYTHONPATH="$PROJECT_ROOT" "$VENV_DIR/bin/python" -c "from agent.config import AGENT_PORT; import pyautogui; import httpx; print('All imports OK')" 2>&1; then
         :
     else
         echo "WARNING: Import check failed. Check dependencies."
@@ -203,9 +203,9 @@ main() {
         echo "     - STUDIO_URL  (Mac Studio inference endpoint)"
         echo "     - AGENT_PORT  (port for orchestrator dispatch, default 8421)"
         echo "  2. Grant Accessibility + Screen Recording permissions in System Settings"
-        echo "  3. Run: cd $COMPONENT_DIR && venv/bin/python agent.py"
+        echo "  3. Run: cd $COMPONENT_DIR && venv/bin/python server.py"
     else
-        echo "Run: cd $COMPONENT_DIR && venv/bin/python agent.py"
+        echo "Run: cd $COMPONENT_DIR && venv/bin/python server.py"
     fi
     echo ""
     echo "Reminder: Agent requires Accessibility and Screen Recording permissions"

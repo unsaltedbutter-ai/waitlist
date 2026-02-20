@@ -19,7 +19,14 @@ import sys
 import threading
 import time
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
+# The agent/ directory is a namespace package. Ensure the project root is on
+# sys.path and agent/ itself is removed so that `from agent.config import ...`
+# resolves to the agent directory (namespace package), not a file.
+_PROJECT_ROOT = os.path.normpath(os.path.join(os.path.dirname(__file__), '..', '..'))
+_AGENT_DIR = os.path.normpath(os.path.join(os.path.dirname(__file__), '..'))
+sys.path[:] = [p for p in sys.path if os.path.normpath(p) != _AGENT_DIR]
+if _PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, _PROJECT_ROOT)
 
 SESSION_FILE = '/tmp/ub-chrome-session.json'
 
@@ -868,7 +875,7 @@ def main():
     p_learn.add_argument('--email', required=True, help='Account email')
     p_learn.add_argument('--password', required=True, help='Account password')
     p_learn.add_argument('--vlm-url', required=True, dest='vlm_url',
-                         help='VLM API base URL (e.g. https://api.x.ai/v1)')
+                         help='VLM API base URL (e.g. https://api.x.ai)')
     p_learn.add_argument('--vlm-key', required=True, dest='vlm_key',
                          help='VLM API key')
     p_learn.add_argument('--vlm-model', required=True, dest='vlm_model',

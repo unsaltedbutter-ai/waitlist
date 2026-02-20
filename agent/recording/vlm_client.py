@@ -6,11 +6,14 @@ via POST /v1/chat/completions with base64 image content.
 
 from __future__ import annotations
 
+import base64
+import io
 import json
 import logging
 import re
 
 import httpx
+from PIL import Image
 
 log = logging.getLogger(__name__)
 
@@ -75,6 +78,11 @@ class VLMClient:
     and parses the JSON response.
     """
 
+    # Max pixel width for screenshots sent to the VLM.  Retina captures are
+    # typically 3000+ px wide; resizing to 1280 keeps payloads well under API
+    # limits while retaining enough detail for UI element recognition.
+    MAX_IMAGE_WIDTH = 1280
+
     def __init__(
         self,
         base_url: str,
@@ -84,7 +92,10 @@ class VLMClient:
         temperature: float = 0.1,
         timeout: float = 60.0,
     ) -> None:
+        # Strip trailing /v1 so we can always append /v1/chat/completions
         self.base_url = base_url.rstrip('/')
+        if self.base_url.endswith('/v1'):
+            self.base_url = self.base_url[:-3]
         self.model = model
         self.max_tokens = max_tokens
         self.temperature = temperature
@@ -102,7 +113,7 @@ class VLMClient:
         screenshot_b64: str,
         system_prompt: str,
         user_message: str = 'Analyze this screenshot and respond with the JSON action.',
-    ) -> dict:
+    ) -> tuple[dict, float]:
         """Send a screenshot to the VLM and return the parsed JSON response.
 
         Args:
@@ -111,12 +122,18 @@ class VLMClient:
             user_message: User-role text accompanying the image.
 
         Returns:
-            Parsed JSON dict from the VLM response.
+            Tuple of (parsed JSON dict, scale_factor). The scale_factor is
+            original_width / sent_width. Multiply any pixel coordinates in the
+            response by scale_factor to map them back to original image space.
+            Returns 1.0 when no resizing occurred.
 
         Raises:
             httpx.HTTPStatusError: On non-2xx response.
             ValueError: If JSON cannot be extracted from the response.
         """
+        # Resize oversized screenshots to stay under API payload limits
+        image_b64, scale_factor = self._resize_if_needed(screenshot_b64)
+
         payload = {
             'model': self.model,
             'max_tokens': self.max_tokens,
@@ -129,7 +146,7 @@ class VLMClient:
                         {
                             'type': 'image_url',
                             'image_url': {
-                                'url': f'data:image/png;base64,{screenshot_b64}',
+                                'url': f'data:image/jpeg;base64,{image_b64}',
                             },
                         },
                         {'type': 'text', 'text': user_message},
@@ -145,7 +162,30 @@ class VLMClient:
         raw_text = data['choices'][0]['message']['content']
         log.debug('VLM raw response: %s', raw_text[:500])
 
-        return _extract_json(raw_text)
+        return _extract_json(raw_text), scale_factor
+
+    def _resize_if_needed(self, screenshot_b64: str) -> tuple[str, float]:
+        """Downscale a base64 PNG to JPEG at MAX_IMAGE_WIDTH if wider.
+
+        Returns (base64_jpeg, scale_factor) where scale_factor is
+        original_width / sent_width (1.0 if no resize needed).
+        """
+        raw = base64.b64decode(screenshot_b64)
+        img = Image.open(io.BytesIO(raw))
+
+        scale_factor = 1.0
+        if img.width > self.MAX_IMAGE_WIDTH:
+            scale_factor = img.width / self.MAX_IMAGE_WIDTH
+            new_size = (self.MAX_IMAGE_WIDTH, int(img.height / scale_factor))
+            img = img.resize(new_size, Image.LANCZOS)
+            log.debug('Resized screenshot %dx%d -> %dx%d (scale_factor=%.3f)',
+                       int(new_size[0] * scale_factor), int(new_size[1] * scale_factor),
+                       *new_size, scale_factor)
+
+        # Convert to JPEG (much smaller than PNG for screenshots)
+        buf = io.BytesIO()
+        img.convert('RGB').save(buf, format='JPEG', quality=85)
+        return base64.b64encode(buf.getvalue()).decode('ascii'), scale_factor
 
     def close(self) -> None:
         """Close the underlying HTTP client."""

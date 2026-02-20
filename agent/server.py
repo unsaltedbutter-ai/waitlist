@@ -27,16 +27,16 @@ import httpx
 from aiohttp import web
 from dotenv import load_dotenv
 
-from config import AGENT_PORT
-from executor import PlaybookExecutor
-from inference import (
+from agent.config import AGENT_PORT
+from agent.executor import PlaybookExecutor
+from agent.inference import (
     CoordinateInferenceClient,
     HttpInferenceClient,
     InferenceClient,
     MockInferenceClient,
 )
-from playbook import ExecutionResult, JobContext, Playbook
-from profile import NORMAL, PROFILES
+from agent.playbook import ExecutionResult, JobContext, Playbook
+from agent.profile import NORMAL, PROFILES
 
 log = logging.getLogger(__name__)
 

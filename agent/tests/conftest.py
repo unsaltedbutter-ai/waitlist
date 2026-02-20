@@ -11,8 +11,7 @@ import pytest
 # The agent/ directory is a namespace package (no __init__.py). Modules inside
 # use `from agent.xxx import ...` style imports. For that to resolve correctly,
 # the PROJECT ROOT (parent of agent/) must be in sys.path, and the agent/
-# directory itself must NOT shadow the package (agent.py lives inside agent/
-# and would shadow the package if agent/ were on sys.path).
+# directory itself must NOT be on sys.path (it would shadow the package).
 #
 # Strategy: insert project root at the front and remove agent/ itself.
 _PROJECT_ROOT = str(Path(__file__).resolve().parent.parent.parent)
@@ -31,12 +30,12 @@ if _PROJECT_ROOT not in sys.path:
 # and pyobjc are unavailable.
 # ---------------------------------------------------------------------------
 
-# aiohttp stub (agent.py imports it; not needed for unit tests)
+# aiohttp stub (server.py imports it; not needed for unit tests)
 _aiohttp = MagicMock()
 sys.modules.setdefault('aiohttp', _aiohttp)
 sys.modules.setdefault('aiohttp.web', _aiohttp.web)
 
-# dotenv stub (agent.py imports it)
+# dotenv stub (server.py imports it)
 sys.modules.setdefault('dotenv', MagicMock())
 
 # pyautogui stub

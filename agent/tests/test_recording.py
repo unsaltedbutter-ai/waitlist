@@ -12,9 +12,20 @@ Run: cd agent && python -m pytest tests/test_recording.py -v
 
 from __future__ import annotations
 
+import base64
+import io
 import json
 
 import pytest
+from PIL import Image
+
+
+def _make_test_png_b64(width: int = 200, height: int = 100) -> str:
+    """Create a minimal valid PNG image and return its base64 encoding."""
+    img = Image.new('RGB', (width, height), color=(128, 128, 128))
+    buf = io.BytesIO()
+    img.save(buf, format='PNG')
+    return base64.b64encode(buf.getvalue()).decode('ascii')
 
 from agent.recording.prompts import (
     SERVICE_HINTS,
@@ -165,13 +176,31 @@ class TestExtractJson:
 class TestVLMClientInit:
     """VLMClient construction (no HTTP calls)."""
 
-    def test_strips_trailing_slash(self) -> None:
+    def test_strips_trailing_v1_and_slash(self) -> None:
         client = VLMClient(
             base_url='https://api.example.com/v1/',
             api_key='test-key',
             model='test-model',
         )
-        assert client.base_url == 'https://api.example.com/v1'
+        assert client.base_url == 'https://api.example.com'
+        client.close()
+
+    def test_strips_trailing_v1(self) -> None:
+        client = VLMClient(
+            base_url='https://api.example.com/v1',
+            api_key='test-key',
+            model='test-model',
+        )
+        assert client.base_url == 'https://api.example.com'
+        client.close()
+
+    def test_preserves_base_url_without_v1(self) -> None:
+        client = VLMClient(
+            base_url='https://api.example.com',
+            api_key='test-key',
+            model='test-model',
+        )
+        assert client.base_url == 'https://api.example.com'
         client.close()
 
     def test_context_manager(self) -> None:
@@ -223,14 +252,15 @@ class TestVLMClientAnalyze:
             api_key='test-key',
             model='test-model',
         ) as client:
-            result = client.analyze(
-                screenshot_b64='fake_b64_data',
+            result, scale_factor = client.analyze(
+                screenshot_b64=_make_test_png_b64(),
                 system_prompt='test prompt',
             )
 
         assert result['action'] == 'click'
         assert result['bounding_box'] == [100, 200, 300, 230]
         assert result['confidence'] == 0.95
+        assert scale_factor == 1.0  # 200px wide, under MAX_IMAGE_WIDTH
 
     def test_sends_correct_payload(self, monkeypatch) -> None:
         """Verify the request payload structure."""
@@ -247,6 +277,7 @@ class TestVLMClientAnalyze:
 
         monkeypatch.setattr(httpx.Client, 'post', mock_post)
 
+        test_png = _make_test_png_b64()
         with VLMClient(
             base_url='https://api.example.com',
             api_key='test-key',
@@ -254,12 +285,13 @@ class TestVLMClientAnalyze:
             max_tokens=1024,
             temperature=0.2,
         ) as client:
-            client.analyze(
-                screenshot_b64='AAAA',
+            _result, scale = client.analyze(
+                screenshot_b64=test_png,
                 system_prompt='sys prompt',
                 user_message='custom message',
             )
 
+        assert scale == 1.0
         body = captured_kwargs['json']
         assert body['model'] == 'grok-2-vision'
         assert body['max_tokens'] == 1024
@@ -267,13 +299,51 @@ class TestVLMClientAnalyze:
         assert body['messages'][0]['role'] == 'system'
         assert body['messages'][0]['content'] == 'sys prompt'
         assert body['messages'][1]['role'] == 'user'
-        # Image content
+        # Image content (converted to JPEG by _resize_if_needed)
         img_part = body['messages'][1]['content'][0]
         assert img_part['type'] == 'image_url'
-        assert 'data:image/png;base64,AAAA' in img_part['image_url']['url']
+        assert img_part['image_url']['url'].startswith('data:image/jpeg;base64,')
         # Text content
         text_part = body['messages'][1]['content'][1]
         assert text_part['text'] == 'custom message'
+
+    def test_oversized_image_returns_scale_factor(self, monkeypatch) -> None:
+        """Verify that an image wider than MAX_IMAGE_WIDTH returns a scale factor > 1."""
+        import httpx
+
+        mock_json = {
+            'choices': [{
+                'message': {
+                    'content': json.dumps({
+                        'state': 'page',
+                        'action': 'click',
+                        'bounding_box': [100, 50, 200, 80],
+                        'confidence': 0.9,
+                    }),
+                },
+            }],
+        }
+
+        def mock_post(self_client, url, **kwargs):
+            return TestVLMClientAnalyze._make_response(mock_json)
+
+        monkeypatch.setattr(httpx.Client, 'post', mock_post)
+
+        # 2560px wide image, MAX_IMAGE_WIDTH is 1280 -> scale_factor = 2.0
+        big_png = _make_test_png_b64(width=2560, height=1440)
+        with VLMClient(
+            base_url='https://api.example.com',
+            api_key='test-key',
+            model='test-model',
+        ) as client:
+            result, scale_factor = client.analyze(
+                screenshot_b64=big_png,
+                system_prompt='test prompt',
+            )
+
+        assert scale_factor == 2.0
+        # VLM returns coords in resized space; caller is responsible for scaling
+        assert result['bounding_box'] == [100, 50, 200, 80]
 
 
 # ===========================================================================
@@ -632,8 +702,8 @@ class TestRecorderIntegration:
                 idx = call_idx['n']
                 call_idx['n'] += 1
                 if idx < len(responses):
-                    return responses[idx]
-                return {'action': 'done', 'state': 'fallback done', 'confidence': 1.0}
+                    return responses[idx], 1.0
+                return {'action': 'done', 'state': 'fallback done', 'confidence': 1.0}, 1.0
 
             def close(self):
                 pass
@@ -764,8 +834,8 @@ class TestRecorderIntegration:
                 idx = call_idx['n']
                 call_idx['n'] += 1
                 if idx < len(responses):
-                    return responses[idx]
-                return {'action': 'done', 'state': 'fallback', 'confidence': 1.0}
+                    return responses[idx], 1.0
+                return {'action': 'done', 'state': 'fallback', 'confidence': 1.0}, 1.0
             def close(self):
                 pass
 

@@ -266,7 +266,7 @@ class PlaybookRecorder:
             # Ask VLM
             print(f'  [{self._current_label}] Analyzing screenshot...', end=' ', flush=True)
             try:
-                response = self.vlm.analyze(screenshot_b64, self._current_prompt)
+                response, scale_factor = self.vlm.analyze(screenshot_b64, self._current_prompt)
             except Exception as exc:
                 print(f'VLM error: {exc}')
                 continue
@@ -277,6 +277,10 @@ class PlaybookRecorder:
             reasoning = response.get('reasoning', '')
             target_desc = response.get('target_description', '')
             bbox = response.get('bounding_box')
+
+            # Scale bbox back to original image coordinates if screenshot was resized
+            if bbox and scale_factor != 1.0:
+                bbox = [int(c * scale_factor) for c in bbox]
             text_to_type = response.get('text_to_type', '')
             key_to_press = response.get('key_to_press', '')
             is_checkpoint = response.get('is_checkpoint', False)
