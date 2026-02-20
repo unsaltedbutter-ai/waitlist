@@ -13,9 +13,12 @@ in the chain. When the final prompt returns "done", the flow is complete.
 
 from __future__ import annotations
 
+import base64
 import hashlib
+import io
 import json
 import logging
+import random
 import subprocess
 import time
 
@@ -271,6 +274,8 @@ class PlaybookRecorder:
                 print(f'VLM error: {exc}')
                 continue
 
+            print(f'{self.vlm.last_inference_ms}ms', end=' ', flush=True)
+
             state = response.get('state', '')
             action = response.get('action', '')
             confidence = response.get('confidence', 0.0)
@@ -278,9 +283,6 @@ class PlaybookRecorder:
             target_desc = response.get('target_description', '')
             bbox = response.get('bounding_box')
 
-            # Scale bbox back to original image coordinates if screenshot was resized
-            if bbox and scale_factor != 1.0:
-                bbox = [int(c * scale_factor) for c in bbox]
             text_to_type = response.get('text_to_type', '')
             key_to_press = response.get('key_to_press', '')
             is_checkpoint = response.get('is_checkpoint', False)
@@ -311,8 +313,8 @@ class PlaybookRecorder:
                     print('\n  Flow complete!')
                     break
 
-            # Handle "need_human"
-            if state == 'need_human' or 'need_human' in str(state):
+            # Handle "need_human" (can appear as state or action)
+            if 'need_human' in state or action == 'need_human':
                 _play_attention_sound()
                 print('\n  NEEDS HUMAN INTERVENTION')
                 print(f'  Reason: {reasoning}')
@@ -335,22 +337,75 @@ class PlaybookRecorder:
             ss.capture_window(session.window_id, str(ref_path))
 
             if action == 'click' and bbox:
-                # Convert bbox center to screen coordinates and click
-                cx = (bbox[0] + bbox[2]) / 2
-                cy = (bbox[1] + bbox[3]) / 2
+                # Scale VLM bbox from resized image back to original screenshot pixels.
+                # Always multiply by scale_factor (1.0 when no resize occurred).
+                scaled_bbox = [int(c * scale_factor) for c in bbox]
+
+                # Refine: zoom into area around bbox and re-query for precise coords.
+                # Qwen-VL's normalized 0-1000 system is already accurate;
+                # refinement only helps models with poor absolute-pixel grounding.
+                if not self.vlm._normalized_coords:
+                    refined = self._refine_click_target(
+                        screenshot_b64, scaled_bbox, target_desc,
+                    )
+                    if refined:
+                        print(f'    [debug] initial_bbox={scaled_bbox} refined_bbox={refined}')
+                        scaled_bbox = refined
+
+                # Pick a random point inside the bbox (center-biased Gaussian)
+                bw = scaled_bbox[2] - scaled_bbox[0]
+                bh = scaled_bbox[3] - scaled_bbox[1]
+                cx = (scaled_bbox[0] + scaled_bbox[2]) / 2 + random.gauss(0, bw * 0.15)
+                cy = (scaled_bbox[1] + scaled_bbox[3]) / 2 + random.gauss(0, bh * 0.15)
+                # Clamp inside the bbox
+                cx = max(scaled_bbox[0], min(cx, scaled_bbox[2]))
+                cy = max(scaled_bbox[1], min(cy, scaled_bbox[3]))
                 sx, sy = coords.image_to_screen(cx, cy, session.bounds)
-                mouse.click(sx, sy)
+                print(f'    [debug] bbox={scaled_bbox} '
+                      f'center=({cx:.0f},{cy:.0f}) scale={scale_factor:.2f} '
+                      f'screen=({sx:.0f},{sy:.0f}) bounds={session.bounds}')
+
+                # Save debug overlay: draw bbox on the FULL screenshot
+                self._save_debug_overlay(
+                    screenshot_b64, scaled_bbox,
+                    ref_dir / f'step_{step_num:02d}_debug.png',
+                )
+
+                mouse.click(sx, sy, fast=True)
 
                 step_data: dict = {
                     'action': 'click',
                     'target_description': target_desc,
-                    'ref_region': bbox,
+                    'ref_region': scaled_bbox,
                 }
                 if is_checkpoint:
                     step_data['checkpoint'] = True
                     step_data['checkpoint_prompt'] = checkpoint_prompt
                 steps.append(step_data)
-                print(f'    -> Step {step_num}: click "{target_desc}" bbox={bbox}')
+                print(f'    -> Step {step_num}: click "{target_desc}" bbox={scaled_bbox}')
+
+                # Auto-type after clicking an input field. VLMs can't
+                # distinguish focused vs unfocused empty fields visually,
+                # so we infer the credential from the target description
+                # and type immediately (like a real human would).
+                auto_type_hint = self._infer_credential_from_target(target_desc)
+                if auto_type_hint:
+                    time.sleep(0.3)  # brief pause for field to focus
+                    template_var, actual_value, sensitive = _resolve_credential(
+                        auto_type_hint, self.credentials,
+                    )
+                    if actual_value:
+                        keyboard.type_text(actual_value, speed='medium', accuracy='high')
+                    step_num = len(steps)
+                    type_step: dict = {
+                        'action': 'type_text',
+                        'target_description': target_desc,
+                        'value': template_var,
+                    }
+                    if sensitive:
+                        type_step['sensitive'] = True
+                    steps.append(type_step)
+                    print(f'    -> Step {step_num}: type_text "{template_var}" (auto)')
 
             elif action == 'type_text':
                 template_var, actual_value, sensitive = _resolve_credential(
@@ -428,6 +483,147 @@ class PlaybookRecorder:
         print(f'{len(steps)} steps recorded.')
 
         return playbook_data
+
+    # Keywords indicating the click target is an input field (not a button/link)
+    _FIELD_INDICATORS = ('field', 'input', 'box', 'textbox', 'text box')
+
+    def _refine_click_target(
+        self,
+        screenshot_b64: str,
+        bbox: list[int],
+        target_desc: str,
+    ) -> list[int] | None:
+        """Zoom into the VLM's rough bbox area and re-query for precise coords.
+
+        General-purpose VLMs return bounding boxes that are close but not
+        pixel-accurate. This method crops a generous vertical band around
+        the initial guess and asks the VLM to pinpoint the exact element
+        in the zoomed view, where there is much less ambiguity.
+
+        Args:
+            screenshot_b64: Full original screenshot (base64 PNG).
+            bbox: VLM bbox in original image pixels (already scaled).
+            target_desc: What element to find.
+
+        Returns:
+            Refined bbox in original image pixels, or None on failure.
+        """
+        from PIL import Image
+
+        try:
+            raw = base64.b64decode(screenshot_b64)
+            img = Image.open(io.BytesIO(raw))
+        except Exception:
+            return None
+
+        # Crop: full width, generous vertical padding (4x bbox height each side)
+        bh = max(bbox[3] - bbox[1], 100)
+        cy = (bbox[1] + bbox[3]) // 2
+        crop_y1 = max(0, cy - bh * 4)
+        crop_y2 = min(img.height, cy + bh * 4)
+
+        cropped = img.crop((0, crop_y1, img.width, crop_y2))
+        buf = io.BytesIO()
+        cropped.save(buf, format='PNG')
+        crop_b64 = base64.b64encode(buf.getvalue()).decode('ascii')
+
+        cw, ch = cropped.size
+        user_msg = (
+            f'This cropped image is {cw}x{ch} pixels. '
+            f'Find the exact bounding box of: {target_desc}. '
+            f'Coordinates must be absolute pixels within this {cw}x{ch} image '
+            f'(origin at top-left). Respond with ONLY a JSON object: '
+            f'{{"bounding_box": [x1, y1, x2, y2]}}'
+        )
+
+        print(f'    [refine] crop y={crop_y1}..{crop_y2} ({cw}x{ch}), querying VLM...', end=' ', flush=True)
+
+        try:
+            result, crop_scale = self.vlm.analyze(
+                crop_b64,
+                'You are a UI element locator. Return the exact bounding box '
+                'of the requested element. Nothing else.',
+                user_message=user_msg,
+            )
+            refined = result.get('bounding_box')
+            print(f'{self.vlm.last_inference_ms}ms')
+            print(f'    [refine] vlm returned: {refined} (crop_scale={crop_scale:.3f})')
+            if refined and len(refined) == 4:
+                mapped = [
+                    int(refined[0] * crop_scale),
+                    int(refined[1] * crop_scale) + crop_y1,
+                    int(refined[2] * crop_scale),
+                    int(refined[3] * crop_scale) + crop_y1,
+                ]
+                print(f'    [refine] mapped to full image: {mapped}')
+                return mapped
+        except Exception as exc:
+            print(f'    [refine] FAILED: {exc}')
+            log.warning('Click refinement failed: %s', exc)
+
+        return None
+
+    def _infer_credential_from_target(self, target_desc: str) -> str | None:
+        """Infer if a clicked target is a credential input field.
+
+        After clicking an email or password field, the VLM would need another
+        round-trip just to say "type the email". We skip that by auto-typing
+        immediately when the target description clearly indicates a credential
+        input field.
+
+        Returns a semantic hint (e.g. 'the email address') that
+        _resolve_credential can match, or None if not a credential field.
+        """
+        desc_lower = target_desc.lower()
+
+        # Exclude buttons, links, and other non-input elements
+        if any(kw in desc_lower for kw in ('button', 'link', 'menu', 'tab', 'icon')):
+            return None
+
+        # Must look like an input field
+        if not any(kw in desc_lower for kw in self._FIELD_INDICATORS):
+            return None
+
+        # Email/username field
+        if any(kw in desc_lower for kw in ('email', 'e-mail', 'username', 'phone')):
+            return 'the email address'
+
+        # Password field
+        if any(kw in desc_lower for kw in ('password', 'passwd')):
+            return 'the password'
+
+        return None
+
+    @staticmethod
+    def _save_debug_overlay(
+        screenshot_b64: str,
+        bbox: list[int],
+        out_path,
+    ) -> None:
+        """Draw a red rectangle on the screenshot at the bbox and save it.
+
+        Helps verify VLM bounding box accuracy visually.
+        """
+        try:
+            from PIL import Image, ImageDraw
+
+            raw = base64.b64decode(screenshot_b64)
+            img = Image.open(io.BytesIO(raw))
+            draw = ImageDraw.Draw(img)
+            x1, y1, x2, y2 = bbox
+            # Draw thick red rectangle
+            for offset in range(3):
+                draw.rectangle(
+                    [x1 - offset, y1 - offset, x2 + offset, y2 + offset],
+                    outline='red',
+                )
+            # Draw crosshair at center
+            cx, cy = (x1 + x2) // 2, (y1 + y2) // 2
+            draw.line([(cx - 20, cy), (cx + 20, cy)], fill='red', width=2)
+            draw.line([(cx, cy - 20), (cx, cy + 20)], fill='red', width=2)
+            img.save(str(out_path))
+        except Exception as exc:
+            log.warning('Could not save debug overlay: %s', exc)
 
     @staticmethod
     def _load_session(session_file: str):
