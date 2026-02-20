@@ -22,6 +22,7 @@ import signal
 import subprocess
 import time
 from dataclasses import dataclass, field
+from pathlib import Path
 
 import httpx
 from aiohttp import web
@@ -557,12 +558,14 @@ async def run() -> None:
 
 def main() -> None:
     """Entry point: load env, configure logging, run the agent."""
-    # Load .env file
-    env_path = os.path.join(os.path.dirname(__file__), ".env")
-    if os.path.exists(env_path):
-        load_dotenv(env_path)
-    else:
-        load_dotenv()
+    # Load env files from ~/.unsaltedbutter/
+    ub_dir = Path.home() / ".unsaltedbutter"
+    shared_env = ub_dir / "shared.env"
+    component_env = ub_dir / "agent.env"
+    if shared_env.exists():
+        load_dotenv(str(shared_env))
+    if component_env.exists():
+        load_dotenv(str(component_env), override=True)
 
     log_level = os.environ.get("LOG_LEVEL", "INFO").strip().upper()
     logging.basicConfig(

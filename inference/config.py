@@ -2,6 +2,8 @@
 
 Loads from environment variables. Defaults are tuned for Mac Studio M3 Ultra
 running Qwen3-VL-32B (Q4) via llama.cpp or MLX.
+
+Env file: ~/.unsaltedbutter/inference.env
 """
 
 from __future__ import annotations
@@ -9,6 +11,12 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 from pathlib import Path
+
+from dotenv import load_dotenv
+
+_inference_env = Path.home() / ".unsaltedbutter" / "inference.env"
+if _inference_env.exists():
+    load_dotenv(_inference_env)
 
 
 @dataclass(frozen=True)

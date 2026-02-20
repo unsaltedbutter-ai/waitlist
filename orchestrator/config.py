@@ -2,8 +2,8 @@
 Orchestrator configuration.
 
 Frozen dataclass loaded from environment variables.
-Primary env file: ~/.unsaltedbutter/orchestrator.env
-Fallback: .env in working directory.
+Loads ~/.unsaltedbutter/shared.env first (common identity, relays, URLs),
+then ~/.unsaltedbutter/orchestrator.env (component-specific overrides).
 """
 
 from __future__ import annotations
@@ -76,11 +76,13 @@ class Config:
         then falls back to .env in the current directory.
         Raises ValueError if any required field is missing or empty.
         """
-        home_env = Path.home() / ".unsaltedbutter" / "orchestrator.env"
-        if home_env.exists():
-            load_dotenv(home_env)
-        else:
-            load_dotenv()
+        ub_dir = Path.home() / ".unsaltedbutter"
+        shared_env = ub_dir / "shared.env"
+        component_env = ub_dir / "orchestrator.env"
+        if shared_env.exists():
+            load_dotenv(shared_env)
+        if component_env.exists():
+            load_dotenv(component_env, override=True)
 
         missing = [
             name for name in _REQUIRED_FIELDS

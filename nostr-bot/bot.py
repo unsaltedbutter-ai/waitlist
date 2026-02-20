@@ -35,8 +35,13 @@ import commands
 import notifications
 import zap_handler
 
-_env_file = Path.home() / ".unsaltedbutter" / "nostr.env"
-load_dotenv(_env_file if _env_file.exists() else None)
+_ub_dir = Path.home() / ".unsaltedbutter"
+_shared = _ub_dir / "shared.env"
+_component = _ub_dir / "nostr-bot.env"
+if _shared.exists():
+    load_dotenv(_shared)
+if _component.exists():
+    load_dotenv(_component, override=True)
 
 log = logging.getLogger(__name__)
 
