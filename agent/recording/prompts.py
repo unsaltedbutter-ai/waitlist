@@ -161,39 +161,60 @@ def _get_hints(service: str) -> dict[str, str]:
 def build_signin_prompt(service: str) -> str:
     """Build the sign-in phase system prompt.
 
-    This prompt guides the VLM through the login flow: finding the sign-in
-    form, entering credentials, clicking submit, and handling profile selection.
-    Returns "done" when the user is signed in.
+    Uses page-type classification: the VLM identifies the page layout and
+    returns bounding boxes for all visible fields in a single call. The
+    recorder then executes the full click-type-tab-enter sequence locally
+    without additional VLM round-trips.
     """
     hints = _get_hints(service)
-    profile_note = ''
+    profile_hint = ''
     if hints.get('profile_selection'):
-        profile_note = f'\n- Profile selection screen? -> click the first/main profile. {hints["profile_selection"]}'
+        profile_hint = f' {hints["profile_selection"]}'
 
     return f"""\
 You are a browser automation assistant helping sign in to {service}.
 
-Your job is to analyze the screenshot and determine the single best next action.
+Analyze the screenshot and classify what type of page this is.
 
 Context for {service}:
 - Sign-in button is typically labeled: {hints['signin_button']}
 - Email field is typically labeled: {hints['email_field']}
 - Password field is typically labeled: {hints['password_field']}
 
-IMPORTANT: Some services use multi-step login (email on one page, password on a separate page after clicking Continue/Next). Only interact with fields that are ACTUALLY VISIBLE on the current screenshot. Never assume a field exists if you cannot see it.
+IMPORTANT: The screenshot includes the browser tab bar and address bar at the top (~150 pixels). These are NOT part of the web page. Never target anything in the browser chrome area.
 
-Decision tree (check in order):
-- Am I already signed in (seeing the main browse page, account page, or dashboard)? -> action: "done"
-- Am I on a sign-in page with an empty email field? -> click the email text INPUT BOX (the rectangular form field with placeholder text "{hints['email_field']}"). Do NOT click heading text or labels above the input box.
-- The email field has text and I can see a password INPUT BOX on the page? -> click the password text INPUT BOX (the rectangular form field with placeholder text "{hints['password_field']}")
-- The email field has text but there is NO password field visible, and I see a "Continue" or "Next" button? -> click that button, set is_checkpoint to true
-- Both email and password fields have text? -> click the {hints['signin_button']} button, set is_checkpoint to true
-- Am I on a "Who is watching?" profile selection screen? -> click the first/main profile{profile_note}
-- Page says to check email, tap a link, or use a sign-in link sent via email (passwordless login)? -> set state to "need_human"
-- No sign-in form visible but I see a "Sign In" link or button? -> click it
-- CAPTCHA, 2FA, phone verification, or something unexpected? -> set state to "need_human"
+Page types (pick exactly one):
+- "user_pass": Both an email/username INPUT BOX and a password INPUT BOX are visible on the page
+- "user_only": Only an email/username INPUT BOX is visible (no password field), with a Continue/Next button
+- "pass_only": Only a password INPUT BOX is visible (email may be shown as text but not editable)
+- "button_only": No input fields visible, but a Sign In / Log In / Get Started button is present
+- "profile_select": "Who's watching?" profile picker.{profile_hint}
+- "signed_in": Already signed in (seeing browse page, dashboard, account page, or content)
+- "spinner": Page is loading (spinner, progress bar, or blank/white page after form submission)
+- "email_code": Page asks to enter a verification code sent to email
+- "email_link": Page asks to click a link sent to email (passwordless login)
+- "phone_code": Page asks to enter a code sent to phone
+- "other": CAPTCHA, 2FA authenticator, error page, or something unexpected
 
-{_RESPONSE_SCHEMA}"""
+You MUST respond with exactly one JSON object (no markdown fences, no extra text):
+{{
+  "page_type": "user_pass | user_only | pass_only | button_only | profile_select | signed_in | spinner | email_code | email_link | phone_code | other",
+  "email_box": [x1, y1, x2, y2],
+  "password_box": [x1, y1, x2, y2],
+  "button_box": [x1, y1, x2, y2],
+  "profile_box": [x1, y1, x2, y2],
+  "confidence": 0.0,
+  "reasoning": "brief explanation of what you see and why you chose this page_type"
+}}
+
+Rules:
+- All bounding box coordinates are in image pixels (origin at top-left)
+- Set a box to null if that element is not visible on the page
+- email_box / password_box MUST target the actual text INPUT BOX (the rectangular field where you type), NOT heading text or labels
+- button_box should target the primary action button (Sign In, Continue, Next, Log In, Get Started)
+- profile_box should target the first/main profile avatar or name
+- For "signed_in", all boxes can be null
+- For "email_code", "email_link", "phone_code", "other": all boxes can be null"""
 
 
 def build_cancel_prompt(service: str) -> str:

@@ -183,18 +183,19 @@ class VLMClient:
         parsed = _extract_json(raw_text)
 
         # Qwen-VL models return bounding boxes in 0-1000 normalized coords.
-        # Convert to absolute pixels in the sent image space so callers
-        # get consistent pixel coordinates regardless of model.
-        if self._normalized_coords and 'bounding_box' in parsed:
-            bbox = parsed['bounding_box']
-            if bbox and len(bbox) == 4:
-                w, h = sent_size
-                parsed['bounding_box'] = [
-                    bbox[0] * w / 1000,
-                    bbox[1] * h / 1000,
-                    bbox[2] * w / 1000,
-                    bbox[3] * h / 1000,
-                ]
+        # Convert ALL bbox-like fields to absolute pixels so callers get
+        # consistent pixel coordinates regardless of model.
+        if self._normalized_coords:
+            w, h = sent_size
+            for key, val in parsed.items():
+                if (isinstance(val, list) and len(val) == 4
+                        and all(isinstance(v, (int, float)) for v in val)):
+                    parsed[key] = [
+                        val[0] * w / 1000,
+                        val[1] * h / 1000,
+                        val[2] * w / 1000,
+                        val[3] * h / 1000,
+                    ]
 
         return parsed, scale_factor
 

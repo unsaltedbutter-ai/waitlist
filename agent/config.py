@@ -28,8 +28,8 @@ RECORD_DWELL_RADIUS_PX = 5
 # Normal (not sensitive)
 NORMAL_VARS = frozenset({'{email}', '{name}', '{zip}', '{birth}', '{gender}'})
 
-# Sensitive (password only; we never handle credit cards)
-SENSITIVE_VARS = frozenset({'{pass}'})
+# Sensitive (never logged, never sent to VLM)
+SENSITIVE_VARS = frozenset({'{pass}', '{cvv}'})
 
 # All template vars
 ALL_VARS = NORMAL_VARS | SENSITIVE_VARS
@@ -38,4 +38,4 @@ ALL_VARS = NORMAL_VARS | SENSITIVE_VARS
 KEY_VARS = frozenset({'{tab}', '{return}'})
 
 # Display hint for recording prompts
-VARS_HINT = '{email} {pass} {name} {zip} {birth} {gender} {tab} {return}'
+VARS_HINT = '{email} {pass} {cvv} {name} {zip} {birth} {gender} {tab} {return}'

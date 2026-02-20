@@ -126,8 +126,11 @@ class TestIsOtpLike:
     def test_mixed_separators(self):
         assert self.router._is_otp_like("12 34-56") is True
 
+    def test_three_digits_cvv(self):
+        assert self.router._is_otp_like("123") is True
+
     def test_too_short(self):
-        assert self.router._is_otp_like("123") is False
+        assert self.router._is_otp_like("12") is False
 
     def test_too_long(self):
         assert self.router._is_otp_like("123456789") is False

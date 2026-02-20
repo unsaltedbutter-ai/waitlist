@@ -40,6 +40,7 @@ log = logging.getLogger(__name__)
 _CREDENTIAL_KEYWORDS: list[tuple[list[str], str, str]] = [
     (['email', 'e-mail', 'username', 'phone'], '{email}', 'email'),
     (['password', 'passwd'], '{pass}', 'pass'),
+    (['cvv', 'cvc', 'security code', 'card verification'], '{cvv}', 'cvv'),
     (['name', 'full name'], '{name}', 'name'),
     (['zip', 'postal'], '{zip}', 'zip'),
     (['birth', 'dob', 'date of birth'], '{birth}', 'birth'),
@@ -217,6 +218,192 @@ class PlaybookRecorder:
             name += f'_{self.variant}'
         return name
 
+    def _scale_bbox(self, bbox, scale_factor: float) -> list[int]:
+        """Scale a VLM bbox to original image pixels."""
+        return [int(c * scale_factor) for c in bbox]
+
+    def _click_bbox(self, bbox, session, screenshot_b64, ref_dir, steps,
+                    target_desc, coords_mod, mouse_mod, is_checkpoint=False):
+        """Click inside a bbox: inset, randomize, record step. Returns screen coords."""
+        scaled = self._scale_bbox(bbox, 1.0)  # already scaled by caller
+
+        bw = scaled[2] - scaled[0]
+        bh = scaled[3] - scaled[1]
+        inset_x = bw * 0.10
+        inset_y = bh * 0.10
+        safe_x1 = scaled[0] + inset_x
+        safe_y1 = scaled[1] + inset_y
+        safe_x2 = scaled[2] - inset_x
+        safe_y2 = scaled[3] - inset_y
+        cx = (safe_x1 + safe_x2) / 2 + random.gauss(0, bw * 0.10)
+        cy = (safe_y1 + safe_y2) / 2 + random.gauss(0, bh * 0.10)
+        cx = max(safe_x1, min(cx, safe_x2))
+        cy = max(safe_y1, min(cy, safe_y2))
+
+        sx, sy = coords_mod.image_to_screen(cx, cy, session.bounds)
+        print(f'    [debug] bbox={scaled} center=({cx:.0f},{cy:.0f}) '
+              f'screen=({sx:.0f},{sy:.0f})')
+
+        step_num = len(steps)
+        self._save_debug_overlay(
+            screenshot_b64, scaled,
+            ref_dir / f'step_{step_num:02d}_debug.png',
+        )
+        mouse_mod.click(sx, sy, fast=True)
+
+        step_data: dict = {
+            'action': 'click',
+            'target_description': target_desc,
+            'ref_region': scaled,
+        }
+        if is_checkpoint:
+            step_data['checkpoint'] = True
+        steps.append(step_data)
+        print(f'    -> Step {step_num}: click "{target_desc}" bbox={scaled}')
+
+    def _execute_signin_page(self, response, scale_factor, session,
+                             screenshot_b64, ref_dir, steps, modules):
+        """Handle a sign-in page classification response.
+
+        Executes the full click-type-tab-enter sequence locally based on
+        the page_type, without additional VLM calls.
+
+        Returns: 'continue' (take another screenshot), 'done' (sign-in complete),
+                 or 'need_human'.
+        """
+        coords_mod, keyboard, mouse, scroll_mod = modules
+
+        page_type = response.get('page_type', '')
+        confidence = response.get('confidence', 0.0)
+        reasoning = response.get('reasoning', '')
+
+        # Scale all bboxes
+        def scale(box):
+            if box and len(box) == 4:
+                return [int(c * scale_factor) for c in box]
+            return None
+
+        email_box = scale(response.get('email_box'))
+        password_box = scale(response.get('password_box'))
+        button_box = scale(response.get('button_box'))
+        profile_box = scale(response.get('profile_box'))
+
+        print(f'{page_type} (confidence: {confidence:.2f})')
+        print(f'    Reason: {reasoning}')
+        if email_box:
+            print(f'    email_box: {email_box}')
+        if password_box:
+            print(f'    password_box: {password_box}')
+        if button_box:
+            print(f'    button_box: {button_box}')
+
+        if page_type == 'signed_in':
+            return 'done'
+
+        if page_type == 'spinner':
+            print('    Page loading, waiting...')
+            return 'continue'
+
+        if page_type in ('email_code', 'email_link', 'phone_code', 'other'):
+            return 'need_human'
+
+        # Save ref screenshot
+        step_num = len(steps)
+        ref_path = ref_dir / f'step_{step_num:02d}.png'
+        from agent import screenshot as ss
+        ss.capture_window(session.window_id, str(ref_path))
+        self._shrink_ref_image(ref_path)
+
+        if page_type == 'profile_select' and profile_box:
+            self._click_bbox(
+                profile_box, session, screenshot_b64, ref_dir, steps,
+                'first profile', coords_mod, mouse,
+            )
+            return 'continue'
+
+        if page_type == 'button_only' and button_box:
+            self._click_bbox(
+                button_box, session, screenshot_b64, ref_dir, steps,
+                'Sign In button', coords_mod, mouse, is_checkpoint=True,
+            )
+            return 'continue'
+
+        if page_type == 'user_pass' and email_box:
+            # Click email, type, tab, type password, enter
+            self._click_bbox(
+                email_box, session, screenshot_b64, ref_dir, steps,
+                'email input', coords_mod, mouse,
+            )
+            time.sleep(0.3)
+            email_val = self.credentials.get('email', '')
+            if email_val:
+                keyboard.type_text(email_val, speed='medium', accuracy='high')
+            steps.append({'action': 'type_text', 'value': '{email}'})
+            print(f'    -> Step {len(steps)-1}: type_text "{{email}}" (auto)')
+
+            time.sleep(0.2)
+            keyboard.press_key('tab')
+            steps.append({'action': 'press_key', 'value': 'tab'})
+            print(f'    -> Step {len(steps)-1}: press_key "tab"')
+
+            time.sleep(0.2)
+            pass_val = self.credentials.get('pass', '')
+            if pass_val:
+                keyboard.type_text(pass_val, speed='medium', accuracy='high')
+            steps.append({'action': 'type_text', 'value': '{pass}', 'sensitive': True})
+            print(f'    -> Step {len(steps)-1}: type_text "{{pass}}" (auto)')
+
+            time.sleep(0.2)
+            keyboard.press_key('enter')
+            steps.append({'action': 'press_key', 'value': 'enter'})
+            print(f'    -> Step {len(steps)-1}: press_key "enter"')
+            time.sleep(1.0)  # let form submit before next screenshot
+            return 'continue'
+
+        if page_type == 'user_only' and email_box:
+            # Click email, type, enter
+            self._click_bbox(
+                email_box, session, screenshot_b64, ref_dir, steps,
+                'email input', coords_mod, mouse,
+            )
+            time.sleep(0.3)
+            email_val = self.credentials.get('email', '')
+            if email_val:
+                keyboard.type_text(email_val, speed='medium', accuracy='high')
+            steps.append({'action': 'type_text', 'value': '{email}'})
+            print(f'    -> Step {len(steps)-1}: type_text "{{email}}" (auto)')
+
+            time.sleep(0.2)
+            keyboard.press_key('enter')
+            steps.append({'action': 'press_key', 'value': 'enter'})
+            print(f'    -> Step {len(steps)-1}: press_key "enter"')
+            time.sleep(1.0)  # let form submit before next screenshot
+            return 'continue'
+
+        if page_type == 'pass_only' and password_box:
+            # Click password, type, enter
+            self._click_bbox(
+                password_box, session, screenshot_b64, ref_dir, steps,
+                'password input', coords_mod, mouse,
+            )
+            time.sleep(0.3)
+            pass_val = self.credentials.get('pass', '')
+            if pass_val:
+                keyboard.type_text(pass_val, speed='medium', accuracy='high')
+            steps.append({'action': 'type_text', 'value': '{pass}', 'sensitive': True})
+            print(f'    -> Step {len(steps)-1}: type_text "{{pass}}" (auto)')
+
+            time.sleep(0.2)
+            keyboard.press_key('enter')
+            steps.append({'action': 'press_key', 'value': 'enter'})
+            print(f'    -> Step {len(steps)-1}: press_key "enter"')
+            time.sleep(1.0)  # let form submit before next screenshot
+            return 'continue'
+
+        # Fallback: couldn't execute (missing bbox)
+        print(f'    WARNING: page_type={page_type} but missing required bbox')
+        return 'continue'
+
     def run(self, start_url: str) -> dict:
         """Run the VLM-guided recording loop.
 
@@ -284,6 +471,55 @@ class PlaybookRecorder:
 
             print(f'{self.vlm.last_inference_ms}ms', end=' ', flush=True)
 
+            # Sign-in phase: page classification (different response schema)
+            if self._current_label == 'sign-in':
+                page_type = response.get('page_type', 'other')
+
+                # Stuck detection using page_type
+                if stuck.check(page_type, page_type, screenshot_b64):
+                    _play_attention_sound()
+                    print('\n  STUCK DETECTED (same page type 3x)')
+                    choice = input('  Continue anyway? (y/n): ').strip().lower()
+                    if choice != 'y':
+                        print('  Aborting.')
+                        break
+                    stuck.reset()
+
+                modules = (coords, keyboard, mouse, scroll_mod)
+                result = self._execute_signin_page(
+                    response, scale_factor, session,
+                    screenshot_b64, ref_dir, steps, modules,
+                )
+
+                if result == 'done':
+                    if self._prompt_idx < len(self._prompts) - 1:
+                        steps.append({
+                            'action': 'wait',
+                            'wait_after_sec': [2, 4],
+                            'checkpoint': True,
+                            'checkpoint_prompt': 'sign-in phase complete',
+                        })
+                        self._prompt_idx += 1
+                        stuck.reset()
+                        print(f'\n  Phase transition: sign-in -> {self._current_label}\n')
+                        if self.verbose:
+                            self._dump_prompt(ref_dir, self._current_label, self._current_prompt)
+                    else:
+                        print('\n  Flow complete!')
+                        break
+                    continue
+
+                if result == 'need_human':
+                    _play_attention_sound()
+                    print('\n  NEEDS HUMAN INTERVENTION')
+                    print(f'  Page type: {page_type}')
+                    input('  Press Enter after resolving, or Ctrl+C to abort...')
+                    continue
+
+                # 'continue': take another screenshot on next iteration
+                continue
+
+            # Cancel / Resume phase: generic action response
             state = response.get('state', '')
             action = response.get('action', '')
             confidence = response.get('confidence', 0.0)
@@ -607,6 +843,10 @@ class PlaybookRecorder:
         # Password field
         if any(kw in desc_lower for kw in ('password', 'passwd')):
             return 'the password'
+
+        # CVV / security code field
+        if any(kw in desc_lower for kw in ('cvv', 'cvc', 'security code')):
+            return 'the cvv'
 
         return None
 

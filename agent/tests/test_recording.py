@@ -55,8 +55,9 @@ class TestBuildSigninPrompt:
 
     def test_contains_response_schema(self) -> None:
         prompt = build_signin_prompt('netflix')
-        assert '"bounding_box"' in prompt
-        assert '"action"' in prompt
+        assert '"page_type"' in prompt
+        assert '"email_box"' in prompt
+        assert '"password_box"' in prompt
 
     def test_uses_service_hints(self) -> None:
         prompt = build_signin_prompt('netflix')
@@ -770,64 +771,33 @@ class TestRecorderIntegration:
     def _mock_vlm_responses(self) -> list[dict]:
         """Scripted VLM responses simulating a Netflix cancel flow.
 
-        Auto-type means the recorder types credentials immediately after
-        clicking an input field, so the VLM sees the field already filled
-        and skips to the next action (no separate type_text steps).
+        Sign-in phase uses page classification (page_type + bboxes).
+        The recorder executes click-type-tab-enter locally from a single
+        page classification response. Cancel phase uses the generic
+        action schema.
         """
         return [
-            # Step 1: click email field (auto-types email)
+            # Sign-in step 1: user_pass page (recorder handles full sequence)
             {
-                'state': 'Netflix login page with empty email field',
-                'action': 'click',
-                'target_description': 'Email or phone number field',
-                'bounding_box': [400, 300, 700, 330],
-                'text_to_type': '',
-                'key_to_press': '',
+                'page_type': 'user_pass',
+                'email_box': [400, 300, 700, 330],
+                'password_box': [400, 360, 700, 390],
+                'button_box': [400, 420, 700, 460],
+                'profile_box': None,
                 'confidence': 0.95,
-                'reasoning': 'I see the login form with empty email field',
-                'is_checkpoint': False,
-                'checkpoint_prompt': '',
+                'reasoning': 'Login page with email and password fields',
             },
-            # Step 2: click password field (auto-types password)
+            # Sign-in step 2: signed in (triggers phase transition)
             {
-                'state': 'Email entered, password field empty',
-                'action': 'click',
-                'target_description': 'Password field',
-                'bounding_box': [400, 360, 700, 390],
-                'text_to_type': '',
-                'key_to_press': '',
-                'confidence': 0.94,
-                'reasoning': 'Email filled, clicking password field',
-                'is_checkpoint': False,
-                'checkpoint_prompt': '',
-            },
-            # Step 3: click Sign In
-            {
-                'state': 'Both fields filled',
-                'action': 'click',
-                'target_description': 'Sign In button',
-                'bounding_box': [400, 420, 700, 460],
-                'text_to_type': '',
-                'key_to_press': '',
-                'confidence': 0.96,
-                'reasoning': 'Both credentials entered, clicking Sign In',
-                'is_checkpoint': True,
-                'checkpoint_prompt': 'Am I logged into Netflix?',
-            },
-            # Step 4: sign-in done (transition to cancel prompt)
-            {
-                'state': 'Signed in, seeing Netflix browse page',
-                'action': 'done',
-                'target_description': '',
-                'bounding_box': None,
-                'text_to_type': '',
-                'key_to_press': '',
+                'page_type': 'signed_in',
+                'email_box': None,
+                'password_box': None,
+                'button_box': None,
+                'profile_box': None,
                 'confidence': 0.98,
                 'reasoning': 'Successfully signed in to Netflix',
-                'is_checkpoint': False,
-                'checkpoint_prompt': '',
             },
-            # Step 5: on browse page, click Account
+            # Cancel step 1: click Account
             {
                 'state': 'Netflix browse page',
                 'action': 'click',
@@ -840,7 +810,7 @@ class TestRecorderIntegration:
                 'is_checkpoint': False,
                 'checkpoint_prompt': '',
             },
-            # Step 6: click Cancel Membership
+            # Cancel step 2: click Cancel Membership
             {
                 'state': 'Account settings page',
                 'action': 'click',
@@ -853,7 +823,7 @@ class TestRecorderIntegration:
                 'is_checkpoint': True,
                 'checkpoint_prompt': 'Am I on the cancel confirmation page?',
             },
-            # Step 7: click Finish Cancellation
+            # Cancel step 3: click Finish Cancellation
             {
                 'state': 'Cancel confirmation page',
                 'action': 'click',
@@ -866,7 +836,7 @@ class TestRecorderIntegration:
                 'is_checkpoint': True,
                 'checkpoint_prompt': 'Is cancellation confirmed?',
             },
-            # Step 8: cancel done
+            # Cancel step 4: done
             {
                 'state': 'Cancellation confirmed',
                 'action': 'done',
@@ -983,21 +953,22 @@ class TestRecorderIntegration:
                 assert 'test@netflix.com' not in step.get('value', '')
                 assert 'hunter2' not in step.get('value', '')
 
-        # Check that auto-type produced template vars
+        # Check that sign-in page handler produced template vars
         type_steps = [s for s in result['steps'] if s['action'] == 'type_text']
         values = [s['value'] for s in type_steps]
         assert '{email}' in values
         assert '{pass}' in values
 
-        # Auto-typed steps should immediately follow their click
-        step_actions = [s['action'] for s in result['steps']]
-        # navigate, click(email), type_text(email), click(password), type_text(password), ...
+        # Sign-in page handler: click email -> type email -> tab -> type pass -> enter
         email_click_idx = next(
             i for i, s in enumerate(result['steps'])
             if s['action'] == 'click' and 'email' in s.get('target_description', '').lower()
         )
         assert result['steps'][email_click_idx + 1]['action'] == 'type_text'
         assert result['steps'][email_click_idx + 1]['value'] == '{email}'
+        assert result['steps'][email_click_idx + 2] == {'action': 'press_key', 'value': 'tab'}
+        assert result['steps'][email_click_idx + 3]['value'] == '{pass}'
+        assert result['steps'][email_click_idx + 4] == {'action': 'press_key', 'value': 'enter'}
 
         # Check password step is marked sensitive
         pass_steps = [s for s in type_steps if s['value'] == '{pass}']
@@ -1021,11 +992,10 @@ class TestRecorderIntegration:
     def test_resume_includes_tier(self, monkeypatch, tmp_path) -> None:
         """Resume playbooks with plan_tier should include 'tier' in output."""
         responses = [
-            # Sign-in done immediately
-            {'action': 'done', 'state': 'signed in', 'confidence': 0.99,
-             'reasoning': 'done', 'target_description': '', 'bounding_box': None,
-             'text_to_type': '', 'key_to_press': '', 'is_checkpoint': False,
-             'checkpoint_prompt': ''},
+            # Sign-in: already signed in (page classification)
+            {'page_type': 'signed_in', 'email_box': None, 'password_box': None,
+             'button_box': None, 'profile_box': None, 'confidence': 0.99,
+             'reasoning': 'Already signed in'},
             # Resume done immediately
             {'action': 'done', 'state': 'resumed', 'confidence': 0.99,
              'reasoning': 'done', 'target_description': '', 'bounding_box': None,
@@ -1123,6 +1093,294 @@ class TestRecorderIntegration:
         )
         assert rec._playbook_filename() == 'hulu_cancel_settings'
         vlm.close()
+
+
+# ===========================================================================
+# Sign-in page classification handler tests
+# ===========================================================================
+
+
+class TestExecuteSigninPage:
+    """Unit tests for _execute_signin_page page classification handler."""
+
+    @staticmethod
+    def _setup(monkeypatch, tmp_path):
+        """Create recorder with mocked dependencies for _execute_signin_page."""
+        monkeypatch.setattr('agent.screenshot.capture_window', lambda wid, path: None)
+
+        class MockVLM:
+            MAX_IMAGE_WIDTH = 1280
+            _normalized_coords = False
+            last_inference_ms = 0
+
+        recorder = PlaybookRecorder.__new__(PlaybookRecorder)
+        recorder.vlm = MockVLM()
+        recorder.service = 'netflix'
+        recorder.credentials = {'email': 'user@test.com', 'pass': 'secret123'}
+        recorder.verbose = False
+
+        class FakeSession:
+            window_id = 99
+            bounds = {'x': 0, 'y': 0, 'width': 1280, 'height': 900}
+
+        typed = []
+        pressed = []
+        clicked = []
+
+        class FakeCoords:
+            @staticmethod
+            def image_to_screen(ix, iy, bounds):
+                return (ix, iy)
+
+        class FakeKeyboard:
+            @staticmethod
+            def type_text(text, speed='medium', accuracy='high'):
+                typed.append(text)
+
+            @staticmethod
+            def press_key(key):
+                pressed.append(key)
+
+        class FakeMouse:
+            @staticmethod
+            def click(x, y, **kw):
+                clicked.append((x, y))
+
+        class FakeScroll:
+            @staticmethod
+            def scroll(direction, amount):
+                pass
+
+        modules = (FakeCoords, FakeKeyboard, FakeMouse, FakeScroll)
+        ref_dir = tmp_path / 'ref'
+        ref_dir.mkdir()
+
+        return recorder, FakeSession(), ref_dir, modules, typed, pressed, clicked
+
+    def test_signed_in_returns_done(self, monkeypatch, tmp_path) -> None:
+        recorder, session, ref_dir, modules, *_ = self._setup(monkeypatch, tmp_path)
+        steps: list[dict] = []
+        response = {
+            'page_type': 'signed_in',
+            'email_box': None, 'password_box': None,
+            'button_box': None, 'profile_box': None,
+            'confidence': 0.98, 'reasoning': 'Already signed in',
+        }
+        result = recorder._execute_signin_page(
+            response, 1.0, session, 'fake_ss', ref_dir, steps, modules,
+        )
+        assert result == 'done'
+        assert len(steps) == 0
+
+    def test_email_code_returns_need_human(self, monkeypatch, tmp_path) -> None:
+        recorder, session, ref_dir, modules, *_ = self._setup(monkeypatch, tmp_path)
+        steps: list[dict] = []
+        response = {
+            'page_type': 'email_code',
+            'email_box': None, 'password_box': None,
+            'button_box': None, 'profile_box': None,
+            'confidence': 0.90, 'reasoning': 'Verification code needed',
+        }
+        result = recorder._execute_signin_page(
+            response, 1.0, session, 'fake_ss', ref_dir, steps, modules,
+        )
+        assert result == 'need_human'
+
+    def test_phone_code_returns_need_human(self, monkeypatch, tmp_path) -> None:
+        recorder, session, ref_dir, modules, *_ = self._setup(monkeypatch, tmp_path)
+        steps: list[dict] = []
+        response = {
+            'page_type': 'phone_code',
+            'email_box': None, 'password_box': None,
+            'button_box': None, 'profile_box': None,
+            'confidence': 0.85, 'reasoning': 'Phone code prompt',
+        }
+        result = recorder._execute_signin_page(
+            response, 1.0, session, 'fake_ss', ref_dir, steps, modules,
+        )
+        assert result == 'need_human'
+
+    def test_spinner_returns_continue(self, monkeypatch, tmp_path) -> None:
+        recorder, session, ref_dir, modules, *_ = self._setup(monkeypatch, tmp_path)
+        steps: list[dict] = []
+        response = {
+            'page_type': 'spinner',
+            'email_box': None, 'password_box': None,
+            'button_box': None, 'profile_box': None,
+            'confidence': 0.95, 'reasoning': 'Loading spinner visible',
+        }
+        result = recorder._execute_signin_page(
+            response, 1.0, session, 'fake_ss', ref_dir, steps, modules,
+        )
+        assert result == 'continue'
+        assert len(steps) == 0
+
+    def test_other_returns_need_human(self, monkeypatch, tmp_path) -> None:
+        recorder, session, ref_dir, modules, *_ = self._setup(monkeypatch, tmp_path)
+        steps: list[dict] = []
+        response = {
+            'page_type': 'other',
+            'email_box': None, 'password_box': None,
+            'button_box': None, 'profile_box': None,
+            'confidence': 0.70, 'reasoning': 'CAPTCHA detected',
+        }
+        result = recorder._execute_signin_page(
+            response, 1.0, session, 'fake_ss', ref_dir, steps, modules,
+        )
+        assert result == 'need_human'
+
+    def test_user_pass_types_both_credentials(self, monkeypatch, tmp_path) -> None:
+        recorder, session, ref_dir, modules, typed, pressed, clicked = self._setup(monkeypatch, tmp_path)
+        monkeypatch.setattr('time.sleep', lambda _: None)
+        steps: list[dict] = []
+        response = {
+            'page_type': 'user_pass',
+            'email_box': [100, 200, 400, 230],
+            'password_box': [100, 260, 400, 290],
+            'button_box': [100, 320, 400, 350],
+            'profile_box': None,
+            'confidence': 0.95, 'reasoning': 'Login form',
+        }
+        result = recorder._execute_signin_page(
+            response, 1.0, session, _make_test_png_b64(800, 600),
+            ref_dir, steps, modules,
+        )
+        assert result == 'continue'
+        # click email, type email, tab, type pass, enter
+        assert len(steps) == 5
+        assert steps[0]['action'] == 'click'
+        assert steps[1] == {'action': 'type_text', 'value': '{email}'}
+        assert steps[2] == {'action': 'press_key', 'value': 'tab'}
+        assert steps[3] == {'action': 'type_text', 'value': '{pass}', 'sensitive': True}
+        assert steps[4] == {'action': 'press_key', 'value': 'enter'}
+        assert typed == ['user@test.com', 'secret123']
+        assert pressed == ['tab', 'enter']
+        assert len(clicked) == 1
+
+    def test_user_only_types_email_and_enter(self, monkeypatch, tmp_path) -> None:
+        recorder, session, ref_dir, modules, typed, pressed, clicked = self._setup(monkeypatch, tmp_path)
+        monkeypatch.setattr('time.sleep', lambda _: None)
+        steps: list[dict] = []
+        response = {
+            'page_type': 'user_only',
+            'email_box': [100, 200, 400, 230],
+            'password_box': None,
+            'button_box': [100, 260, 400, 290],
+            'profile_box': None,
+            'confidence': 0.92, 'reasoning': 'Email-only login',
+        }
+        result = recorder._execute_signin_page(
+            response, 1.0, session, _make_test_png_b64(800, 600),
+            ref_dir, steps, modules,
+        )
+        assert result == 'continue'
+        assert len(steps) == 3
+        assert steps[0]['action'] == 'click'
+        assert steps[1] == {'action': 'type_text', 'value': '{email}'}
+        assert steps[2] == {'action': 'press_key', 'value': 'enter'}
+        assert typed == ['user@test.com']
+        assert pressed == ['enter']
+
+    def test_pass_only_types_password_and_enter(self, monkeypatch, tmp_path) -> None:
+        recorder, session, ref_dir, modules, typed, pressed, clicked = self._setup(monkeypatch, tmp_path)
+        monkeypatch.setattr('time.sleep', lambda _: None)
+        steps: list[dict] = []
+        response = {
+            'page_type': 'pass_only',
+            'email_box': None,
+            'password_box': [100, 200, 400, 230],
+            'button_box': [100, 260, 400, 290],
+            'profile_box': None,
+            'confidence': 0.91, 'reasoning': 'Password-only step',
+        }
+        result = recorder._execute_signin_page(
+            response, 1.0, session, _make_test_png_b64(800, 600),
+            ref_dir, steps, modules,
+        )
+        assert result == 'continue'
+        assert len(steps) == 3
+        assert steps[0]['action'] == 'click'
+        assert steps[1] == {'action': 'type_text', 'value': '{pass}', 'sensitive': True}
+        assert steps[2] == {'action': 'press_key', 'value': 'enter'}
+        assert typed == ['secret123']
+        assert pressed == ['enter']
+
+    def test_button_only_clicks_button(self, monkeypatch, tmp_path) -> None:
+        recorder, session, ref_dir, modules, typed, pressed, clicked = self._setup(monkeypatch, tmp_path)
+        steps: list[dict] = []
+        response = {
+            'page_type': 'button_only',
+            'email_box': None, 'password_box': None,
+            'button_box': [100, 200, 400, 230],
+            'profile_box': None,
+            'confidence': 0.93, 'reasoning': 'Sign In button visible',
+        }
+        result = recorder._execute_signin_page(
+            response, 1.0, session, _make_test_png_b64(800, 600),
+            ref_dir, steps, modules,
+        )
+        assert result == 'continue'
+        assert len(steps) == 1
+        assert steps[0]['action'] == 'click'
+        assert steps[0].get('checkpoint') is True
+
+    def test_profile_select_clicks_profile(self, monkeypatch, tmp_path) -> None:
+        recorder, session, ref_dir, modules, typed, pressed, clicked = self._setup(monkeypatch, tmp_path)
+        steps: list[dict] = []
+        response = {
+            'page_type': 'profile_select',
+            'email_box': None, 'password_box': None,
+            'button_box': None,
+            'profile_box': [200, 300, 350, 450],
+            'confidence': 0.94, 'reasoning': 'Profile picker',
+        }
+        result = recorder._execute_signin_page(
+            response, 1.0, session, _make_test_png_b64(800, 600),
+            ref_dir, steps, modules,
+        )
+        assert result == 'continue'
+        assert len(steps) == 1
+        assert steps[0]['action'] == 'click'
+        assert 'profile' in steps[0]['target_description'].lower()
+
+    def test_missing_bbox_returns_continue(self, monkeypatch, tmp_path) -> None:
+        """page_type with missing required bbox falls through gracefully."""
+        recorder, session, ref_dir, modules, *_ = self._setup(monkeypatch, tmp_path)
+        steps: list[dict] = []
+        response = {
+            'page_type': 'user_pass',
+            'email_box': None,
+            'password_box': None,
+            'button_box': None,
+            'profile_box': None,
+            'confidence': 0.50, 'reasoning': 'Fields not found',
+        }
+        result = recorder._execute_signin_page(
+            response, 1.0, session, 'fake_ss', ref_dir, steps, modules,
+        )
+        assert result == 'continue'
+        assert len(steps) == 0
+
+    def test_scale_factor_applied_to_bboxes(self, monkeypatch, tmp_path) -> None:
+        """Bboxes should be scaled by scale_factor before clicking."""
+        recorder, session, ref_dir, modules, typed, pressed, clicked = self._setup(monkeypatch, tmp_path)
+        monkeypatch.setattr('time.sleep', lambda _: None)
+        steps: list[dict] = []
+        response = {
+            'page_type': 'button_only',
+            'email_box': None, 'password_box': None,
+            'button_box': [100, 50, 200, 80],
+            'profile_box': None,
+            'confidence': 0.90, 'reasoning': 'Button visible',
+        }
+        # scale_factor=2.0 means VLM saw 1280px, original is 2560px
+        result = recorder._execute_signin_page(
+            response, 2.0, session, _make_test_png_b64(800, 600),
+            ref_dir, steps, modules,
+        )
+        assert result == 'continue'
+        # The click step ref_region should be scaled: [200, 100, 400, 160]
+        assert steps[0]['ref_region'] == [200, 100, 400, 160]
 
 
 # ===========================================================================

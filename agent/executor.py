@@ -318,9 +318,9 @@ class PlaybookExecutor:
         if value:
             keyboard.type_text(value, speed=self._profile.type_speed, accuracy=self._profile.type_accuracy)
 
-        # Press trailing keys (tab, enter)
+        # Press trailing keys (tab, enter) with human-like pause
         for key in trailing_keys:
-            time.sleep(random.uniform(0.1, 0.3))
+            time.sleep(random.uniform(0.5, 2.5))
             keyboard.press_key(key)
 
         return inference_calls

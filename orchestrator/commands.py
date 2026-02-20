@@ -437,9 +437,9 @@ class CommandRouter:
             )
 
     def _is_otp_like(self, text: str) -> bool:
-        """Check if text looks like an OTP code (4-8 digits, with optional spaces/dashes)."""
+        """Check if text looks like an OTP or CVV code (3-8 digits, with optional spaces/dashes)."""
         stripped = text.replace(" ", "").replace("-", "")
-        return stripped.isdigit() and 4 <= len(stripped) <= 8
+        return stripped.isdigit() and 3 <= len(stripped) <= 8
 
     def _is_operator(self, npub: str) -> bool:
         """Check if the user is the operator.

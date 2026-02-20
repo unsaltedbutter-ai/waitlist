@@ -806,6 +806,8 @@ def cmd_learn(args):
         'email': args.email,
         'pass': args.password,
     }
+    if args.cvv:
+        credentials['cvv'] = args.cvv
 
     vlm = VLMClient(
         base_url=args.vlm_url,
@@ -876,6 +878,7 @@ def main():
     p_learn.add_argument('--url', required=True, help='Starting URL (e.g. login page)')
     p_learn.add_argument('--email', required=True, help='Account email')
     p_learn.add_argument('--password', required=True, help='Account password')
+    p_learn.add_argument('--cvv', default='', help='Card CVV (for services that require it on resume)')
     p_learn.add_argument('--vlm-url', required=True, dest='vlm_url',
                          help='VLM API base URL (e.g. https://api.x.ai)')
     p_learn.add_argument('--vlm-key', required=True, dest='vlm_key',
