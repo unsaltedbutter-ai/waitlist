@@ -130,7 +130,7 @@ async def test_poll_and_claim_happy_path(deps):
 
     pending_job = _make_job(status="pending")
     api.get_pending_jobs.return_value = [pending_job]
-    api.claim_jobs.return_value = {"claimed": ["job-1"], "blocked": []}
+    api.claim_jobs.return_value = {"claimed": [{"id": "job-1"}], "blocked": []}
     api.get_user.return_value = {"debt_sats": 0}
     api.update_job_status.return_value = {"job": pending_job}
 
@@ -172,7 +172,7 @@ async def test_poll_and_claim_some_blocked(deps):
     job_a = _make_job(job_id="job-a")
     job_b = _make_job(job_id="job-b")
     api.get_pending_jobs.return_value = [job_a, job_b]
-    api.claim_jobs.return_value = {"claimed": ["job-a"], "blocked": ["job-b"]}
+    api.claim_jobs.return_value = {"claimed": [{"id": "job-a"}], "blocked": ["job-b"]}
     api.get_user.return_value = {"debt_sats": 0}
     api.update_job_status.return_value = {"job": job_a}
 

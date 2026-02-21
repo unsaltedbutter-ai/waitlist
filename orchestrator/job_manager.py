@@ -93,7 +93,7 @@ class JobManager:
 
         job_ids = [j["id"] for j in pending]
         result = await self._api.claim_jobs(job_ids)
-        claimed_ids = set(result.get("claimed", []))
+        claimed_ids = {j["id"] for j in result.get("claimed", [])}
 
         if not claimed_ids:
             return []
