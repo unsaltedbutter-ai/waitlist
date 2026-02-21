@@ -17,7 +17,8 @@ VENV_DIR="$COMPONENT_DIR/venv"
 ENV_DIR="$HOME/.unsaltedbutter"
 SHARED_ENV_FILE="$ENV_DIR/shared.env"
 ENV_FILE="$ENV_DIR/orchestrator.env"
-MIN_PYTHON="3.11"
+PYTHON_VERSION="3.13"
+BREW_FORMULA="python@${PYTHON_VERSION}"
 SERVICE_NAME="unsaltedbutter-orchestrator"
 
 # ── Shared helpers ────────────────────────────────────────────
@@ -31,24 +32,31 @@ detect_os() {
     ARCH="$(uname -m)"
 }
 
-find_python() {
-    for cmd in python3.13 python3.12 python3.11 python3; do
-        if command -v "$cmd" &>/dev/null; then
-            local ver
-            ver="$("$cmd" -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')"
-            if python3 -c "
-import sys
-min_parts = [int(x) for x in '$MIN_PYTHON'.split('.')]
-cur_parts = [int(x) for x in '$ver'.split('.')]
-sys.exit(0 if cur_parts >= min_parts else 1)
-" 2>/dev/null; then
-                PYTHON="$cmd"
-                PYTHON_VERSION="$ver"
-                return 0
-            fi
+ensure_python() {
+    if [ "$OS" = "macos" ]; then
+        if ! command -v brew &>/dev/null; then
+            echo "ERROR: Homebrew not installed. Install from https://brew.sh"
+            exit 1
         fi
-    done
-    return 1
+        if ! brew list "$BREW_FORMULA" &>/dev/null; then
+            echo "Installing $BREW_FORMULA via Homebrew..."
+            brew install "$BREW_FORMULA"
+        fi
+        PYTHON="$(brew --prefix "$BREW_FORMULA")/bin/python${PYTHON_VERSION}"
+    else
+        # Linux: expect python3.11 to be installed
+        if command -v "python${PYTHON_VERSION}" &>/dev/null; then
+            PYTHON="python${PYTHON_VERSION}"
+        else
+            echo "ERROR: python${PYTHON_VERSION} not found."
+            echo "Install: sudo apt install python${PYTHON_VERSION} python${PYTHON_VERSION}-venv"
+            exit 1
+        fi
+    fi
+    if ! "$PYTHON" --version &>/dev/null; then
+        echo "ERROR: $PYTHON is not working"
+        exit 1
+    fi
 }
 
 # ── Check mode ────────────────────────────────────────────────
@@ -60,10 +68,10 @@ check_only() {
     echo ""
 
     # Python
-    if find_python; then
-        echo "Python:  $PYTHON ($PYTHON_VERSION)"
+    if "$VENV_DIR/bin/python" --version &>/dev/null; then
+        echo "Python:  $("$VENV_DIR/bin/python" --version) (venv)"
     else
-        echo "Python:  NOT FOUND (need >= $MIN_PYTHON)"
+        echo "Python:  venv not found or broken"
         ok=false
     fi
 
@@ -153,13 +161,8 @@ main() {
     echo "OS:     $OS ($ARCH)"
 
     # 2. Python
-    if find_python; then
-        echo "Python: $PYTHON ($PYTHON_VERSION)"
-    else
-        echo "ERROR: Python >= $MIN_PYTHON not found."
-        echo "Install it before running this script."
-        exit 1
-    fi
+    ensure_python
+    echo "Python: $("$PYTHON" --version)"
 
     # 3. Venv
     if [ -d "$VENV_DIR" ]; then
