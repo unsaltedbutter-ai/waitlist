@@ -46,6 +46,9 @@ Thumbs.db
 *.sql.bak
 *.dump
 
+# Migrations (ephemeral, applied directly to prod)
+scripts/migrations/
+
 # Logs
 *.log
 logs/
