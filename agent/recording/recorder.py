@@ -307,12 +307,10 @@ class PlaybookRecorder:
         if page_type in ('email_code', 'email_link', 'phone_code', 'other'):
             return 'need_human'
 
-        # Save ref screenshot
+        # Save ref screenshot (reuse the existing capture, no second screenshot)
         step_num = len(steps)
         ref_path = ref_dir / f'step_{step_num:02d}.png'
-        from agent import screenshot as ss
-        ss.capture_window(session.window_id, str(ref_path))
-        self._shrink_ref_image(ref_path)
+        self._save_ref_image(screenshot_b64, ref_path)
 
         if page_type == 'profile_select' and profile_box:
             self._click_bbox(
@@ -580,8 +578,7 @@ class PlaybookRecorder:
             # Execute and record the action
             step_num = len(steps)
             ref_path = ref_dir / f'step_{step_num:02d}.png'
-            ss.capture_window(session.window_id, str(ref_path))
-            self._shrink_ref_image(ref_path)
+            self._save_ref_image(screenshot_b64, ref_path)
 
             if action == 'click' and bbox:
                 # Scale VLM bbox from resized image back to original screenshot pixels.
@@ -861,19 +858,20 @@ class PlaybookRecorder:
             f.write(prompt)
         print(f'  Prompt saved: {path}')
 
-    def _shrink_ref_image(self, path) -> None:
-        """Downscale a saved reference screenshot to match the VLM input size."""
+    def _save_ref_image(self, screenshot_b64: str, path) -> None:
+        """Save a base64 screenshot as a reference image, shrunk to VLM input size."""
         try:
             from PIL import Image
+            raw = base64.b64decode(screenshot_b64)
+            img = Image.open(io.BytesIO(raw))
             max_w = self.vlm.MAX_IMAGE_WIDTH
-            img = Image.open(str(path))
             if img.width > max_w:
                 ratio = max_w / img.width
                 new_size = (max_w, int(img.height * ratio))
                 img = img.resize(new_size, Image.LANCZOS)
-                img.save(str(path))
+            img.save(str(path))
         except Exception as exc:
-            log.warning('Could not shrink ref image: %s', exc)
+            log.warning('Could not save ref image: %s', exc)
 
     @staticmethod
     def _save_debug_overlay(
