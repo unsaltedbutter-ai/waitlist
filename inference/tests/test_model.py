@@ -8,6 +8,8 @@ from __future__ import annotations
 import base64
 import io
 import json
+import sys
+from unittest.mock import MagicMock, patch
 
 import pytest
 from PIL import Image
@@ -18,6 +20,7 @@ from inference.model import (
     FindElementResponse,
     InferActionResponse,
     MockBackend,
+    OpenAIBackend,
     _extract_json,
     create_backend,
     parse_checkpoint,
@@ -286,6 +289,20 @@ class TestCreateBackend:
         backend = create_backend(config)
         assert isinstance(backend, MockBackend)
 
+    def test_openai_backend(self) -> None:
+        config = Config(
+            host="0.0.0.0", port=8420, log_level="INFO",
+            model_path="/fake/path", model_backend="openai",
+            context_length=8192, max_tokens=1024, temperature=0.1,
+            gpu_layers=-1, max_image_dimension=2560,
+            password_guard_enabled=True,
+            vlm_base_url="https://api.example.com",
+            vlm_api_key="test-key",
+            vlm_model="test-model",
+        )
+        backend = create_backend(config)
+        assert isinstance(backend, OpenAIBackend)
+
     def test_unknown_backend_raises(self) -> None:
         config = Config(
             host="0.0.0.0", port=8420, log_level="INFO",
@@ -296,3 +313,171 @@ class TestCreateBackend:
         )
         with pytest.raises(ValueError, match="Unknown model backend"):
             create_backend(config)
+
+
+# ---------------------------------------------------------------------------
+# OpenAI-compatible backend
+# ---------------------------------------------------------------------------
+
+class TestOpenAIBackend:
+    """OpenAI-compatible backend for remote or local VLM endpoints."""
+
+    @staticmethod
+    def _make_config(**overrides) -> Config:
+        defaults = dict(
+            host="0.0.0.0", port=8420, log_level="INFO",
+            model_path="/fake/model.gguf", model_backend="openai",
+            context_length=8192, max_tokens=1024, temperature=0.1,
+            gpu_layers=-1, max_image_dimension=2560,
+            password_guard_enabled=True,
+            vlm_base_url="https://api.example.com",
+            vlm_api_key="test-key",
+            vlm_model="test-model",
+        )
+        defaults.update(overrides)
+        return Config(**defaults)
+
+    def test_missing_base_url_raises(self) -> None:
+        config = self._make_config(vlm_base_url="")
+        with pytest.raises(ValueError, match="VLM_BASE_URL"):
+            OpenAIBackend(config)
+
+    def test_is_local_false_for_remote(self) -> None:
+        config = self._make_config(vlm_base_url="https://api.ppq.ai")
+        backend = OpenAIBackend(config)
+        assert backend._is_local() is False
+
+    def test_is_local_true_for_localhost(self) -> None:
+        config = self._make_config(vlm_base_url="http://localhost:8080")
+        with patch.object(OpenAIBackend, "_ensure_local_server"):
+            backend = OpenAIBackend(config)
+        assert backend._is_local() is True
+
+    def test_is_local_true_for_127(self) -> None:
+        config = self._make_config(vlm_base_url="http://127.0.0.1:8080")
+        with patch.object(OpenAIBackend, "_ensure_local_server"):
+            backend = OpenAIBackend(config)
+        assert backend._is_local() is True
+
+    def test_infer_sends_correct_request(self, sample_screenshot_b64: str) -> None:
+        config = self._make_config()
+        backend = OpenAIBackend(config)
+        img = preprocess_image(sample_screenshot_b64, max_dimension=2560)
+
+        mock_resp = MagicMock()
+        mock_resp.json.return_value = {
+            "choices": [{"message": {"content": '{"x1": 10}'}}],
+        }
+
+        with patch.object(backend._client, "post", return_value=mock_resp) as mock_post:
+            result = backend.infer("system prompt", "user prompt", img)
+
+        assert result == '{"x1": 10}'
+        mock_post.assert_called_once()
+        payload = mock_post.call_args.kwargs["json"]
+        assert payload["model"] == "test-model"
+        assert payload["max_tokens"] == 1024
+        assert payload["temperature"] == 0.1
+        assert len(payload["messages"]) == 2
+        assert payload["messages"][0]["role"] == "system"
+        user_content = payload["messages"][1]["content"]
+        assert len(user_content) == 2
+        assert user_content[0]["type"] == "image_url"
+        assert user_content[0]["image_url"]["url"].startswith("data:image/png;base64,")
+        assert user_content[1] == {"type": "text", "text": "user prompt"}
+
+    def test_infer_raises_on_http_error(self, sample_screenshot_b64: str) -> None:
+        config = self._make_config()
+        backend = OpenAIBackend(config)
+        img = preprocess_image(sample_screenshot_b64, max_dimension=2560)
+
+        import httpx as _httpx
+        mock_resp = MagicMock()
+        mock_resp.raise_for_status.side_effect = _httpx.HTTPStatusError(
+            "Server Error", request=MagicMock(), response=MagicMock(status_code=500),
+        )
+
+        with patch.object(backend._client, "post", return_value=mock_resp):
+            with pytest.raises(_httpx.HTTPStatusError):
+                backend.infer("sys", "usr", img)
+
+    def test_model_info(self) -> None:
+        config = self._make_config()
+        backend = OpenAIBackend(config)
+        info = backend.model_info()
+        assert info == {
+            "backend": "openai",
+            "model": "test-model",
+            "base_url": "https://api.example.com",
+            "is_local": False,
+        }
+
+    def test_shutdown_kills_local_process(self) -> None:
+        config = self._make_config(vlm_base_url="http://localhost:8080")
+        with patch.object(OpenAIBackend, "_ensure_local_server"):
+            backend = OpenAIBackend(config)
+
+        mock_proc = MagicMock()
+        backend._local_process = mock_proc
+        backend.shutdown()
+
+        mock_proc.terminate.assert_called_once()
+        mock_proc.wait.assert_called_once_with(timeout=10)
+        assert backend._local_process is None
+
+    def test_shutdown_noop_without_process(self) -> None:
+        config = self._make_config()
+        backend = OpenAIBackend(config)
+        backend.shutdown()  # Should not raise
+
+    def test_ensure_local_server_skips_when_running(self) -> None:
+        """If health check passes, don't start a subprocess."""
+        config = self._make_config(vlm_base_url="http://localhost:8080")
+
+        with patch("httpx.Client") as MockClient:
+            mock_client = MockClient.return_value
+            mock_client.get.return_value = MagicMock(status_code=200)
+            backend = OpenAIBackend(config)
+
+        assert backend._local_process is None
+
+    def test_ensure_local_server_starts_subprocess(self) -> None:
+        """If health check fails, start llama.cpp and poll until ready."""
+        config = self._make_config(vlm_base_url="http://localhost:8080")
+
+        call_count = 0
+
+        def mock_get(url):
+            nonlocal call_count
+            call_count += 1
+            if call_count <= 1:
+                raise ConnectionError("refused")
+            return MagicMock(status_code=200)
+
+        mock_proc = MagicMock()
+        mock_proc.poll.return_value = None
+
+        with patch("httpx.Client") as MockClient, \
+             patch("subprocess.Popen", return_value=mock_proc) as mock_popen:
+            mock_client = MockClient.return_value
+            mock_client.get.side_effect = mock_get
+            backend = OpenAIBackend(config)
+
+        mock_popen.assert_called_once()
+        cmd = mock_popen.call_args[0][0]
+        assert cmd[0] == sys.executable
+        assert "--model" in cmd
+        assert "/fake/model.gguf" in cmd
+        assert "--n_gpu_layers" in cmd
+        assert "--port" in cmd
+        assert "8080" in cmd
+
+    def test_auth_header_set_when_api_key_provided(self) -> None:
+        config = self._make_config(vlm_api_key="sk-test-123")
+        backend = OpenAIBackend(config)
+        assert backend._client.headers["authorization"] == "Bearer sk-test-123"
+
+    def test_no_auth_header_when_no_api_key(self) -> None:
+        config = self._make_config(vlm_api_key="")
+        backend = OpenAIBackend(config)
+        assert "authorization" not in backend._client.headers

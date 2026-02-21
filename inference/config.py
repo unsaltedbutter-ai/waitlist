@@ -42,6 +42,11 @@ class Config:
     # Safety
     password_guard_enabled: bool
 
+    # OpenAI-compatible VLM endpoint (MODEL_BACKEND=openai)
+    vlm_base_url: str = ""
+    vlm_api_key: str = ""
+    vlm_model: str = "qwen3-vl-32b-instruct"
+
     @classmethod
     def load(cls) -> Config:
         """Load configuration from environment variables."""
@@ -62,4 +67,7 @@ class Config:
             password_guard_enabled=os.environ.get(
                 "PASSWORD_GUARD_ENABLED", "true"
             ).lower() in ("true", "1", "yes"),
+            vlm_base_url=os.environ.get("VLM_BASE_URL", ""),
+            vlm_api_key=os.environ.get("VLM_API_KEY", ""),
+            vlm_model=os.environ.get("VLM_MODEL", "qwen3-vl-32b-instruct"),
         )

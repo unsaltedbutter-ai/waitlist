@@ -89,6 +89,8 @@ async def lifespan(app: FastAPI):
     yield
 
     log.info("Shutting down inference server")
+    if _backend is not None and hasattr(_backend, "shutdown"):
+        _backend.shutdown()
     _backend = None
     _config = None
 

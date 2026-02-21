@@ -32,6 +32,7 @@ All alerting goes through Nostr DMs to the operator (NIP-04). No Sentry, no Data
 | `setup-offsite-backup.sh` | Generates SSH key for Hetzner Storage Box, installs it, creates remote directory structure, runs initial sync | butter | VPS |
 | `setup-nostrbot.sh` | Installs Nostr bot venv + dependencies, creates `~/.unsaltedbutter/nostr.env` from example, optionally installs systemd service | butter or dev user | Orchestrator or dev machine |
 | `deploy-schema.sh` | One-time schema deployment (drops all tables, recreates). Self-destructs after running. | butter | VPS |
+| `setup-orchestrator.sh` | Creates orchestrator venv + dependencies, creates `~/.unsaltedbutter/shared.env` and `orchestrator.env` from examples, optionally installs systemd service | butter or dev user | Mac Mini |
 
 ### Deployment
 
@@ -212,6 +213,55 @@ ssh butter@<VPS_IP>
 ~/unsaltedbutter/scripts/invite-npub.sh npub1... --operator
 pm2 restart unsaltedbutter
 ```
+
+---
+
+## Inference Server Setup
+
+The inference server provides VLM inference for browser automation. It supports multiple backends:
+
+- `mock`: Deterministic responses for testing (default)
+- `openai`: Any OpenAI-compatible API endpoint (PPQ.ai now, local llama.cpp later)
+- `llama_cpp`: Direct llama-cpp-python bindings (requires GPU hardware)
+- `mlx`: MLX-VLM on Apple Silicon (requires GPU hardware)
+
+### Quick Start (OpenAI backend via PPQ.ai)
+
+```bash
+cd inference
+python3.13 -m venv venv
+venv/bin/pip install -r requirements.txt
+
+mkdir -p ~/.unsaltedbutter
+cp ../env-examples/inference.env.example ~/.unsaltedbutter/inference.env
+```
+
+Edit `~/.unsaltedbutter/inference.env`:
+
+```
+MODEL_BACKEND=openai
+VLM_BASE_URL=https://api.ppq.ai
+VLM_API_KEY=<your-ppq-api-key>
+VLM_MODEL=qwen3-vl-32b-instruct
+```
+
+Run and verify:
+
+```bash
+venv/bin/python -m inference.server
+curl http://localhost:8420/health
+```
+
+### Swapping to Local Inference (Mac Studio)
+
+When the Mac Studio is ready, change two lines in `~/.unsaltedbutter/inference.env`:
+
+```
+VLM_BASE_URL=http://localhost:8080
+VLM_API_KEY=
+```
+
+If `VLM_BASE_URL` points to localhost, the server auto-starts a llama-cpp-python subprocess using `MODEL_PATH` and `GPU_LAYERS` from the same env file. Zero code changes required.
 
 ---
 

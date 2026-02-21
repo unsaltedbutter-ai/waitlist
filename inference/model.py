@@ -18,10 +18,14 @@ import io
 import json
 import logging
 import re
+import subprocess
+import sys
 import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+from urllib.parse import urlparse
 
+import httpx
 from PIL import Image
 
 from inference.config import Config
@@ -405,6 +409,136 @@ class MlxBackend(InferenceBackend):
 
 
 # ---------------------------------------------------------------------------
+# OpenAI-compatible backend (remote or local)
+# ---------------------------------------------------------------------------
+
+class OpenAIBackend(InferenceBackend):
+    """OpenAI-compatible VLM client. Works with any endpoint (PPQ.ai, local llama.cpp, etc.)."""
+
+    def __init__(self, config: Config) -> None:
+        if not config.vlm_base_url:
+            raise ValueError("VLM_BASE_URL is required for the openai backend")
+        self._config = config
+        self._local_process: subprocess.Popen | None = None
+
+        headers = {}
+        if config.vlm_api_key:
+            headers["Authorization"] = f"Bearer {config.vlm_api_key}"
+
+        self._client = httpx.Client(
+            base_url=config.vlm_base_url,
+            headers=headers,
+            timeout=120.0,
+        )
+
+        if self._is_local():
+            self._ensure_local_server()
+
+    def _is_local(self) -> bool:
+        """True if VLM_BASE_URL points to localhost."""
+        parsed = urlparse(self._config.vlm_base_url)
+        return parsed.hostname in ("localhost", "127.0.0.1")
+
+    def _ensure_local_server(self) -> None:
+        """Health-check the local URL; start llama.cpp subprocess if not responding."""
+        try:
+            self._client.get("/health")
+            log.info("Local server already running at %s", self._config.vlm_base_url)
+            return
+        except Exception:
+            pass
+
+        parsed = urlparse(self._config.vlm_base_url)
+        port = parsed.port or 8080
+
+        cmd = [
+            sys.executable, "-m", "llama_cpp.server",
+            "--model", self._config.model_path,
+            "--n_gpu_layers", str(self._config.gpu_layers),
+            "--port", str(port),
+        ]
+        log.info("Starting local llama.cpp server: %s", " ".join(cmd))
+        self._local_process = subprocess.Popen(
+            cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        )
+
+        deadline = time.monotonic() + 60.0
+        while time.monotonic() < deadline:
+            try:
+                self._client.get("/health")
+                log.info("Local llama.cpp server ready")
+                return
+            except Exception:
+                pass
+
+            if self._local_process.poll() is not None:
+                stderr = ""
+                if self._local_process.stderr:
+                    stderr = self._local_process.stderr.read().decode(errors="replace")
+                raise RuntimeError(
+                    f"Local llama.cpp server exited with code "
+                    f"{self._local_process.returncode}: {stderr[:500]}"
+                )
+            time.sleep(1.0)
+
+        self._local_process.terminate()
+        self._local_process = None
+        raise RuntimeError("Local llama.cpp server failed to start within 60 seconds")
+
+    def infer(self, system_prompt: str, user_prompt: str, image: Image.Image) -> str:
+        """Send a chat completion request to the OpenAI-compatible endpoint."""
+        buf = io.BytesIO()
+        image.save(buf, format="PNG")
+        img_b64 = base64.b64encode(buf.getvalue()).decode("ascii")
+        data_uri = f"data:image/png;base64,{img_b64}"
+
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {
+                "role": "user",
+                "content": [
+                    {"type": "image_url", "image_url": {"url": data_uri}},
+                    {"type": "text", "text": user_prompt},
+                ],
+            },
+        ]
+
+        resp = self._client.post(
+            "/v1/chat/completions",
+            json={
+                "model": self._config.vlm_model,
+                "messages": messages,
+                "max_tokens": self._config.max_tokens,
+                "temperature": self._config.temperature,
+            },
+        )
+        resp.raise_for_status()
+        return resp.json()["choices"][0]["message"]["content"]
+
+    def model_info(self) -> dict:
+        return {
+            "backend": "openai",
+            "model": self._config.vlm_model,
+            "base_url": self._config.vlm_base_url,
+            "is_local": self._is_local(),
+        }
+
+    def shutdown(self) -> None:
+        """Kill auto-started local subprocess, if any."""
+        if self._local_process is not None:
+            log.info(
+                "Shutting down local llama.cpp server (pid=%d)",
+                self._local_process.pid,
+            )
+            self._local_process.terminate()
+            try:
+                self._local_process.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                self._local_process.kill()
+            self._local_process = None
+
+
+# ---------------------------------------------------------------------------
 # Factory
 # ---------------------------------------------------------------------------
 
@@ -422,7 +556,10 @@ def create_backend(config: Config) -> InferenceBackend:
     if backend_name == "mlx":
         return MlxBackend(config)
 
+    if backend_name == "openai":
+        return OpenAIBackend(config)
+
     raise ValueError(
         f"Unknown model backend: {config.model_backend!r}. "
-        f"Valid options: mock, llama_cpp, mlx"
+        f"Valid options: mock, llama_cpp, mlx, openai"
     )
