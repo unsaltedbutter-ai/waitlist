@@ -8,7 +8,7 @@
 # First deploy (--init flag applies schema + generates .env.production):
 #   ./scripts/deploy.sh <VPS_IP> --init
 #
-# Set up cron jobs + daily cron timer (run once after --init, idempotent):
+# Set up cron jobs (run once after --init, idempotent):
 #   ./scripts/deploy.sh <VPS_IP> --setup-bots
 #
 # What this does:
@@ -17,7 +17,7 @@
 #   3. [--init] scp SCHEMA.sql to VPS
 #   4. [--init] Generate .env.production with real secrets
 #   5. [--init] Apply database schema (v4, complete)
-#   6. [--setup-bots] Install cron jobs (update-checker, health-check, lnd-balance, backup) + daily cron timer (systemd)
+#   6. [--setup-bots] Install cron jobs (update-checker, health-check, lnd-balance, backup, daily-cron)
 #   7. npm ci && npm run build
 #   8. Install/configure nginx
 #   9. [--init] Run certbot for SSL
@@ -60,7 +60,7 @@ if [[ -z "${VPS_IP}" ]]; then
     echo ""
     echo "  <VPS_IP>      IP address of the Hetzner VPS"
     echo "  --init        First deploy: generate .env.production, apply schema, setup SSL"
-    echo "  --setup-bots  One-time: install update-checker (cron) + daily cron timer (systemd)"
+    echo "  --setup-bots  One-time: install cron jobs (update-checker, daily-cron, etc.)"
     echo "  --dirty       Allow deploying with uncommitted changes (not recommended)"
     exit 1
 fi
@@ -208,10 +208,10 @@ REMOTE_SCHEMA
 fi
 
 # =============================================================================
-# 6. [setup-bots] Cron jobs + daily cron timer (one-time setup, idempotent)
+# 6. [setup-bots] Cron jobs (one-time setup, idempotent)
 # =============================================================================
 if $SETUP_BOTS; then
-    log "Setting up cron jobs + daily cron timer..."
+    log "Setting up cron jobs..."
 
     ${SSH_CMD} bash << 'REMOTE_BOTS'
 set -euo pipefail
@@ -304,7 +304,7 @@ install_cron "lightning-backup.sh" \
     "0 */6 * * * ${REMOTE_DIR}/scripts/lightning-backup.sh >> \$HOME/logs/scb.log 2>&1" \
     "Verified LND SCB export via lncli (every 6 hours)"
 
-echo "Cron jobs: update-checker (10:00), health-check (*/15), lnd-balance (06:00), backup (03:00), offsite (04:00), lightning-backup (*/6h)"
+echo "Cron jobs: daily-cron (10:00), update-checker (10:00), health-check (*/15), lnd-balance (06:00), backup (03:00), offsite (04:00), lightning-backup (*/6h)"
 
 # -- Sudoers for apt-get update ---------------------------------
 SUDOERS="/etc/sudoers.d/update-checker"
@@ -316,7 +316,7 @@ else
     echo "Sudoers: exists"
 fi
 
-# -- Daily cron timer (systemd) ---------------------------------
+# -- Daily cron (job scheduling) --------------------------------
 # Calls /api/cron/daily at 10:00 UTC (5:00 AM EST) every day
 CRON_SECRET=$(grep '^CRON_SECRET=' "${REMOTE_DIR}/web/.env.production" | cut -d= -f2)
 if [[ -z "$CRON_SECRET" ]]; then
@@ -324,33 +324,22 @@ if [[ -z "$CRON_SECRET" ]]; then
     exit 1
 fi
 
-sudo tee /etc/systemd/system/unsaltedbutter-daily-cron.service > /dev/null << UNIT
-[Unit]
-Description=UnsaltedButter Daily Cron Job
-After=network-online.target
+install_cron "api/cron/daily" \
+    "0 10 * * * /usr/bin/curl -s -f -X POST -H \"Authorization: Bearer ${CRON_SECRET}\" http://localhost:3000/api/cron/daily >> \$HOME/logs/daily-cron.log 2>&1" \
+    "Daily job scheduling: create pending cancel/resume jobs (10:00 UTC)"
 
-[Service]
-Type=oneshot
-ExecStart=/usr/bin/curl -s -f -X POST -H "Authorization: Bearer ${CRON_SECRET}" http://localhost:3000/api/cron/daily
-TimeoutStartSec=120
-UNIT
-
-sudo tee /etc/systemd/system/unsaltedbutter-daily-cron.timer > /dev/null << UNIT
-[Unit]
-Description=UnsaltedButter Daily Cron Timer
-
-[Timer]
-OnCalendar=*-*-* 10:00:00
-Persistent=true
-
-[Install]
-WantedBy=timers.target
-UNIT
-
-sudo systemctl daemon-reload
-sudo systemctl enable unsaltedbutter-daily-cron.timer
-sudo systemctl start unsaltedbutter-daily-cron.timer
-echo "Daily cron timer: installed and started (10:00 UTC / 5:00 AM EST)"
+# -- Remove old systemd timer (migrated to crontab) ------------
+if systemctl is-active unsaltedbutter-daily-cron.timer &>/dev/null; then
+    sudo systemctl stop unsaltedbutter-daily-cron.timer
+    sudo systemctl disable unsaltedbutter-daily-cron.timer
+    echo "Old systemd timer: stopped and disabled"
+fi
+if [[ -f /etc/systemd/system/unsaltedbutter-daily-cron.timer ]]; then
+    sudo rm -f /etc/systemd/system/unsaltedbutter-daily-cron.timer
+    sudo rm -f /etc/systemd/system/unsaltedbutter-daily-cron.service
+    sudo systemctl daemon-reload
+    echo "Old systemd timer: unit files removed"
+fi
 
 # -- Summary ----------------------------------------------------
 echo ""
@@ -363,7 +352,7 @@ echo "  lnd-balance.sh       daily 06:00 UTC"
 echo "  backup-daily.sh      daily 03:00 UTC"
 echo "  backup-offsite.sh    daily 04:00 UTC"
 echo "  lightning-backup.sh  every 6 hours"
-echo "  daily cron timer     unsaltedbutter-daily-cron.timer (10:00 UTC)"
+echo "  daily-cron           daily 10:00 UTC (job scheduling)"
 echo ""
 echo "  Test nostr-alert:"
 echo "    ${UC_VENV}/bin/python ${REMOTE_DIR}/scripts/nostr-alert.py --dry-run --key test 'Test alert'"
@@ -509,7 +498,7 @@ sudo systemctl is-active nginx && echo "nginx is running ✓"
 
 echo ""
 echo "=== Cron Jobs ==="
-for script in update-checker.py health-check.sh lnd-balance.sh backup-daily.sh backup-offsite.sh lightning-backup.sh; do
+for script in update-checker.py health-check.sh lnd-balance.sh backup-daily.sh backup-offsite.sh lightning-backup.sh api/cron/daily; do
     if crontab -l 2>/dev/null | grep -qF "$script"; then
         echo "$script ✓"
     else
@@ -517,13 +506,6 @@ for script in update-checker.py health-check.sh lnd-balance.sh backup-daily.sh b
     fi
 done
 
-echo ""
-echo "=== Daily Cron Timer ==="
-if systemctl is-active unsaltedbutter-daily-cron.timer &>/dev/null; then
-    echo "unsaltedbutter-daily-cron.timer is active ✓"
-else
-    echo "unsaltedbutter-daily-cron.timer not active"
-fi
 REMOTE_VERIFY
 
 echo ""
@@ -555,7 +537,5 @@ if $SETUP_BOTS; then
     echo "     ssh ${VPS_USER}@${VPS_IP} ~/venvs/update-checker/bin/python ~/unsaltedbutter/scripts/update-checker.py --dry-run"
     echo "  3. Verify cron jobs:"
     echo "     ssh ${VPS_USER}@${VPS_IP} crontab -l"
-    echo "  4. Verify daily cron timer:"
-    echo "     ssh ${VPS_USER}@${VPS_IP} systemctl list-timers unsaltedbutter-daily-cron.timer"
     echo ""
 fi

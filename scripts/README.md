@@ -39,7 +39,7 @@ All alerting goes through Nostr DMs to the operator (NIP-04). No Sentry, no Data
 |---|---|---|---|
 | `deploy.sh <VPS_IP>` | Standard deploy: rsync web/ and scripts/, npm ci, build, configure nginx, restart PM2, send deploy DM | local user | Local machine |
 | `deploy.sh <VPS_IP> --init` | First deploy: also generates `.env.production`, applies DB schema, runs certbot | local user | Local machine |
-| `deploy.sh <VPS_IP> --setup-bots` | One-time: installs all 6 cron jobs, creates update-checker venv, installs systemd daily cron timer | local user | Local machine |
+| `deploy.sh <VPS_IP> --setup-bots` | One-time: installs all 7 cron jobs (including daily-cron) and creates update-checker venv | local user | Local machine |
 | `deploy.sh <VPS_IP> --dirty` | Allows deploying with uncommitted git changes (not recommended) | local user | Local machine |
 
 ### Backups (automated via cron)
@@ -156,7 +156,7 @@ This rsyncs code, generates `.env.production` with random secrets, applies the d
 ./scripts/deploy.sh <VPS_IP> --setup-bots
 ```
 
-This installs the update-checker Python venv, all 6 cron jobs, and the systemd daily cron timer.
+This installs the update-checker Python venv and all 7 cron jobs (including the daily job-scheduling cron).
 
 ### Step 6: Configure nostr.env (for alerting)
 
@@ -316,18 +316,7 @@ All cron jobs are installed by `deploy.sh --setup-bots`. View with `crontab -l`.
 | `0 6 * * *` | `lnd-balance.sh` | Balance logging + inbound liquidity alert |
 | `0 10 * * *` | `update-checker.py` | Software update check + DM |
 | `0 */6 * * *` | `lightning-backup.sh` | Verified SCB export |
-
-**Systemd timer** (not cron):
-
-| Schedule | Unit | Purpose |
-|---|---|---|
-| `*-*-* 10:00:00` (daily) | `unsaltedbutter-daily-cron.timer` | Calls `POST /api/cron/daily` with CRON_SECRET to create pending jobs for users approaching billing dates |
-
-Check timer status:
-
-```bash
-systemctl list-timers unsaltedbutter-daily-cron.timer
-```
+| `0 10 * * *` | `curl /api/cron/daily` | Create pending cancel/resume jobs for users approaching billing dates |
 
 Log locations:
 
