@@ -266,18 +266,24 @@ async def run(config: Config) -> None:
     await callback_server.start()
 
     # -- Subscribe to Nostr events --
+    # Two filters: kind 4 + 9735 use .since() to skip old events.
+    # Kind 1059 (gift wrap) uses .limit(0) because NIP-17 randomizes
+    # created_at up to 2 days in the past, so .since(now) drops them.
     bot_pk = keys.public_key()
-    f = (
+    f_legacy = (
         Filter()
         .pubkey(bot_pk)
-        .kinds([
-            Kind(4),
-            Kind.from_std(KindStandard.GIFT_WRAP),
-            Kind.from_std(KindStandard.ZAP_RECEIPT),
-        ])
+        .kinds([Kind(4), Kind.from_std(KindStandard.ZAP_RECEIPT)])
         .since(start_time)
     )
-    await client.subscribe(f)
+    f_giftwrap = (
+        Filter()
+        .pubkey(bot_pk)
+        .kind(Kind.from_std(KindStandard.GIFT_WRAP))
+        .limit(0)
+    )
+    await client.subscribe(f_legacy)
+    await client.subscribe(f_giftwrap)
     log.info("Subscribed to kind 4, 1059, 9735")
 
     # -- Shutdown signal handling --

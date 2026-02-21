@@ -369,19 +369,24 @@ async def main():
     await client.set_metadata(metadata)
     log.info("Published kind 0 profile")
 
-    # Subscribe (since=now so we don't reprocess old events)
+    # Subscribe: two filters because NIP-17 gift wraps randomize created_at
+    # up to 2 days in the past, so .since(now) silently drops them.
+    # Use .limit(0) for gift wraps ("no history, only new via subscription").
     start_time = Timestamp.now()
-    f = (
+    f_legacy = (
         Filter()
         .pubkey(bot_pk)
-        .kinds([
-            Kind(4),
-            Kind.from_std(KindStandard.GIFT_WRAP),
-            Kind.from_std(KindStandard.ZAP_RECEIPT),
-        ])
+        .kinds([Kind(4), Kind.from_std(KindStandard.ZAP_RECEIPT)])
         .since(start_time)
     )
-    await client.subscribe(f)
+    f_giftwrap = (
+        Filter()
+        .pubkey(bot_pk)
+        .kind(Kind.from_std(KindStandard.GIFT_WRAP))
+        .limit(0)
+    )
+    await client.subscribe(f_legacy)
+    await client.subscribe(f_giftwrap)
     log.info("Subscribed to kind 4, 1059, 9735")
 
     # Signal handling for clean shutdown
