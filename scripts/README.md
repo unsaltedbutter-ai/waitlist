@@ -33,6 +33,8 @@ All alerting goes through Nostr DMs to the operator (NIP-04). No Sentry, no Data
 | `setup-nostrbot.sh` | Installs Nostr bot venv + dependencies, creates `~/.unsaltedbutter/nostr.env` from example, optionally installs systemd service | butter or dev user | Orchestrator or dev machine |
 | `deploy-schema.sh` | One-time schema deployment (drops all tables, recreates). Self-destructs after running. | butter | VPS |
 | `setup-orchestrator.sh` | Creates orchestrator venv + dependencies, creates `~/.unsaltedbutter/shared.env` and `orchestrator.env` from examples, optionally installs systemd service | butter or dev user | Mac Mini |
+| `setup-launchagents.sh` | Installs launchd user agents for orchestrator + agent. `RunAtLoad` + `KeepAlive`. Supports `--uninstall` and `--status`. | dev user | Mac Mini |
+| `setup-launchagent-inference.sh` | Installs launchd user agent for inference server. Same pattern. Supports `--uninstall` and `--status`. | dev user | Mac Studio |
 
 ### Deployment
 
