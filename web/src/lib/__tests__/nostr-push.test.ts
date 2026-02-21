@@ -3,6 +3,8 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 // Track mock calls from inside the mocked modules
 const mockWrapEvent = vi.fn();
 const mockDecode = vi.fn();
+const mockNpubEncode = vi.fn();
+const mockGetPublicKey = vi.fn();
 const mockPublish = vi.fn();
 const mockPoolClose = vi.fn();
 const mockReadFileSync = vi.fn();
@@ -17,6 +19,11 @@ vi.mock("nostr-tools/nip17", () => ({
 
 vi.mock("nostr-tools/nip19", () => ({
   decode: (...args: unknown[]) => mockDecode(...args),
+  npubEncode: (...args: unknown[]) => mockNpubEncode(...args),
+}));
+
+vi.mock("nostr-tools/pure", () => ({
+  getPublicKey: (...args: unknown[]) => mockGetPublicKey(...args),
 }));
 
 // SimplePool must be a real constructor since the code does `new SimplePool()`
@@ -65,6 +72,8 @@ beforeEach(async () => {
 
   mockWrapEvent.mockReturnValue({ ...FAKE_WRAPPED_EVENT });
   mockDecode.mockReturnValue({ type: "npub", data: TEST_RECIPIENT_HEX });
+  mockGetPublicKey.mockReturnValue("aa".repeat(32));
+  mockNpubEncode.mockReturnValue("npub1fakesender");
   mockPublish.mockReturnValue([Promise.resolve("ok"), Promise.resolve("ok")]);
 
   // Re-import to get fresh bindings; reset cached pool
@@ -81,6 +90,8 @@ afterEach(() => {
   vi.unstubAllEnvs();
   mockWrapEvent.mockReset();
   mockDecode.mockReset();
+  mockNpubEncode.mockReset();
+  mockGetPublicKey.mockReset();
   mockPublish.mockReset();
   mockPoolClose.mockReset();
   mockReadFileSync.mockReset();

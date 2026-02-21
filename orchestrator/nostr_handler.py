@@ -184,6 +184,7 @@ class NostrHandler(HandleNotification):
             return
 
         kind = event.kind()
+        log.debug("[event] kind=%s id=%s author=%s", kind.as_u16(), event_id_hex[:16], event.author().to_hex()[:16])
         try:
             if kind == Kind(4):
                 await self._handle_nip04_dm(event)
@@ -215,9 +216,12 @@ class NostrHandler(HandleNotification):
             self._keys.secret_key(), sender_pk, event.content()
         )
 
+        sender_npub = sender_pk.to_bech32()
+        log.info("[nip04] DM from %s (%s): %s", sender_npub, sender_hex[:16], plaintext[:100])
         await self._db.log_message("inbound", sender_hex, plaintext)
 
         if sender_hex == self._config.vps_bot_pubkey:
+            log.info("[nip04] Sender matches VPS_BOT_PUBKEY, routing to push handler")
             await self._notifications.handle_push(plaintext)
             return
 
@@ -241,14 +245,21 @@ class NostrHandler(HandleNotification):
             return
 
         sender_hex = sender.to_hex()
+        sender_npub = sender.to_bech32()
         plaintext = rumor.content()
 
+        log.info("[nip17] DM from %s (%s): %s", sender_npub, sender_hex[:16], plaintext[:100])
         await self._db.log_message("inbound", sender_hex, plaintext)
 
         if sender_hex == self._config.vps_bot_pubkey:
+            log.info("[nip17] Sender matches VPS_BOT_PUBKEY, routing to push handler")
             await self._notifications.handle_push(plaintext)
             return
 
+        log.debug(
+            "[nip17] Sender %s does not match VPS_BOT_PUBKEY %s, treating as user DM",
+            sender_hex[:16], self._config.vps_bot_pubkey[:16],
+        )
         self._user_protocol[sender_hex] = "nip17"
         async with self._get_user_lock(sender_hex):
             await self._commands.handle_dm(sender_hex, plaintext)

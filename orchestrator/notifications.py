@@ -68,11 +68,12 @@ class NotificationHandler:
         """
         payload = parse_push(message)
         if payload is None:
-            log.debug("Ignoring non-JSON message from VPS bot: %s", message[:80])
+            log.warning("Ignoring non-JSON message from VPS bot: %s", message[:120])
             return
 
         notif_type = payload.get("type")
         data = payload.get("data", {})
+        log.info("[push] Received type=%s data=%s", notif_type, data)
 
         if notif_type == "jobs_ready":
             await self._handle_jobs_ready(data)
@@ -83,11 +84,14 @@ class NotificationHandler:
         elif notif_type == "new_user":
             await self._handle_new_user(data)
         else:
-            log.warning("Unknown push notification type: %s", notif_type)
+            log.warning("[push] Unknown push notification type: %s", notif_type)
 
     async def _handle_jobs_ready(self, data: dict) -> None:
         """VPS signals new pending jobs. Trigger poll_and_claim."""
-        await self._job_manager.poll_and_claim()
+        job_ids = data.get("job_ids", [])
+        log.info("[push] jobs_ready: %d job ID(s) signaled, polling VPS...", len(job_ids))
+        claimed = await self._job_manager.poll_and_claim()
+        log.info("[push] jobs_ready: claimed %d job(s) from VPS", len(claimed))
 
     async def _handle_payment_received(self, data: dict) -> None:
         """Payment received for a job. Forward to session.

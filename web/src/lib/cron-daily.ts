@@ -204,12 +204,14 @@ export async function runDailyCron(): Promise<CronResult> {
 
   // 3. Push notification for newly created jobs
   if (createdJobIds.length > 0) {
+    console.log(`[cron-daily] Created ${createdJobIds.length} job(s): ${createdJobIds.join(", ")}, pushing to orchestrator`);
     await pushJobsReady(createdJobIds);
   }
 
   // 4. Nudge stale pending jobs
   const staleJobIds = await findStaleJobs();
   if (staleJobIds.length > 0) {
+    console.log(`[cron-daily] Nudging ${staleJobIds.length} stale job(s): ${staleJobIds.join(", ")}`);
     await pushJobsReady(staleJobIds);
   }
 

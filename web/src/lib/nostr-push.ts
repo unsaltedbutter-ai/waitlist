@@ -1,6 +1,7 @@
 import { readFileSync } from "fs";
 import { wrapEvent } from "nostr-tools/nip17";
-import { decode } from "nostr-tools/nip19";
+import { decode, npubEncode } from "nostr-tools/nip19";
+import { getPublicKey } from "nostr-tools/pure";
 import { SimplePool } from "nostr-tools/pool";
 import { hexToBytes } from "nostr-tools/utils";
 
@@ -75,6 +76,8 @@ function getRecipientPubkey(): string | null {
  * if a relay is unreachable.
  */
 async function sendPushDM(payload: Record<string, unknown>): Promise<void> {
+  const payloadType = payload.type ?? "unknown";
+
   const privkey = getPrivkeyBytes();
   if (!privkey) {
     console.warn("[nostr-push] VPS_NOSTR_PRIVKEY not set, skipping push");
@@ -92,6 +95,15 @@ async function sendPushDM(payload: Record<string, unknown>): Promise<void> {
     console.warn("[nostr-push] No relays configured, skipping push");
     return;
   }
+
+  // Derive our own pubkey from privkey so we can log the sender identity
+  const senderPubkeyHex = getPublicKey(privkey);
+  const senderNpub = npubEncode(senderPubkeyHex);
+  const recipientNpub = recipientPubkey.length === 64 ? npubEncode(recipientPubkey) : recipientPubkey;
+
+  console.log(
+    `[nostr-push] Sending type=${payloadType} FROM ${senderNpub} TO ${recipientNpub} via ${relays.join(", ")}`
+  );
 
   const message = JSON.stringify(payload);
 
@@ -128,6 +140,8 @@ async function sendPushDM(payload: Record<string, unknown>): Promise<void> {
     console.warn(
       `[nostr-push] Published to ${succeeded}/${relays.length} relays. Failures: ${errors.join(", ")}`
     );
+  } else {
+    console.log(`[nostr-push] type=${payloadType} published to ${succeeded}/${relays.length} relays OK`);
   }
 }
 

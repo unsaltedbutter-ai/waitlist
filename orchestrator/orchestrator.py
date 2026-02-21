@@ -320,6 +320,10 @@ async def run(config: Config) -> None:
     log.info(
         "Orchestrator %s running (pubkey: %s)", GIT_HASH, bot_pk.to_bech32()
     )
+    from nostr_sdk import PublicKey as _PK
+    vps_bot_npub = _PK.parse(config.vps_bot_pubkey).to_bech32()
+    log.info("Expecting VPS push DMs from: %s", vps_bot_npub)
+    log.info("Relays: %s", ", ".join(config.nostr_relays))
 
     # -- Wait for shutdown --
     await shutdown.wait()
