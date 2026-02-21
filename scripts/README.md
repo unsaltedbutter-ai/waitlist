@@ -216,6 +216,24 @@ pm2 restart unsaltedbutter
 
 ---
 
+## Orchestrator Server Setup
+
+On the orchestrator/agent machine:
+
+- `./scripts/setup-launchagents.sh`
+
+- Logs:
+  `tail -f ~/logs/orchestrator-stdout.log`
+  `tail -f ~/logs/agent-stdout.log`
+
+Control:
+  `launchctl kickstart -k gui/501/com.unsaltedbutter.orchestrator`  # restart orchestrator
+  `launchctl kickstart -k gui/501/com.unsaltedbutter.agent`  # restart agent
+  `./scripts/setup-launchagents.sh --status`           # check state
+  `./scripts/setup-launchagents.sh --uninstall`        # remove
+
+---
+
 ## Inference Server Setup
 
 The inference server provides VLM inference for browser automation. It supports multiple backends:
