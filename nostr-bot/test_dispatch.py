@@ -12,8 +12,9 @@ from uuid import UUID
 
 import pytest
 
-# Must set OPERATOR_NPUB before importing bot (it reads env at module level)
-os.environ.setdefault("OPERATOR_NPUB", "npub1operator000000000000000000000000000000000000000000000uqhpv3")
+# Must set OPERATOR_NPUB before importing bot (it reads env at module level).
+# Use a real valid npub (secp256k1 point) so PublicKey.parse() succeeds.
+os.environ.setdefault("OPERATOR_NPUB", "npub1j3yd8lhf6wcpfgy9p8hpyr6ec5yze6nkdyrf6cxstuzydqmfzt9sg9kzlx")
 os.environ.setdefault("BASE_URL", "https://unsaltedbutter.ai")
 
 import bot
@@ -36,7 +37,9 @@ def _make_handler():
     client.send_private_msg = AsyncMock()
     from nostr_sdk import Timestamp
     start_time = Timestamp.now()
-    return bot.BotNotificationHandler(keys, signer, client, start_time, "zapprovider", VPS_BOT_HEX)
+    operator_npub = os.environ.get("OPERATOR_NPUB", "")
+    operator_hex = bot._npub_to_hex(operator_npub) if operator_npub else ""
+    return bot.BotNotificationHandler(keys, signer, client, start_time, "zapprovider", VPS_BOT_HEX, operator_hex)
 
 
 @pytest.fixture

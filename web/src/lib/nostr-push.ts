@@ -38,16 +38,29 @@ function getPrivKey(): string | null {
 }
 
 function getPrivkeyBytes(): Uint8Array | null {
-  const hex = getPrivKey();
-  if (!hex) return null;
-  return hexToBytes(hex);
+  const raw = getPrivKey();
+  if (!raw) return null;
+  if (raw.startsWith("nsec1")) {
+    try {
+      const decoded = decode(raw);
+      if (decoded.type !== "nsec") return null;
+      return decoded.data;
+    } catch {
+      return null;
+    }
+  }
+  return hexToBytes(raw);
 }
 
 function getRecipientPubkey(): string | null {
-  const npub = process.env.ORCHESTRATOR_NPUB;
-  if (!npub) return null;
+  const value = process.env.ORCHESTRATOR_NPUB;
+  if (!value) return null;
+  // Accept raw hex (64 chars) or npub1 bech32
+  if (!value.startsWith("npub1")) {
+    return /^[0-9a-f]{64}$/i.test(value) ? value : null;
+  }
   try {
-    const decoded = decode(npub);
+    const decoded = decode(value);
     if (decoded.type !== "npub") return null;
     return decoded.data;
   } catch {

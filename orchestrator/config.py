@@ -13,6 +13,13 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from dotenv import load_dotenv
+from nostr_sdk import PublicKey
+
+
+def _normalize_pubkey(value: str) -> str:
+    """Accept npub1... or hex, return 64-char hex."""
+    return PublicKey.parse(value).to_hex()
+
 
 _REQUIRED_FIELDS = (
     "API_BASE_URL",
@@ -39,7 +46,7 @@ class Config:
     nostr_relays: list[str]
     vps_bot_pubkey: str
     zap_provider_pubkey: str
-    operator_npub: str
+    operator_pubkey: str
 
     # URLs
     base_url: str
@@ -101,9 +108,9 @@ class Config:
             hmac_secret=os.environ["AGENT_HMAC_SECRET"].strip(),
             nostr_nsec=os.environ["NOSTR_NSEC"].strip(),
             nostr_relays=relays,
-            vps_bot_pubkey=os.environ["VPS_BOT_PUBKEY"].strip(),
-            zap_provider_pubkey=os.environ["ZAP_PROVIDER_PUBKEY"].strip(),
-            operator_npub=os.environ["OPERATOR_NPUB"].strip(),
+            vps_bot_pubkey=_normalize_pubkey(os.environ["VPS_BOT_PUBKEY"].strip()),
+            zap_provider_pubkey=_normalize_pubkey(os.environ["ZAP_PROVIDER_PUBKEY"].strip()),
+            operator_pubkey=_normalize_pubkey(os.environ["OPERATOR_NPUB"].strip()),
             base_url=os.environ.get("BASE_URL", "https://unsaltedbutter.ai").strip(),
             agent_url=os.environ.get("AGENT_URL", "http://192.168.1.100:8421").strip(),
             callback_host=os.environ.get("CALLBACK_HOST", "0.0.0.0").strip(),

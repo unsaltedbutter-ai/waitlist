@@ -367,4 +367,63 @@ describe("nostr-push", () => {
       expect(mockPublish).toHaveBeenCalledTimes(1);
     });
   });
+
+  describe("nsec private key format", () => {
+    it("decodes nsec1 private key via nip19", async () => {
+      const nsecKey = "nsec1testfakensec";
+      const decodedBytes = new Uint8Array(32);
+      vi.stubEnv("VPS_NOSTR_PRIVKEY", nsecKey);
+      mockDecode
+        .mockReturnValueOnce({ type: "npub", data: TEST_RECIPIENT_HEX })  // for getRecipientPubkey
+        .mockReturnValueOnce({ type: "nsec", data: decodedBytes });       // for getPrivkeyBytes
+
+      await pushNewUser("npub1test");
+
+      // decode called for both ORCHESTRATOR_NPUB (npub) and VPS_NOSTR_PRIVKEY (nsec)
+      expect(mockDecode).toHaveBeenCalledWith(nsecKey);
+    });
+
+    it("returns null when nsec decode gives wrong type", async () => {
+      vi.stubEnv("VPS_NOSTR_PRIVKEY", "nsec1bad");
+      mockDecode.mockReturnValue({ type: "npub", data: "wrong" });
+      const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+      await pushNewUser("npub1test");
+
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining("VPS_NOSTR_PRIVKEY not set")
+      );
+      expect(mockPublish).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("hex ORCHESTRATOR_NPUB format", () => {
+    it("accepts 64-char hex pubkey without decoding", async () => {
+      const hexPubkey = "aa".repeat(32);
+      vi.stubEnv("ORCHESTRATOR_NPUB", hexPubkey);
+
+      await pushNewUser("npub1test");
+
+      // wrapEvent should receive the hex pubkey directly
+      expect(mockWrapEvent).toHaveBeenCalledWith(
+        expect.any(Uint8Array),
+        { publicKey: hexPubkey },
+        expect.any(String)
+      );
+      // decode should NOT be called for ORCHESTRATOR_NPUB (hex bypass)
+      expect(mockDecode).not.toHaveBeenCalled();
+    });
+
+    it("rejects invalid non-npub non-hex values", async () => {
+      vi.stubEnv("ORCHESTRATOR_NPUB", "not-valid-at-all");
+      const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+      await pushNewUser("npub1test");
+
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining("ORCHESTRATOR_NPUB not set or invalid")
+      );
+      expect(mockPublish).not.toHaveBeenCalled();
+    });
+  });
 });

@@ -63,6 +63,7 @@ class BotNotificationHandler(HandleNotification):
         start_time: Timestamp,
         zap_provider_pubkey_hex: str,
         vps_bot_pubkey_hex: str,
+        operator_pubkey_hex: str = "",
     ):
         self._keys = keys
         self._signer = signer
@@ -71,6 +72,7 @@ class BotNotificationHandler(HandleNotification):
         self._bot_pubkey_hex = keys.public_key().to_hex()
         self._zap_provider_pubkey_hex = zap_provider_pubkey_hex
         self._vps_bot_pubkey_hex = vps_bot_pubkey_hex
+        self._operator_pubkey_hex = operator_pubkey_hex
 
     async def handle(self, relay_url: RelayUrl, subscription_id: str, event: Event):
         kind = event.kind()
@@ -229,8 +231,7 @@ class BotNotificationHandler(HandleNotification):
 
         # "invites" operator-only: trigger sending pending invite DMs
         if cmd == "invites":
-            operator_npub = os.getenv("OPERATOR_NPUB", "")
-            if operator_npub and sender_hex == _npub_to_hex(operator_npub):
+            if self._operator_pubkey_hex and sender_hex == self._operator_pubkey_hex:
                 count = await self._send_pending_invite_dms()
                 return f"Sent {count} invite DM(s)." if count > 0 else "No pending invite DMs."
             # Non-operators fall through to normal handling
@@ -334,14 +335,16 @@ async def main():
     log.info("Bot pubkey: %s", bot_pk.to_bech32())
 
     # Zap provider pubkey (required for validating zap receipts per NIP-57)
-    zap_provider_pubkey_hex = os.environ["ZAP_PROVIDER_PUBKEY"]
+    zap_provider_pubkey_hex = PublicKey.parse(os.environ["ZAP_PROVIDER_PUBKEY"]).to_hex()
     log.info("Zap provider pubkey: %s...", zap_provider_pubkey_hex[:16])
 
     # VPS private bot pubkey (for receiving push notifications)
-    vps_bot_pubkey_hex = os.getenv("VPS_BOT_PUBKEY", "")
-    if vps_bot_pubkey_hex:
+    raw_vps_bot = os.getenv("VPS_BOT_PUBKEY", "")
+    if raw_vps_bot:
+        vps_bot_pubkey_hex = PublicKey.parse(raw_vps_bot).to_hex()
         log.info("VPS bot pubkey: %s...", vps_bot_pubkey_hex[:16])
     else:
+        vps_bot_pubkey_hex = ""
         log.warning("VPS_BOT_PUBKEY not set, push notifications from VPS will be ignored")
 
     # Client
@@ -392,8 +395,12 @@ async def main():
     for sig in (signal.SIGINT, signal.SIGTERM):
         loop.add_signal_handler(sig, _signal_handler)
 
+    # Operator pubkey (for gating operator-only commands)
+    raw_operator = os.getenv("OPERATOR_NPUB", "")
+    operator_pubkey_hex = _npub_to_hex(raw_operator) if raw_operator else ""
+
     # Run notification handler
-    handler = BotNotificationHandler(keys, signer, client, start_time, zap_provider_pubkey_hex, vps_bot_pubkey_hex)
+    handler = BotNotificationHandler(keys, signer, client, start_time, zap_provider_pubkey_hex, vps_bot_pubkey_hex, operator_pubkey_hex)
     notify_task = asyncio.create_task(client.handle_notifications(handler))
 
     # Run periodic invite check (backup)

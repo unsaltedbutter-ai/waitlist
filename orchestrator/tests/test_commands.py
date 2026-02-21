@@ -24,7 +24,7 @@ OPERATOR = "npub1operator"
 @dataclass(frozen=True)
 class FakeConfig:
     base_url: str = "https://unsaltedbutter.ai"
-    operator_npub: str = OPERATOR
+    operator_pubkey: str = OPERATOR
 
 
 def _make_router(

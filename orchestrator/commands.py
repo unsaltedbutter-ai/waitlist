@@ -60,7 +60,7 @@ class CommandRouter:
         self._job_manager = job_manager
         self._config = config
         self._send_dm = send_dm
-        self._operator_npub = config.operator_npub
+        self._operator_pubkey = config.operator_pubkey
 
     async def handle_dm(self, sender_npub: str, text: str) -> None:
         """Process an inbound DM from a user.
@@ -441,12 +441,6 @@ class CommandRouter:
         stripped = text.replace(" ", "").replace("-", "")
         return stripped.isdigit() and 3 <= len(stripped) <= 8
 
-    def _is_operator(self, npub: str) -> bool:
-        """Check if the user is the operator.
-
-        The npub parameter is the sender's identifier (same format stored
-        in sessions/jobs). config.operator_npub is bech32.
-        We compare directly since both should be in the same format
-        as used throughout the orchestrator.
-        """
-        return npub == self._operator_npub
+    def _is_operator(self, sender_hex: str) -> bool:
+        """Check if the user is the operator. Both sides are hex."""
+        return sender_hex == self._operator_pubkey

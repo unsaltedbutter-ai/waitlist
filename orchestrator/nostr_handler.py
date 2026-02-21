@@ -300,4 +300,4 @@ class NostrHandler(HandleNotification):
 
     async def send_operator_dm(self, text: str) -> None:
         """Send a DM to the operator."""
-        await self.send_dm(self._config.operator_npub, text)
+        await self.send_dm(self._config.operator_pubkey, text)

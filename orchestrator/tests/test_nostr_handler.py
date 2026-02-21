@@ -35,7 +35,7 @@ def _make_config() -> MagicMock:
     cfg = MagicMock()
     cfg.vps_bot_pubkey = VPS_BOT_PK
     cfg.zap_provider_pubkey = ZAP_PROVIDER_PK
-    cfg.operator_npub = OPERATOR_NPUB
+    cfg.operator_pubkey = OPERATOR_NPUB
     return cfg
 
 
