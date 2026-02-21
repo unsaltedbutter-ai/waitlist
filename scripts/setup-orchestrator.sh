@@ -217,7 +217,7 @@ main() {
     # 7. Smoke test (import check, no network)
     echo ""
     echo "Running import smoke test..."
-    if "$VENV_DIR/bin/python" -c "import config; import api_client; import nostr_handler; import job_manager; print('All imports OK')" 2>&1; then
+    if PYTHONPATH="$COMPONENT_DIR" "$VENV_DIR/bin/python" -c "import config; import api_client; import nostr_handler; import job_manager; print('All imports OK')" 2>&1; then
         :
     else
         echo "WARNING: Import check failed. Check dependencies."
