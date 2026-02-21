@@ -3,6 +3,9 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 vi.mock("@/lib/create-on-demand-job", () => ({
   createOnDemandJob: vi.fn(),
 }));
+vi.mock("@/lib/nostr-push", () => ({
+  pushJobsReady: vi.fn().mockResolvedValue(undefined),
+}));
 vi.mock("@/lib/auth", () => ({
   withAuth: vi.fn((handler: Function) => {
     return async (req: Request, segmentData: any) => {
@@ -15,6 +18,7 @@ vi.mock("@/lib/auth", () => ({
 }));
 
 import { createOnDemandJob } from "@/lib/create-on-demand-job";
+import { pushJobsReady } from "@/lib/nostr-push";
 import { POST } from "../route";
 
 function makeRequest(body: object): Request {
@@ -27,6 +31,7 @@ function makeRequest(body: object): Request {
 
 beforeEach(() => {
   vi.mocked(createOnDemandJob).mockReset();
+  vi.mocked(pushJobsReady).mockReset().mockResolvedValue(undefined);
 });
 
 describe("POST /api/on-demand", () => {
@@ -145,6 +150,45 @@ describe("POST /api/on-demand", () => {
     await POST(req as any, { params: Promise.resolve({}) });
 
     expect(createOnDemandJob).toHaveBeenCalledWith("test-user", "", "");
+  });
+
+  it("pushes job to orchestrator on success", async () => {
+    vi.mocked(createOnDemandJob).mockResolvedValue({
+      ok: true,
+      job_id: "push-job-1",
+    });
+
+    const req = makeRequest({ serviceId: "netflix", action: "cancel" });
+    await POST(req as any, { params: Promise.resolve({}) });
+
+    expect(pushJobsReady).toHaveBeenCalledWith(["push-job-1"]);
+  });
+
+  it("does not push to orchestrator on error result", async () => {
+    vi.mocked(createOnDemandJob).mockResolvedValue({
+      ok: false,
+      status: 403,
+      error: "Outstanding debt",
+      debt_sats: 3000,
+    });
+
+    const req = makeRequest({ serviceId: "netflix", action: "cancel" });
+    await POST(req as any, { params: Promise.resolve({}) });
+
+    expect(pushJobsReady).not.toHaveBeenCalled();
+  });
+
+  it("returns 200 even if push fails", async () => {
+    vi.mocked(createOnDemandJob).mockResolvedValue({
+      ok: true,
+      job_id: "push-fail-job",
+    });
+    vi.mocked(pushJobsReady).mockRejectedValue(new Error("relay down"));
+
+    const req = makeRequest({ serviceId: "netflix", action: "cancel" });
+    const res = await POST(req as any, { params: Promise.resolve({}) });
+
+    expect(res.status).toBe(200);
   });
 
   // M-5: User not found (stale JWT, deleted account)
