@@ -72,6 +72,10 @@ sys.modules.setdefault('pynput', MagicMock())
 sys.modules.setdefault('pynput.keyboard', MagicMock())
 sys.modules.setdefault('pynput.mouse', MagicMock())
 
+# Set display scale to 1.0 in test environments (Quartz is mocked)
+from agent.input.coords import set_display_scale
+set_display_scale(1.0)
+
 # ---------------------------------------------------------------------------
 # Shared fixtures
 # ---------------------------------------------------------------------------
