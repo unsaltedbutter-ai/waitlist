@@ -317,15 +317,15 @@ else
 fi
 
 # -- Daily cron (job scheduling) --------------------------------
-# Calls /api/cron/daily at 10:00 UTC (5:00 AM EST) every day
-CRON_SECRET=$(grep '^CRON_SECRET=' "${REMOTE_DIR}/web/.env.production" | cut -d= -f2)
-if [[ -z "$CRON_SECRET" ]]; then
-    echo "ERROR: CRON_SECRET not found in .env.production. Run --init first."
-    exit 1
-fi
+# Calls /api/cron/daily at 10:00 UTC (5:00 AM EST) every day.
+# Secret is read from .env.production inside the script, not exposed in crontab.
+chmod 700 "${REMOTE_DIR}/scripts/cron-daily.sh"
 
-install_cron "api/cron/daily" \
-    "0 10 * * * /usr/bin/curl -s -f -X POST -H \"Authorization: Bearer ${CRON_SECRET}\" http://localhost:3000/api/cron/daily >> \$HOME/logs/daily-cron.log 2>&1" \
+# Remove old inline-curl crontab entry that exposed the bearer token
+crontab -l 2>/dev/null | grep -vF "api/cron/daily" | crontab - 2>/dev/null || true
+
+install_cron "cron-daily.sh" \
+    "0 10 * * * ${REMOTE_DIR}/scripts/cron-daily.sh >> \$HOME/logs/daily-cron.log 2>&1" \
     "Daily job scheduling: create pending cancel/resume jobs (10:00 UTC)"
 
 # -- Remove old systemd timer (migrated to crontab) ------------
@@ -498,7 +498,7 @@ sudo systemctl is-active nginx && echo "nginx is running ✓"
 
 echo ""
 echo "=== Cron Jobs ==="
-for script in update-checker.py health-check.sh lnd-balance.sh backup-daily.sh backup-offsite.sh lightning-backup.sh api/cron/daily; do
+for script in update-checker.py health-check.sh lnd-balance.sh backup-daily.sh backup-offsite.sh lightning-backup.sh cron-daily.sh; do
     if crontab -l 2>/dev/null | grep -qF "$script"; then
         echo "$script ✓"
     else
