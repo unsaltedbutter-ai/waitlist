@@ -21,6 +21,7 @@ import logging
 import random
 import subprocess
 import time
+from datetime import datetime, timezone
 
 from agent.config import PLAYBOOK_DIR, PLAYBOOK_REF_DIR
 from agent.recording.prompts import (
@@ -175,6 +176,13 @@ class PlaybookRecorder:
         self._prompt_idx = 0
         self._prompt_labels = self._build_prompt_labels()
 
+        # Page boundary tracking for manifest
+        self._pages: list[dict] = []
+        self._current_page_start: int | None = None
+        self._current_page_screenshot: str | None = None
+        self._current_page_label: str = ''
+        self._page_count: int = 0
+
     def _build_prompt_chain(self) -> list[str]:
         """Build the ordered list of system prompts for this flow."""
         chain = [build_signin_prompt(self.service)]
@@ -218,6 +226,52 @@ class PlaybookRecorder:
         if self.variant:
             name += f'_{self.variant}'
         return name
+
+    # ------------------------------------------------------------------
+    # Page boundary tracking
+    # ------------------------------------------------------------------
+
+    def _close_current_page(self, end_step: int, boundary: str) -> None:
+        """Close the current page (if any) and record it in the manifest."""
+        if self._current_page_start is None:
+            return
+        # end_step is exclusive (the boundary step itself belongs to the next page)
+        if end_step <= self._current_page_start:
+            return
+        self._pages.append({
+            'page_index': self._page_count,
+            'label': self._current_page_label,
+            'screenshot': self._current_page_screenshot or '',
+            'step_range': [self._current_page_start, end_step - 1],
+            'boundary': boundary,
+        })
+        self._page_count += 1
+        self._current_page_start = None
+        self._current_page_screenshot = None
+        self._current_page_label = ''
+
+    def _open_new_page(self, step_idx: int, screenshot_file: str, label: str) -> None:
+        """Start tracking a new page."""
+        self._current_page_start = step_idx
+        self._current_page_screenshot = screenshot_file
+        self._current_page_label = label
+
+    def _write_manifest(self, ref_dir, start_url: str) -> None:
+        """Write _manifest.json to the ref directory."""
+        manifest = {
+            'service': self.service,
+            'flow': self.flow,
+            'start_url': start_url,
+            'recorded_at': datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%S'),
+            'pages': self._pages,
+        }
+        if self.plan_tier:
+            manifest['tier'] = self.plan_tier
+        manifest_path = ref_dir / '_manifest.json'
+        with open(manifest_path, 'w') as f:
+            json.dump(manifest, f, indent=2)
+            f.write('\n')
+        print(f'Manifest written: {manifest_path} ({len(self._pages)} pages)')
 
     def _scale_bbox(self, bbox, scale_factor: float) -> list[int]:
         """Scale a VLM bbox to original image pixels."""
@@ -511,6 +565,9 @@ class PlaybookRecorder:
 
         stuck = _StuckDetector()
         step_num = 0
+        # The first page starts after the navigate step; its identity screenshot
+        # will be captured on the first iteration of the loop below.
+        self._pending_page_open = True
 
         print(f'\nRecording: {pb_name} (phase: {self._current_label})')
         print(f'Max steps: {self.max_steps}, settle delay: {self.settle_delay}s')
@@ -526,6 +583,16 @@ class PlaybookRecorder:
             browser.get_session_window(session)
             raw_screenshot_b64 = ss.capture_to_base64(session.window_id)
             screenshot_b64, chrome_height_px = crop_browser_chrome(raw_screenshot_b64)
+
+            # Open a new page if one is pending (first iter or after a boundary)
+            if self._pending_page_open:
+                current_step_idx = len(steps)
+                # The identity screenshot for this page is the next ref image
+                # that will be saved (step_XX.png). We record the filename now.
+                page_screenshot = f'step_{current_step_idx:02d}.png'
+                page_label = self._current_label
+                self._open_new_page(current_step_idx, page_screenshot, page_label)
+                self._pending_page_open = False
 
             # Ask VLM
             print(f'  [{self._current_label}] Analyzing screenshot...', end=' ', flush=True)
@@ -560,6 +627,9 @@ class PlaybookRecorder:
 
                 if result == 'done':
                     if self._prompt_idx < len(self._prompts) - 1:
+                        # Close the current page before the checkpoint boundary
+                        checkpoint_step_idx = len(steps)
+                        self._close_current_page(checkpoint_step_idx, 'checkpoint')
                         steps.append({
                             'action': 'wait',
                             'wait_after_sec': [2, 4],
@@ -568,6 +638,7 @@ class PlaybookRecorder:
                         })
                         self._prompt_idx += 1
                         stuck.reset()
+                        self._pending_page_open = True
                         print(f'\n  Phase transition: sign-in -> {self._current_label}\n')
                         if self.verbose:
                             self._dump_prompt(ref_dir, self._current_label, self._current_prompt)
@@ -608,6 +679,9 @@ class PlaybookRecorder:
             # Handle "done" (advance prompt chain or finish)
             if action == 'done':
                 if self._prompt_idx < len(self._prompts) - 1:
+                    # Close the current page before the checkpoint boundary
+                    checkpoint_step_idx = len(steps)
+                    self._close_current_page(checkpoint_step_idx, 'checkpoint')
                     # Transition to next prompt phase
                     steps.append({
                         'action': 'wait',
@@ -617,6 +691,7 @@ class PlaybookRecorder:
                     })
                     self._prompt_idx += 1
                     stuck.reset()
+                    self._pending_page_open = True
                     print(f'\n  Phase transition: {self._prompt_labels[self._prompt_idx - 1]} -> {self._current_label}\n')
                     if self.verbose:
                         self._dump_prompt(ref_dir, self._current_label, self._current_prompt)
@@ -706,6 +781,11 @@ class PlaybookRecorder:
                 steps.append(step_data)
                 print(f'    -> Step {step_num}: click "{target_desc}" bbox={scaled_bbox}')
 
+                # Checkpoint clicks mark page boundaries
+                if is_checkpoint:
+                    self._close_current_page(len(steps), 'checkpoint')
+                    self._pending_page_open = True
+
                 # Auto-type after clicking an input field. VLMs can't
                 # distinguish focused vs unfocused empty fields visually,
                 # so we infer the credential from the target description
@@ -778,6 +858,11 @@ class PlaybookRecorder:
 
         else:
             print(f'\n  Max steps ({self.max_steps}) reached. Stopping.')
+
+        # Close the last open page and write manifest
+        self._close_current_page(len(steps), 'end')
+        if self._pages:
+            self._write_manifest(ref_dir, start_url)
 
         # Build playbook dict
         playbook_data: dict = {

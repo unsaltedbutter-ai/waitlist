@@ -991,6 +991,11 @@ class TestRecorderIntegration:
         recorder._prompts = recorder._build_prompt_chain()
         recorder._prompt_idx = 0
         recorder._prompt_labels = recorder._build_prompt_labels()
+        recorder._pages = []
+        recorder._current_page_start = None
+        recorder._current_page_screenshot = None
+        recorder._current_page_label = ''
+        recorder._page_count = 0
 
         monkeypatch.setattr('time.sleep', lambda _: None)
 
