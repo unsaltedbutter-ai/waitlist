@@ -39,6 +39,60 @@ from agent.recording.recorder import (
     _resolve_credential,
 )
 from agent.recording.vlm_client import VLMClient, _extract_json
+from agent.screenshot import CHROME_HEIGHT_LOGICAL, crop_browser_chrome
+
+
+# ===========================================================================
+# Browser chrome cropping tests
+# ===========================================================================
+
+
+class TestCropBrowserChrome:
+    """crop_browser_chrome: remove tab bar + address bar from screenshots."""
+
+    def test_crops_correct_height_non_retina(self, monkeypatch) -> None:
+        """Non-Retina (scale=1.0): crop 88px from top."""
+        monkeypatch.setattr('agent.input.window.get_retina_scale', lambda: 1.0)
+        img_b64 = _make_test_png_b64(1280, 900)
+        cropped_b64, chrome_px = crop_browser_chrome(img_b64)
+        assert chrome_px == 88
+
+        raw = base64.b64decode(cropped_b64)
+        img = Image.open(io.BytesIO(raw))
+        assert img.width == 1280
+        assert img.height == 900 - 88
+
+    def test_crops_correct_height_retina(self, monkeypatch) -> None:
+        """Retina (scale=2.0): crop 176px from top."""
+        monkeypatch.setattr('agent.input.window.get_retina_scale', lambda: 2.0)
+        img_b64 = _make_test_png_b64(2560, 1800)
+        cropped_b64, chrome_px = crop_browser_chrome(img_b64)
+        assert chrome_px == 176
+
+        raw = base64.b64decode(cropped_b64)
+        img = Image.open(io.BytesIO(raw))
+        assert img.width == 2560
+        assert img.height == 1800 - 176
+
+    def test_too_short_image_not_cropped(self, monkeypatch) -> None:
+        """If the image is shorter than the chrome height, don't crop."""
+        monkeypatch.setattr('agent.input.window.get_retina_scale', lambda: 1.0)
+        img_b64 = _make_test_png_b64(200, 50)  # shorter than 88px
+        cropped_b64, chrome_px = crop_browser_chrome(img_b64)
+        assert chrome_px == 0
+        assert cropped_b64 == img_b64
+
+    def test_chrome_height_constant(self) -> None:
+        assert CHROME_HEIGHT_LOGICAL == 88
+
+    def test_returns_valid_png(self, monkeypatch) -> None:
+        """Output is a valid PNG that can be re-opened."""
+        monkeypatch.setattr('agent.input.window.get_retina_scale', lambda: 1.0)
+        img_b64 = _make_test_png_b64(1280, 900)
+        cropped_b64, _ = crop_browser_chrome(img_b64)
+        raw = base64.b64decode(cropped_b64)
+        img = Image.open(io.BytesIO(raw))
+        img.verify()  # raises if invalid
 
 
 # ===========================================================================
@@ -58,6 +112,9 @@ class TestBuildSigninPrompt:
         assert '"page_type"' in prompt
         assert '"email_box"' in prompt
         assert '"password_box"' in prompt
+        assert '"code_boxes"' in prompt
+        assert '"page_description"' in prompt
+        assert '"actions"' in prompt
 
     def test_uses_service_hints(self) -> None:
         prompt = build_signin_prompt('netflix')
@@ -68,6 +125,25 @@ class TestBuildSigninPrompt:
         prompt = build_signin_prompt('unknownservice')
         assert 'unknownservice' in prompt
         assert 'Email' in prompt
+
+    def test_contains_new_states(self) -> None:
+        prompt = build_signin_prompt('netflix')
+        assert 'email_code_single' in prompt
+        assert 'email_code_multi' in prompt
+        assert 'phone_code_single' in prompt
+        assert 'phone_code_multi' in prompt
+        assert '"captcha"' in prompt
+        assert '"unknown"' in prompt
+
+    def test_contains_few_shot_examples(self) -> None:
+        prompt = build_signin_prompt('netflix')
+        assert 'Examples of correct responses' in prompt
+        assert 'Cookie consent banner' in prompt
+
+    def test_no_browser_chrome_warning(self) -> None:
+        prompt = build_signin_prompt('netflix')
+        assert 'browser tab bar' not in prompt
+        assert '~150 pixels' not in prompt
 
     def test_profile_selection_hint(self) -> None:
         prompt = build_signin_prompt('netflix')
@@ -917,7 +993,8 @@ class TestRecorderIntegration:
         monkeypatch.setattr('agent.browser.navigate', lambda s, url, fast=False: None)
         monkeypatch.setattr('agent.screenshot.capture_to_base64', _unique_screenshot)
         monkeypatch.setattr('agent.screenshot.capture_window', lambda wid, path: None)
-        monkeypatch.setattr('agent.input.coords.image_to_screen', lambda ix, iy, bounds: (ix, iy))
+        monkeypatch.setattr(rec_mod, 'crop_browser_chrome', lambda b64: (b64, 0))
+        monkeypatch.setattr('agent.input.coords.image_to_screen', lambda ix, iy, bounds, **kw: (ix, iy))
         monkeypatch.setattr('agent.input.mouse.click', lambda x, y, **kw: None)
         monkeypatch.setattr('agent.input.keyboard.type_text', lambda text, speed='medium', accuracy='high': None)
         monkeypatch.setattr('agent.input.keyboard.press_key', lambda key: None)
@@ -1042,7 +1119,8 @@ class TestRecorderIntegration:
         monkeypatch.setattr('agent.browser.navigate', lambda s, url, fast=False: None)
         monkeypatch.setattr('agent.screenshot.capture_to_base64', _unique_screenshot)
         monkeypatch.setattr('agent.screenshot.capture_window', lambda wid, path: None)
-        monkeypatch.setattr('agent.input.coords.image_to_screen', lambda ix, iy, bounds: (ix, iy))
+        monkeypatch.setattr(rec_mod, 'crop_browser_chrome', lambda b64: (b64, 0))
+        monkeypatch.setattr('agent.input.coords.image_to_screen', lambda ix, iy, bounds, **kw: (ix, iy))
         monkeypatch.setattr('agent.input.mouse.click', lambda x, y, **kw: None)
         monkeypatch.setattr('agent.input.keyboard.type_text', lambda text, speed='medium', accuracy='high': None)
         monkeypatch.setattr('agent.input.keyboard.press_key', lambda key: None)
@@ -1129,7 +1207,7 @@ class TestExecuteSigninPage:
 
         class FakeCoords:
             @staticmethod
-            def image_to_screen(ix, iy, bounds):
+            def image_to_screen(ix, iy, bounds, **kw):
                 return (ix, iy)
 
         class FakeKeyboard:
@@ -1172,31 +1250,82 @@ class TestExecuteSigninPage:
         assert result == 'done'
         assert len(steps) == 0
 
-    def test_email_code_returns_need_human(self, monkeypatch, tmp_path) -> None:
+    def test_email_code_single_returns_need_human(self, monkeypatch, tmp_path) -> None:
         recorder, session, ref_dir, modules, *_ = self._setup(monkeypatch, tmp_path)
         steps: list[dict] = []
         response = {
-            'page_type': 'email_code',
+            'page_type': 'email_code_single',
             'email_box': None, 'password_box': None,
-            'button_box': None, 'profile_box': None,
-            'confidence': 0.90, 'reasoning': 'Verification code needed',
+            'button_box': [400, 420, 600, 460], 'profile_box': None,
+            'code_boxes': [{'label': 'code_1', 'box': [380, 320, 570, 360]}],
+            'confidence': 0.90, 'reasoning': 'Single code input',
         }
         result = recorder._execute_signin_page(
-            response, 1.0, session, 'fake_ss', ref_dir, steps, modules,
+            response, 1.0, session, _make_test_png_b64(800, 600),
+            ref_dir, steps, modules,
         )
         assert result == 'need_human'
+        assert len(steps) == 1
+        assert steps[0]['action'] == 'enter_code'
+        assert steps[0]['page_type'] == 'email_code_single'
+        assert len(steps[0]['code_boxes']) == 1
 
-    def test_phone_code_returns_need_human(self, monkeypatch, tmp_path) -> None:
+    def test_email_code_multi_records_boxes(self, monkeypatch, tmp_path) -> None:
         recorder, session, ref_dir, modules, *_ = self._setup(monkeypatch, tmp_path)
         steps: list[dict] = []
         response = {
-            'page_type': 'phone_code',
+            'page_type': 'email_code_multi',
+            'email_box': None, 'password_box': None,
+            'button_box': [400, 420, 600, 460], 'profile_box': None,
+            'code_boxes': [
+                {'label': 'code_1', 'box': [380, 320, 420, 360]},
+                {'label': 'code_2', 'box': [430, 320, 470, 360]},
+                {'label': 'code_3', 'box': [480, 320, 520, 360]},
+                {'label': 'code_4', 'box': [530, 320, 570, 360]},
+            ],
+            'confidence': 0.90, 'reasoning': 'Four digit inputs',
+        }
+        result = recorder._execute_signin_page(
+            response, 1.0, session, _make_test_png_b64(800, 600),
+            ref_dir, steps, modules,
+        )
+        assert result == 'need_human'
+        assert steps[0]['page_type'] == 'email_code_multi'
+        assert len(steps[0]['code_boxes']) == 4
+        assert steps[0]['button_box'] == [400, 420, 600, 460]
+
+    def test_phone_code_single_returns_need_human(self, monkeypatch, tmp_path) -> None:
+        recorder, session, ref_dir, modules, *_ = self._setup(monkeypatch, tmp_path)
+        steps: list[dict] = []
+        response = {
+            'page_type': 'phone_code_single',
             'email_box': None, 'password_box': None,
             'button_box': None, 'profile_box': None,
+            'code_boxes': [{'label': 'code_1', 'box': [380, 320, 570, 360]}],
             'confidence': 0.85, 'reasoning': 'Phone code prompt',
         }
         result = recorder._execute_signin_page(
-            response, 1.0, session, 'fake_ss', ref_dir, steps, modules,
+            response, 1.0, session, _make_test_png_b64(800, 600),
+            ref_dir, steps, modules,
+        )
+        assert result == 'need_human'
+
+    def test_phone_code_multi_returns_need_human(self, monkeypatch, tmp_path) -> None:
+        recorder, session, ref_dir, modules, *_ = self._setup(monkeypatch, tmp_path)
+        steps: list[dict] = []
+        response = {
+            'page_type': 'phone_code_multi',
+            'email_box': None, 'password_box': None,
+            'button_box': None, 'profile_box': None,
+            'code_boxes': [
+                {'label': 'code_1', 'box': [380, 320, 420, 360]},
+                {'label': 'code_2', 'box': [430, 320, 470, 360]},
+            ],
+            'confidence': 0.85, 'reasoning': 'Phone code multi',
+        }
+        result = recorder._execute_signin_page(
+            response, 1.0, session, _make_test_png_b64(800, 600),
+            ref_dir, steps, modules,
         )
         assert result == 'need_human'
 
@@ -1215,14 +1344,56 @@ class TestExecuteSigninPage:
         assert result == 'continue'
         assert len(steps) == 0
 
-    def test_other_returns_need_human(self, monkeypatch, tmp_path) -> None:
+    def test_captcha_returns_need_human(self, monkeypatch, tmp_path) -> None:
         recorder, session, ref_dir, modules, *_ = self._setup(monkeypatch, tmp_path)
         steps: list[dict] = []
         response = {
-            'page_type': 'other',
+            'page_type': 'captcha',
             'email_box': None, 'password_box': None,
             'button_box': None, 'profile_box': None,
+            'code_boxes': None, 'page_description': None, 'actions': None,
             'confidence': 0.70, 'reasoning': 'CAPTCHA detected',
+        }
+        result = recorder._execute_signin_page(
+            response, 1.0, session, 'fake_ss', ref_dir, steps, modules,
+        )
+        assert result == 'need_human'
+
+    def test_unknown_with_actions_returns_continue(self, monkeypatch, tmp_path) -> None:
+        recorder, session, ref_dir, modules, typed, pressed, clicked = self._setup(monkeypatch, tmp_path)
+        monkeypatch.setattr('time.sleep', lambda _: None)
+        steps: list[dict] = []
+        response = {
+            'page_type': 'unknown',
+            'email_box': None, 'password_box': None,
+            'button_box': None, 'profile_box': None,
+            'code_boxes': None,
+            'page_description': 'Cookie consent overlay',
+            'actions': [
+                {'action': 'click', 'target': 'Accept All', 'box': [500, 520, 700, 560]},
+            ],
+            'confidence': 0.85, 'reasoning': 'Cookie banner blocking form',
+        }
+        result = recorder._execute_signin_page(
+            response, 1.0, session, _make_test_png_b64(800, 600),
+            ref_dir, steps, modules,
+        )
+        assert result == 'continue'
+        assert len(clicked) == 1
+        assert len(steps) == 1
+        assert 'dismiss' in steps[0]['target_description']
+
+    def test_unknown_without_actions_returns_need_human(self, monkeypatch, tmp_path) -> None:
+        recorder, session, ref_dir, modules, *_ = self._setup(monkeypatch, tmp_path)
+        steps: list[dict] = []
+        response = {
+            'page_type': 'unknown',
+            'email_box': None, 'password_box': None,
+            'button_box': None, 'profile_box': None,
+            'code_boxes': None,
+            'page_description': 'Unrecognized error page',
+            'actions': [],
+            'confidence': 0.60, 'reasoning': 'Cannot determine what page this is',
         }
         result = recorder._execute_signin_page(
             response, 1.0, session, 'fake_ss', ref_dir, steps, modules,

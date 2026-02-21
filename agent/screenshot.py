@@ -9,12 +9,17 @@ no desktop background bleed.
 from __future__ import annotations
 
 import base64
+import io
 import os
 import subprocess
 import tempfile
 import time
 
 from agent.input import window
+
+# Chrome's tab bar + address bar height in logical (non-Retina) pixels.
+# Physical pixel crop = int(CHROME_HEIGHT_LOGICAL * retina_scale).
+CHROME_HEIGHT_LOGICAL = 88
 
 
 def capture_window(window_id: int, output_path: str | None = None) -> str:
@@ -76,3 +81,36 @@ def capture_to_base64(window_id: int) -> str:
     """Capture a window and return base64-encoded PNG data."""
     raw = capture_to_bytes(window_id)
     return base64.b64encode(raw).decode('ascii')
+
+
+def crop_browser_chrome(screenshot_b64: str) -> tuple[str, int]:
+    """Remove browser chrome (tab bar + address bar) from a screenshot.
+
+    Crops the top N physical pixels corresponding to CHROME_HEIGHT_LOGICAL
+    scaled by the display's Retina factor.
+
+    Args:
+        screenshot_b64: Base64-encoded PNG of the full Chrome window.
+
+    Returns:
+        (cropped_b64, chrome_height_px): cropped base64 PNG and the number
+        of physical pixels that were removed. The caller needs chrome_height_px
+        to convert page-relative VLM coords back to screen coords.
+    """
+    from PIL import Image
+
+    scale = window.get_retina_scale()
+    chrome_px = int(CHROME_HEIGHT_LOGICAL * scale)
+
+    raw = base64.b64decode(screenshot_b64)
+    img = Image.open(io.BytesIO(raw))
+
+    # Guard: don't crop if the image is too short
+    if img.height <= chrome_px:
+        return screenshot_b64, 0
+
+    cropped = img.crop((0, chrome_px, img.width, img.height))
+    buf = io.BytesIO()
+    cropped.save(buf, format='PNG')
+    cropped_b64 = base64.b64encode(buf.getvalue()).decode('ascii')
+    return cropped_b64, chrome_px

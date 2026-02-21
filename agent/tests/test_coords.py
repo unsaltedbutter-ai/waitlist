@@ -25,6 +25,33 @@ class TestImageToScreen:
         assert sx == 200.0  # 100 + 200/2
         assert sy == 200.0  # 50 + 300/2
 
+    def test_chrome_offset_added_to_y(self) -> None:
+        """chrome_offset shifts y by the cropped browser chrome height."""
+        bounds = {'x': 0, 'y': 0, 'width': 1280, 'height': 900}
+        # Without chrome_offset: y = 0 + 100/1.0 = 100
+        sx, sy = image_to_screen(200, 100, bounds, scale_factor=1.0)
+        assert sy == 100.0
+        # With chrome_offset=88: y = 0 + (100 + 88)/1.0 = 188
+        sx2, sy2 = image_to_screen(200, 100, bounds, scale_factor=1.0, chrome_offset=88)
+        assert sx2 == 200.0  # x unchanged
+        assert sy2 == 188.0
+
+    def test_chrome_offset_with_retina(self) -> None:
+        """chrome_offset is in physical pixels, divided by scale."""
+        bounds = {'x': 0, 'y': 0, 'width': 1280, 'height': 900}
+        # chrome_offset=176 physical px on Retina = 88 logical px
+        sx, sy = image_to_screen(0, 0, bounds, scale_factor=2.0, chrome_offset=176)
+        assert sx == 0.0
+        assert sy == 88.0  # 0 + (0 + 176) / 2.0
+
+    def test_chrome_offset_default_zero(self) -> None:
+        """Default chrome_offset=0 preserves backwards compatibility."""
+        bounds = {'x': 100, 'y': 50, 'width': 1280, 'height': 900}
+        sx1, sy1 = image_to_screen(200, 300, bounds, scale_factor=2.0)
+        sx2, sy2 = image_to_screen(200, 300, bounds, scale_factor=2.0, chrome_offset=0)
+        assert sx1 == sx2
+        assert sy1 == sy2
+
     def test_non_retina_1x(self) -> None:
         """Non-Retina: image pixels map 1:1 to screen points."""
         bounds = {'x': 0, 'y': 0, 'width': 1920, 'height': 1080}

@@ -138,7 +138,6 @@ You MUST respond with exactly one JSON object (no markdown fences, no extra text
 
 Rules:
 - bounding_box coordinates are in image pixels (origin top-left)
-- IMPORTANT: The screenshot includes the browser tab bar and address bar at the top (~150 pixels). These are NOT part of the web page. Never target anything in the browser chrome area. Only interact with web page content below the address bar.
 - CRITICAL: When targeting form fields (email, password), the bounding_box MUST cover the actual text INPUT BOX (the rectangular field with a border where you type text, often containing gray placeholder text like "Email or mobile number"). NEVER target heading text, labels, or instructions above the field.
 - For type_text, NEVER include actual credentials. Use semantic descriptions like "the email address" or "the password"
 - Set is_checkpoint to true when a significant page transition is expected (login submitted, page navigated, form submitted)
@@ -153,6 +152,23 @@ Rules:
 # Prompt builders
 # ---------------------------------------------------------------------------
 
+_SIGNIN_EXAMPLES = """\
+
+Examples of correct responses:
+
+Netflix sign-in page with email and password fields, Sign In button:
+{"page_type": "user_pass", "email_box": [440, 280, 840, 320], "password_box": [440, 340, 840, 380], "button_box": [440, 410, 840, 460], "profile_box": null, "code_boxes": null, "page_description": null, "actions": null, "confidence": 0.95, "reasoning": "Two input fields visible: email and password, with Sign In button below"}
+
+Hulu password page with email shown as text, one password field, Log In button:
+{"page_type": "pass_only", "email_box": null, "password_box": [360, 310, 680, 350], "button_box": [360, 380, 680, 420], "profile_box": null, "code_boxes": null, "page_description": null, "actions": null, "confidence": 0.92, "reasoning": "Email displayed as static text, only password input box visible"}
+
+Verification page with four individual code digit boxes and Verify button:
+{"page_type": "email_code_multi", "email_box": null, "password_box": null, "button_box": [400, 420, 600, 460], "profile_box": null, "code_boxes": [{"label": "code_1", "box": [380, 320, 420, 360]}, {"label": "code_2", "box": [430, 320, 470, 360]}, {"label": "code_3", "box": [480, 320, 520, 360]}, {"label": "code_4", "box": [530, 320, 570, 360]}], "page_description": null, "actions": null, "confidence": 0.90, "reasoning": "Four separate digit input boxes in a row, page asks to enter code sent to email"}
+
+Cookie consent banner covering the sign-in form:
+{"page_type": "unknown", "email_box": null, "password_box": null, "button_box": null, "profile_box": null, "code_boxes": null, "page_description": "Cookie consent overlay with Accept and Customize buttons, sign-in form partially visible behind it", "actions": [{"action": "click", "target": "Accept All Cookies button", "box": [500, 520, 700, 560]}], "confidence": 0.85, "reasoning": "Cookie banner is blocking the sign-in form, need to dismiss it first"}"""
+
+
 def _get_hints(service: str) -> dict[str, str]:
     """Get service hints, falling back to defaults for unknown services."""
     return SERVICE_HINTS.get(service.lower(), _DEFAULT_HINTS)
@@ -165,6 +181,9 @@ def build_signin_prompt(service: str) -> str:
     returns bounding boxes for all visible fields in a single call. The
     recorder then executes the full click-type-tab-enter sequence locally
     without additional VLM round-trips.
+
+    14 page types covering sign-in flows, verification codes (single vs
+    multi-input), captchas, and obstacle dismissal (cookie banners, popups).
     """
     hints = _get_hints(service)
     profile_hint = ''
@@ -181,40 +200,49 @@ Context for {service}:
 - Email field is typically labeled: {hints['email_field']}
 - Password field is typically labeled: {hints['password_field']}
 
-IMPORTANT: The screenshot includes the browser tab bar and address bar at the top (~150 pixels). These are NOT part of the web page. Never target anything in the browser chrome area.
-
 Page types (pick exactly one):
-- "user_pass": Both an email/username INPUT BOX and a password INPUT BOX are visible on the page
+- "user_pass": Both an email/username INPUT BOX and a password INPUT BOX are visible
 - "user_only": Only an email/username INPUT BOX is visible (no password field), with a Continue/Next button
 - "pass_only": Only a password INPUT BOX is visible (email may be shown as text but not editable)
 - "button_only": No input fields visible, but a Sign In / Log In / Get Started button is present
 - "profile_select": "Who's watching?" profile picker.{profile_hint}
 - "signed_in": Already signed in (seeing browse page, dashboard, account page, or content)
 - "spinner": Page is loading (spinner, progress bar, or blank/white page after form submission)
-- "email_code": Page asks to enter a verification code sent to email
-- "email_link": Page asks to click a link sent to email (passwordless login)
-- "phone_code": Page asks to enter a code sent to phone
-- "other": CAPTCHA, 2FA authenticator, error page, or something unexpected
+- "email_code_single": Page asks for a verification code sent to email, with ONE text input
+- "email_code_multi": Page asks for a verification code sent to email, with MULTIPLE individual digit inputs
+- "phone_code_single": Page asks for a code sent to phone, with ONE text input
+- "phone_code_multi": Page asks for a code sent to phone, with MULTIPLE individual digit inputs
+- "email_link": Page asks to click a link sent to email (no code input)
+- "captcha": A CAPTCHA challenge (image selection, puzzle, reCAPTCHA)
+- "unknown": None of the above (cookie banner, notification popup, age gate, error, or unrecognized page)
 
 You MUST respond with exactly one JSON object (no markdown fences, no extra text):
 {{
-  "page_type": "user_pass | user_only | pass_only | button_only | profile_select | signed_in | spinner | email_code | email_link | phone_code | other",
+  "page_type": "...",
   "email_box": [x1, y1, x2, y2],
   "password_box": [x1, y1, x2, y2],
   "button_box": [x1, y1, x2, y2],
   "profile_box": [x1, y1, x2, y2],
+  "code_boxes": [{{"label": "code_1", "box": [x1, y1, x2, y2]}}, ...],
+  "page_description": "brief description (unknown state only)",
+  "actions": [
+    {{"action": "click|type|dismiss", "target": "description", "box": [x1, y1, x2, y2]}}
+  ],
   "confidence": 0.0,
-  "reasoning": "brief explanation of what you see and why you chose this page_type"
+  "reasoning": "brief explanation"
 }}
 
 Rules:
-- All bounding box coordinates are in image pixels (origin at top-left)
-- Set a box to null if that element is not visible on the page
-- email_box / password_box MUST target the actual text INPUT BOX (the rectangular field where you type), NOT heading text or labels
-- button_box should target the primary action button (Sign In, Continue, Next, Log In, Get Started)
-- profile_box should target the first/main profile avatar or name
-- For "signed_in", all boxes can be null
-- For "email_code", "email_link", "phone_code", "other": all boxes can be null"""
+- All bounding box coordinates are in image pixels (origin at top-left of the screenshot)
+- Set a field to null if not applicable for this page_type
+- email_box / password_box MUST target the actual text INPUT BOX (rectangular field where you type), NOT heading text or labels
+- button_box: the primary action button (Sign In, Continue, Next, Log In, Get Started, Verify)
+- profile_box: the first/main profile avatar or name
+- code_boxes: list of individual code input fields, ordered left-to-right. Use for email_code_single, email_code_multi, phone_code_single, phone_code_multi only.
+- actions: list of steps to proceed past an obstacle. Use for unknown state only. Each action has "click" (button/link), "type" (text input), or "dismiss" (close popup/overlay).
+- For signed_in, spinner, email_link, captcha: all boxes and actions null
+
+{_SIGNIN_EXAMPLES}"""
 
 
 def build_cancel_prompt(service: str) -> str:

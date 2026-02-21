@@ -84,6 +84,10 @@ def _patch_externals():
             'agent.executor.screenshot.capture_to_base64',
             return_value='FAKE_BASE64_SCREENSHOT',
         ),
+        'crop_browser_chrome': patch(
+            'agent.executor.crop_browser_chrome',
+            return_value=('FAKE_CROPPED_SCREENSHOT', 88),
+        ),
         'capture_window': patch(
             'agent.executor.screenshot.capture_window',
             return_value='/tmp/ub-screenshot-fake.png',

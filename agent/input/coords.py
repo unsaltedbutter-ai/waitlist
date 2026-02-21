@@ -37,20 +37,26 @@ def image_to_screen(
     img_y: float,
     window_bounds: dict,
     scale_factor: float | None = None,
+    chrome_offset: int = 0,
 ) -> tuple[float, float]:
     """
     Convert VLM image-pixel coordinates to screen points.
 
-    img_x, img_y: pixel coordinates in the screenshot image (physical pixels)
+    img_x, img_y: pixel coordinates in the screenshot image (physical pixels).
+        When the screenshot has been cropped (browser chrome removed), these are
+        page-relative. Pass chrome_offset to add the cropped region back.
     window_bounds: {x, y, width, height} of the captured window in screen points
     scale_factor: display scale (auto-detected if None; 2.0 for Retina, 1.0 for non-Retina)
+    chrome_offset: physical pixels cropped from the top of the screenshot (e.g.
+        browser chrome height). Added to img_y before converting to screen points.
+        Defaults to 0 for backwards compatibility.
 
     Returns (screen_x, screen_y) in macOS screen points.
     """
     if scale_factor is None:
         scale_factor = _get_display_scale()
     screen_x = window_bounds['x'] + img_x / scale_factor
-    screen_y = window_bounds['y'] + img_y / scale_factor
+    screen_y = window_bounds['y'] + (img_y + chrome_offset) / scale_factor
     return (screen_x, screen_y)
 
 

@@ -29,6 +29,7 @@ from agent.recording.prompts import (
     build_signin_prompt,
 )
 from agent.recording.vlm_client import VLMClient
+from agent.screenshot import crop_browser_chrome
 
 log = logging.getLogger(__name__)
 
@@ -223,7 +224,8 @@ class PlaybookRecorder:
         return [int(c * scale_factor) for c in bbox]
 
     def _click_bbox(self, bbox, session, screenshot_b64, ref_dir, steps,
-                    target_desc, coords_mod, mouse_mod, is_checkpoint=False):
+                    target_desc, coords_mod, mouse_mod, is_checkpoint=False,
+                    chrome_offset=0):
         """Click inside a bbox: inset, randomize, record step. Returns screen coords."""
         scaled = self._scale_bbox(bbox, 1.0)  # already scaled by caller
 
@@ -240,7 +242,8 @@ class PlaybookRecorder:
         cx = max(safe_x1, min(cx, safe_x2))
         cy = max(safe_y1, min(cy, safe_y2))
 
-        sx, sy = coords_mod.image_to_screen(cx, cy, session.bounds)
+        sx, sy = coords_mod.image_to_screen(cx, cy, session.bounds,
+                                            chrome_offset=chrome_offset)
         print(f'    [debug] bbox={scaled} center=({cx:.0f},{cy:.0f}) '
               f'screen=({sx:.0f},{sy:.0f})')
 
@@ -262,7 +265,8 @@ class PlaybookRecorder:
         print(f'    -> Step {step_num}: click "{target_desc}" bbox={scaled}')
 
     def _execute_signin_page(self, response, scale_factor, session,
-                             screenshot_b64, ref_dir, steps, modules):
+                             screenshot_b64, ref_dir, steps, modules,
+                             chrome_offset=0):
         """Handle a sign-in page classification response.
 
         Executes the full click-type-tab-enter sequence locally based on
@@ -288,6 +292,15 @@ class PlaybookRecorder:
         button_box = scale(response.get('button_box'))
         profile_box = scale(response.get('profile_box'))
 
+        # Scale code_boxes list
+        raw_code_boxes = response.get('code_boxes') or []
+        code_boxes = []
+        for cb in raw_code_boxes:
+            if isinstance(cb, dict) and cb.get('box'):
+                scaled_box = scale(cb['box'])
+                if scaled_box:
+                    code_boxes.append({'label': cb.get('label', ''), 'box': scaled_box})
+
         print(f'{page_type} (confidence: {confidence:.2f})')
         print(f'    Reason: {reasoning}')
         if email_box:
@@ -296,6 +309,8 @@ class PlaybookRecorder:
             print(f'    password_box: {password_box}')
         if button_box:
             print(f'    button_box: {button_box}')
+        if code_boxes:
+            print(f'    code_boxes: {len(code_boxes)} fields')
 
         if page_type == 'signed_in':
             return 'done'
@@ -304,8 +319,55 @@ class PlaybookRecorder:
             print('    Page loading, waiting...')
             return 'continue'
 
-        if page_type in ('email_code', 'email_link', 'phone_code', 'other'):
+        # States that always need human intervention
+        if page_type in ('email_link', 'captcha'):
             return 'need_human'
+
+        # Code entry states: record the boxes for the playbook, then need human for OTP
+        if page_type in ('email_code_single', 'email_code_multi',
+                         'phone_code_single', 'phone_code_multi'):
+            step_num = len(steps)
+            ref_path = ref_dir / f'step_{step_num:02d}.png'
+            self._save_ref_image(screenshot_b64, ref_path)
+            # Record code box locations for playbook
+            step_data: dict = {
+                'action': 'enter_code',
+                'page_type': page_type,
+                'code_boxes': [cb['box'] for cb in code_boxes],
+            }
+            if button_box:
+                step_data['button_box'] = button_box
+            steps.append(step_data)
+            print(f'    -> Step {step_num}: enter_code ({page_type}, {len(code_boxes)} boxes)')
+            return 'need_human'
+
+        # Unknown state: try to auto-recover by executing the VLM's suggested actions
+        if page_type == 'unknown':
+            page_desc = response.get('page_description', '')
+            actions = response.get('actions') or []
+            print(f'    Page description: {page_desc}')
+            if not actions:
+                print('    No recovery actions suggested, needs human')
+                return 'need_human'
+
+            step_num = len(steps)
+            ref_path = ref_dir / f'step_{step_num:02d}.png'
+            self._save_ref_image(screenshot_b64, ref_path)
+
+            for act in actions:
+                act_type = act.get('action', '')
+                target = act.get('target', '')
+                box = scale(act.get('box'))
+                if act_type in ('click', 'dismiss') and box:
+                    self._click_bbox(
+                        box, session, screenshot_b64, ref_dir, steps,
+                        f'dismiss: {target}', coords_mod, mouse,
+                        chrome_offset=chrome_offset,
+                    )
+                    time.sleep(0.5)
+                else:
+                    print(f'    Skipping unknown action: {act_type}')
+            return 'continue'
 
         # Save ref screenshot (reuse the existing capture, no second screenshot)
         step_num = len(steps)
@@ -316,6 +378,7 @@ class PlaybookRecorder:
             self._click_bbox(
                 profile_box, session, screenshot_b64, ref_dir, steps,
                 'first profile', coords_mod, mouse,
+                chrome_offset=chrome_offset,
             )
             return 'continue'
 
@@ -323,6 +386,7 @@ class PlaybookRecorder:
             self._click_bbox(
                 button_box, session, screenshot_b64, ref_dir, steps,
                 'Sign In button', coords_mod, mouse, is_checkpoint=True,
+                chrome_offset=chrome_offset,
             )
             return 'continue'
 
@@ -331,6 +395,7 @@ class PlaybookRecorder:
             self._click_bbox(
                 email_box, session, screenshot_b64, ref_dir, steps,
                 'email input', coords_mod, mouse,
+                chrome_offset=chrome_offset,
             )
             time.sleep(0.3)
             email_val = self.credentials.get('email', '')
@@ -363,6 +428,7 @@ class PlaybookRecorder:
             self._click_bbox(
                 email_box, session, screenshot_b64, ref_dir, steps,
                 'email input', coords_mod, mouse,
+                chrome_offset=chrome_offset,
             )
             time.sleep(0.3)
             email_val = self.credentials.get('email', '')
@@ -383,6 +449,7 @@ class PlaybookRecorder:
             self._click_bbox(
                 password_box, session, screenshot_b64, ref_dir, steps,
                 'password input', coords_mod, mouse,
+                chrome_offset=chrome_offset,
             )
             time.sleep(0.3)
             pass_val = self.credentials.get('pass', '')
@@ -455,9 +522,10 @@ class PlaybookRecorder:
             # Wait for page to settle
             time.sleep(self.settle_delay)
 
-            # Capture screenshot
+            # Capture screenshot and crop browser chrome
             browser.get_session_window(session)
-            screenshot_b64 = ss.capture_to_base64(session.window_id)
+            raw_screenshot_b64 = ss.capture_to_base64(session.window_id)
+            screenshot_b64, chrome_height_px = crop_browser_chrome(raw_screenshot_b64)
 
             # Ask VLM
             print(f'  [{self._current_label}] Analyzing screenshot...', end=' ', flush=True)
@@ -471,7 +539,7 @@ class PlaybookRecorder:
 
             # Sign-in phase: page classification (different response schema)
             if self._current_label == 'sign-in':
-                page_type = response.get('page_type', 'other')
+                page_type = response.get('page_type', 'unknown')
 
                 # Stuck detection using page_type
                 if stuck.check(page_type, page_type, screenshot_b64):
@@ -487,6 +555,7 @@ class PlaybookRecorder:
                 result = self._execute_signin_page(
                     response, scale_factor, session,
                     screenshot_b64, ref_dir, steps, modules,
+                    chrome_offset=chrome_height_px,
                 )
 
                 if result == 'done':
@@ -611,7 +680,9 @@ class PlaybookRecorder:
                 # Clamp inside the inset box
                 cx = max(safe_x1, min(cx, safe_x2))
                 cy = max(safe_y1, min(cy, safe_y2))
-                sx, sy = coords.image_to_screen(cx, cy, session.bounds)
+                sx, sy = coords.image_to_screen(
+                    cx, cy, session.bounds, chrome_offset=chrome_height_px,
+                )
                 print(f'    [debug] bbox={scaled_bbox} '
                       f'center=({cx:.0f},{cy:.0f}) scale={scale_factor:.2f} '
                       f'screen=({sx:.0f},{sy:.0f}) bounds={session.bounds}')

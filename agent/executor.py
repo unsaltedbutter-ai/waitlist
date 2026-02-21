@@ -23,6 +23,7 @@ from agent.config import (
 )
 from agent.inference import FindElementResult, InferenceClient
 from agent.input import coords, keyboard, mouse, scroll, window
+from agent.screenshot import crop_browser_chrome
 from agent.profile import NORMAL, HumanProfile
 from agent.playbook import (
     ExecutionResult,
@@ -275,7 +276,7 @@ class PlaybookExecutor:
         self, step: PlaybookStep, session: BrowserSession, ctx: JobContext,
     ) -> int:
         """Screenshot, VLM find_element (bounding box), pick random point, click. 1 VLM call."""
-        screen_x, screen_y, _elem = self._find_and_convert(step, session, ctx)
+        screen_x, screen_y, _elem, _chrome_px = self._find_and_convert(step, session, ctx)
         mouse.click(int(screen_x), int(screen_y), fast=self._profile.mouse_fast)
         return 1
 
@@ -302,7 +303,7 @@ class PlaybookExecutor:
 
         if step.ref_region or step.target_description:
             # Mode A: find the field, click it, clear it
-            screen_x, screen_y, _elem = self._find_and_convert(step, session, ctx)
+            screen_x, screen_y, _elem, _chrome_px = self._find_and_convert(step, session, ctx)
             inference_calls = 1
 
             mouse.click(int(screen_x), int(screen_y), fast=self._profile.mouse_fast)
@@ -347,7 +348,7 @@ class PlaybookExecutor:
                 break
 
             # Find and click the cancel/continue button
-            screen_x, screen_y, _elem = self._find_and_convert(step, session, ctx)
+            screen_x, screen_y, _elem, _chrome_px = self._find_and_convert(step, session, ctx)
             inference_calls += 1
             mouse.click(int(screen_x), int(screen_y), fast=self._profile.mouse_fast)
 
@@ -363,7 +364,8 @@ class PlaybookExecutor:
         """Checkpoint-only: verify that the flow completed successfully. 1 VLM call."""
         prompt = step.checkpoint_prompt or f'Has the {ctx.flow} been completed successfully?'
         shot_b64 = screenshot.capture_to_base64(session.window_id)
-        result = self._inference.checkpoint(shot_b64, prompt)
+        cropped_b64, _chrome_px = crop_browser_chrome(shot_b64)
+        result = self._inference.checkpoint(cropped_b64, prompt)
         self._total_inference_calls += 1
 
         if not result.on_track:
@@ -385,7 +387,7 @@ class PlaybookExecutor:
             log.debug('wander: random_dwell coin flip says skip')
             return 0
 
-        screen_x, screen_y, elem = self._find_and_convert(step, session, ctx)
+        screen_x, screen_y, elem, chrome_px = self._find_and_convert(step, session, ctx)
 
         n = random.randint(1, step.max_points)
         # First point is the one _find_and_convert already picked
@@ -397,7 +399,10 @@ class PlaybookExecutor:
             browser.get_session_window(session)
             for img_x, img_y in extra_img_points:
                 time.sleep(random.uniform(0.15, 0.6))
-                sx, sy = coords.image_to_screen(img_x, img_y, session.bounds)
+                sx, sy = coords.image_to_screen(
+                    img_x, img_y, session.bounds,
+                    chrome_offset=chrome_px,
+                )
                 mouse.move_to(int(sx), int(sy), fast=self._profile.mouse_fast)
 
         return 1
@@ -449,19 +454,21 @@ class PlaybookExecutor:
 
     def _find_and_convert(
         self, step: PlaybookStep, session: BrowserSession, ctx: JobContext,
-    ) -> tuple[float, float, 'FindElementResult']:
+    ) -> tuple[float, float, 'FindElementResult', int]:
         """
-        Screenshot, ask inference to find element (bounding box),
-        pick random point within box, convert to screen coords.
+        Screenshot, crop browser chrome, ask inference to find element
+        (bounding box), pick random point within box, convert to screen coords.
 
-        Returns (screen_x, screen_y, FindElementResult) so callers
-        can generate additional points from the same bounding box.
+        Returns (screen_x, screen_y, FindElementResult, chrome_height_px) so
+        callers can generate additional points from the same bounding box and
+        apply the same chrome offset.
         """
         shot_b64 = screenshot.capture_to_base64(session.window_id)
+        cropped_b64, chrome_height_px = crop_browser_chrome(shot_b64)
 
         context = f'Service: {ctx.service}, Flow: {ctx.flow}, Action: {step.action}'
         result = self._inference.find_element(
-            shot_b64, step.target_description, context,
+            cropped_b64, step.target_description, context,
             ref_region=step.ref_region,
         )
         self._total_inference_calls += 1
@@ -476,19 +483,21 @@ class PlaybookExecutor:
             img_x, img_y, result.confidence,
         )
 
-        # Convert image-pixel coords to screen points
+        # Convert page-relative image coords to screen points
         browser.get_session_window(session)
         screen_x, screen_y = coords.image_to_screen(
             img_x, img_y, session.bounds,
+            chrome_offset=chrome_height_px,
         )
-        return screen_x, screen_y, result
+        return screen_x, screen_y, result, chrome_height_px
 
     def _run_checkpoint(
         self, idx: int, step: PlaybookStep, session: BrowserSession,
     ) -> bool:
         """Take screenshot, ask VLM if page state is correct. Returns True if on track."""
         shot_b64 = screenshot.capture_to_base64(session.window_id)
-        result = self._inference.checkpoint(shot_b64, step.checkpoint_prompt)
+        cropped_b64, _chrome_px = crop_browser_chrome(shot_b64)
+        result = self._inference.checkpoint(cropped_b64, step.checkpoint_prompt)
         self._total_inference_calls += 1
 
         log.info(
