@@ -21,6 +21,17 @@ from agent.playbook import (
     parse_value_and_keys,
 )
 
+try:
+    import unsaltedbutter_prompts  # noqa: F401
+    _HAS_PRIVATE_PROMPTS = True
+except ImportError:
+    _HAS_PRIVATE_PROMPTS = False
+
+_skip_without_private = pytest.mark.skipif(
+    not _HAS_PRIVATE_PROMPTS,
+    reason='unsaltedbutter-prompts not installed (real playbooks not available)',
+)
+
 
 # ---------------------------------------------------------------------------
 # PlaybookStep.from_dict / to_dict
@@ -303,6 +314,7 @@ class TestPlaybookLoadAndSave:
         d = pb.to_dict()
         assert 'tier' not in d
 
+    @_skip_without_private
     def test_load_real_netflix_playbook(self) -> None:
         """Load the actual netflix_cancel.json from the playbooks directory."""
         pb = Playbook.load('netflix', 'cancel')
@@ -324,6 +336,7 @@ class TestPlaybookListAll:
         result = Playbook.list_all()
         assert isinstance(result, list)
 
+    @_skip_without_private
     def test_netflix_cancel_in_list(self) -> None:
         """The shipped netflix_cancel.json should appear."""
         items = Playbook.list_all()
@@ -450,6 +463,7 @@ class TestPlaybookLoadRandom:
         pb = Playbook.load('hulu', 'resume', tier='premium')
         assert pb.tier == 'premium'
 
+    @_skip_without_private
     def test_load_real_netflix_still_works(self) -> None:
         """Existing netflix_cancel.json loads via the new random-choice path."""
         pb = Playbook.load('netflix', 'cancel')

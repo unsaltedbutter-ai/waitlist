@@ -10,7 +10,23 @@ INFERENCE_URL = os.getenv('STUDIO_URL', 'http://192.168.1.100:8420')
 AGENT_PORT = int(os.getenv('AGENT_PORT', '8421'))
 
 # --- Paths ---
-PLAYBOOK_DIR = Path(__file__).parent / 'playbooks'
+
+def _resolve_playbook_dir() -> Path:
+    """Resolve playbook directory: env var > private package > local examples."""
+    env = os.environ.get('PLAYBOOK_DIR')
+    if env:
+        p = Path(env)
+        if p.is_dir():
+            return p
+    try:
+        from unsaltedbutter_prompts.playbooks import get_playbook_dir  # type: ignore[import-untyped]
+        return get_playbook_dir()
+    except ImportError:
+        pass
+    return Path(__file__).parent / 'playbooks'
+
+
+PLAYBOOK_DIR = _resolve_playbook_dir()
 PLAYBOOK_REF_DIR = PLAYBOOK_DIR / 'ref'
 SCREENSHOT_DIR = Path('/tmp/ub-screenshots')
 

@@ -1,0 +1,78 @@
+{
+  "service": "example",
+  "flow": "cancel",
+  "version": 1,
+  "last_validated": null,
+  "notes": "Example playbook showing the schema. Not a real service. Install unsaltedbutter-prompts for real playbooks.",
+  "steps": [
+    {
+      "action": "navigate",
+      "url": "https://www.example.com/login",
+      "expected_title_contains": "Example"
+    },
+    {
+      "action": "wait",
+      "wait_after_sec": [2, 5]
+    },
+    {
+      "action": "type_text",
+      "target_description": "Email input field",
+      "value": "{email}"
+    },
+    {
+      "action": "type_text",
+      "target_description": "Password input field",
+      "value": "{pass}"
+    },
+    {
+      "action": "wait",
+      "wait_after_sec": [0.5, 1.5]
+    },
+    {
+      "action": "click",
+      "target_description": "Sign In button",
+      "checkpoint": true,
+      "checkpoint_prompt": "Am I logged in? Do I see the main page?"
+    },
+    {
+      "action": "wait",
+      "wait_after_sec": [3, 6]
+    },
+    {
+      "action": "navigate",
+      "url": "https://www.example.com/cancel"
+    },
+    {
+      "action": "wait",
+      "wait_after_sec": [2, 4]
+    },
+    {
+      "action": "handle_retention",
+      "target_description": "Click 'Continue Cancellation', ignore retention offers",
+      "checkpoint": true,
+      "checkpoint_prompt": "Is this a cancellation confirmation or a retention offer?",
+      "may_repeat": true,
+      "max_repeats": 5
+    },
+    {
+      "action": "wait",
+      "wait_after_sec": [2, 4]
+    },
+    {
+      "action": "click",
+      "target_description": "Final 'Finish Cancellation' button",
+      "checkpoint": true,
+      "checkpoint_prompt": "Is the cancellation confirmed?"
+    },
+    {
+      "action": "wait",
+      "wait_after_sec": [3, 6]
+    },
+    {
+      "action": "verify_success",
+      "target_description": "Cancellation confirmation message",
+      "checkpoint": true,
+      "checkpoint_prompt": "Has the cancellation been confirmed?"
+    }
+  ]
+}

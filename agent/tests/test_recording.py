@@ -33,6 +33,17 @@ from agent.recording.prompts import (
     build_resume_prompt,
     build_signin_prompt,
 )
+
+try:
+    import unsaltedbutter_prompts  # noqa: F401
+    _HAS_PRIVATE_PROMPTS = True
+except ImportError:
+    _HAS_PRIVATE_PROMPTS = False
+
+_skip_without_private = pytest.mark.skipif(
+    not _HAS_PRIVATE_PROMPTS,
+    reason='unsaltedbutter-prompts not installed (service-specific content)',
+)
 from agent.recording.recorder import (
     PlaybookRecorder,
     _StuckDetector,
@@ -116,6 +127,7 @@ class TestBuildSigninPrompt:
         assert '"page_description"' in prompt
         assert '"actions"' in prompt
 
+    @_skip_without_private
     def test_uses_service_hints(self) -> None:
         prompt = build_signin_prompt('netflix')
         assert 'Sign In' in prompt
@@ -135,6 +147,7 @@ class TestBuildSigninPrompt:
         assert '"captcha"' in prompt
         assert '"unknown"' in prompt
 
+    @_skip_without_private
     def test_contains_few_shot_examples(self) -> None:
         prompt = build_signin_prompt('netflix')
         assert 'Examples of correct responses' in prompt
@@ -158,6 +171,7 @@ class TestBuildCancelPrompt:
         assert 'cancel' in prompt.lower()
         assert 'retention' in prompt.lower()
 
+    @_skip_without_private
     def test_contains_service_specific_urls(self) -> None:
         prompt = build_cancel_prompt('netflix')
         assert 'cancelplan' in prompt

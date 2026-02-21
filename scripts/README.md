@@ -849,3 +849,60 @@ With active customers, updates require coordination:
    - For BTCPay/LND: Docker stack can be rolled back by checking out the previous btcpayserver-docker version
    - For Next.js: Redeploy the previous git commit with `deploy.sh`
    - For Node.js: `sudo n install <previous-version>` and rebuild
+
+---
+
+## Private Prompts Package
+
+Service-specific VLM prompts, recording decision trees, and playbook JSON files are extracted into a separate private pip package (`unsaltedbutter-prompts`). The public repo ships with generic stubs that have the correct interface but no real service content.
+
+### What's in the Private Package
+
+| Module | Contents |
+|--------|----------|
+| `unsaltedbutter_prompts.inference` | VLM system prompts (find_element, checkpoint, infer_action), password guard |
+| `unsaltedbutter_prompts.recording` | Recording prompts (sign-in, cancel, resume), SERVICE_HINTS dict |
+| `unsaltedbutter_prompts.playbooks` | All service playbook JSON files, `get_playbook_dir()` helper |
+
+### How It Works
+
+The public repo's `inference/prompts.py` and `agent/recording/prompts.py` are thin shims:
+
+```python
+try:
+    from unsaltedbutter_prompts.inference import (
+        FIND_ELEMENT_SYSTEM, build_find_element_prompt, ...
+    )
+except ImportError:
+    # Generic stubs with correct interface
+    FIND_ELEMENT_SYSTEM = "You are a visual UI element locator. ..."
+    def build_find_element_prompt(description, context=""): ...
+```
+
+Playbook resolution in `agent/config.py` follows this priority:
+1. `PLAYBOOK_DIR` environment variable (if set and directory exists)
+2. `unsaltedbutter_prompts.playbooks.get_playbook_dir()` (if package installed)
+3. `agent/playbooks/` (local directory with example stubs)
+
+### Installation (Development)
+
+```bash
+# Clone the private repo
+git clone git@github.unsaltedbutter:unsaltedbutter-ai/prompts.git ../unsaltedbutter-prompts
+
+# Install as editable in each component's venv
+cd agent && source venv/bin/activate && pip install -e ../../unsaltedbutter-prompts
+cd inference && source venv/bin/activate && pip install -e ../../unsaltedbutter-prompts
+```
+
+### Verification
+
+```bash
+# With private package installed: tests exercise real prompts
+cd inference && python -m pytest tests/test_prompts.py
+cd agent && python -m pytest tests/test_recording.py
+
+# Without private package: stubs load, tests still pass
+pip uninstall unsaltedbutter-prompts
+python -c "from inference.prompts import FIND_ELEMENT_SYSTEM; print(FIND_ELEMENT_SYSTEM[:50])"
+```
