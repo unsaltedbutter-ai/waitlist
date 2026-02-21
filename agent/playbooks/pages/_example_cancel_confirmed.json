@@ -1,0 +1,8 @@
+{
+  "page_id": "example_cancel_confirmed",
+  "service": "example",
+  "flows": ["cancel"],
+  "actions": [],
+  "terminal": true,
+  "notes": "Example cancel confirmation page (terminal, no actions needed)"
+}

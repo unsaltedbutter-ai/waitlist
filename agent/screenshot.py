@@ -83,6 +83,14 @@ def capture_to_base64(window_id: int) -> str:
     return base64.b64encode(raw).decode('ascii')
 
 
+def b64_to_image(b64: str) -> 'Image.Image':
+    """Decode a base64-encoded PNG into a PIL Image."""
+    from PIL import Image
+
+    raw = base64.b64decode(b64)
+    return Image.open(io.BytesIO(raw))
+
+
 def crop_browser_chrome(screenshot_b64: str) -> tuple[str, int]:
     """Remove browser chrome (tab bar + address bar) from a screenshot.
 

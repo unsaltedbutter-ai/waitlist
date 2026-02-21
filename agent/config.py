@@ -30,6 +30,53 @@ PLAYBOOK_DIR = _resolve_playbook_dir()
 PLAYBOOK_REF_DIR = PLAYBOOK_DIR / 'ref'
 SCREENSHOT_DIR = Path('/tmp/ub-screenshots')
 
+# --- Page-based playbook paths ---
+
+def _resolve_pages_dir() -> Path:
+    """Resolve page playbooks directory: env var > private package > local examples."""
+    env = os.environ.get('PAGE_PLAYBOOKS_DIR')
+    if env:
+        p = Path(env)
+        if p.is_dir():
+            return p
+    try:
+        from unsaltedbutter_prompts.playbooks import get_pages_dir  # type: ignore[import-untyped]
+        return get_pages_dir()
+    except (ImportError, AttributeError):
+        pass
+    return Path(__file__).parent / 'playbooks' / 'pages'
+
+
+def _resolve_flows_dir() -> Path:
+    """Resolve flow configs directory: env var > private package > local examples."""
+    env = os.environ.get('FLOWS_DIR')
+    if env:
+        p = Path(env)
+        if p.is_dir():
+            return p
+    try:
+        from unsaltedbutter_prompts.playbooks import get_flows_dir  # type: ignore[import-untyped]
+        return get_flows_dir()
+    except (ImportError, AttributeError):
+        pass
+    return Path(__file__).parent / 'playbooks' / 'flows'
+
+
+PAGES_DIR = _resolve_pages_dir()
+FLOWS_DIR = _resolve_flows_dir()
+PAGE_HASH_DB = Path(os.getenv(
+    'PAGE_HASH_DB',
+    str(Path.home() / '.unsaltedbutter' / 'page_hashes.db'),
+))
+REF_SCREENSHOTS_DIR = Path(os.getenv(
+    'REF_SCREENSHOTS_DIR',
+    str(Path.home() / '.unsaltedbutter' / 'ref_screenshots'),
+))
+REVIEW_QUEUE_DIR = Path(os.getenv(
+    'REVIEW_QUEUE_DIR',
+    str(Path.home() / '.unsaltedbutter' / 'review_queue'),
+))
+
 # --- Timeouts (seconds) ---
 STEP_TIMEOUT = 60.0
 TOTAL_EXECUTION_TIMEOUT = 300.0

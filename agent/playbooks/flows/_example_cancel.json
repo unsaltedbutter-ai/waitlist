@@ -1,0 +1,7 @@
+{
+  "service": "example",
+  "flow": "cancel",
+  "start_url": "https://www.example.com/login",
+  "max_pages": 15,
+  "version": 1
+}
