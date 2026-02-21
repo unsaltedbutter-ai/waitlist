@@ -862,6 +862,117 @@ async def test_get_active_job_for_user_snoozed(deps):
 
 
 # ------------------------------------------------------------------
+# reconcile_cancelled_jobs
+# ------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_reconcile_updates_local_status(deps):
+    """Reconcile updates a non-terminal local job to the VPS terminal status."""
+    jm = deps["jm"]
+    db = deps["db"]
+
+    await db.upsert_job(_make_job(status="outreach_sent"))
+
+    count = await jm.reconcile_cancelled_jobs([
+        {"id": "job-1", "status": "user_skip"},
+    ])
+
+    assert count == 1
+    local_job = await db.get_job("job-1")
+    assert local_job["status"] == "user_skip"
+
+
+@pytest.mark.asyncio
+async def test_reconcile_cancels_timers(deps):
+    """Reconcile cancels all timer types for the job."""
+    jm = deps["jm"]
+    db = deps["db"]
+    timers = deps["timers"]
+
+    await db.upsert_job(_make_job(status="outreach_sent"))
+    await timers.schedule_delay(OUTREACH, "job-1", 172800)
+    await timers.schedule_delay(IMPLIED_SKIP, "job-1", 172800)
+
+    await jm.reconcile_cancelled_jobs([
+        {"id": "job-1", "status": "user_skip"},
+    ])
+
+    # All timers should be gone
+    cursor = await db._db.execute(
+        "SELECT * FROM timers WHERE target_id = ? AND fired = 0",
+        ("job-1",),
+    )
+    rows = await cursor.fetchall()
+    assert len(rows) == 0
+
+
+@pytest.mark.asyncio
+async def test_reconcile_deletes_linked_session(deps):
+    """Reconcile deletes a session linked to the reconciled job."""
+    jm = deps["jm"]
+    db = deps["db"]
+
+    await db.upsert_job(_make_job(status="active"))
+    await db.upsert_session("npub1alice", "AWAITING_OTP", job_id="job-1")
+
+    await jm.reconcile_cancelled_jobs([
+        {"id": "job-1", "status": "failed"},
+    ])
+
+    session = await db.get_session("npub1alice")
+    assert session is None
+
+
+@pytest.mark.asyncio
+async def test_reconcile_removes_from_dispatch_queue_and_active(deps):
+    """Reconcile removes the job from dispatch queue and active agent jobs."""
+    jm = deps["jm"]
+    db = deps["db"]
+
+    await db.upsert_job(_make_job(status="dispatched"))
+    jm._dispatch_queue = ["job-1", "job-2"]
+    jm._active_agent_jobs = {"job-1"}
+
+    await jm.reconcile_cancelled_jobs([
+        {"id": "job-1", "status": "user_skip"},
+    ])
+
+    assert "job-1" not in jm._dispatch_queue
+    assert "job-1" not in jm._active_agent_jobs
+
+
+@pytest.mark.asyncio
+async def test_reconcile_skips_already_terminal(deps):
+    """Reconcile skips jobs that are already terminal locally."""
+    jm = deps["jm"]
+    db = deps["db"]
+
+    await db.upsert_job(_make_job(status="completed_paid"))
+
+    count = await jm.reconcile_cancelled_jobs([
+        {"id": "job-1", "status": "user_skip"},
+    ])
+
+    assert count == 0
+    # Status unchanged
+    local_job = await db.get_job("job-1")
+    assert local_job["status"] == "completed_paid"
+
+
+@pytest.mark.asyncio
+async def test_reconcile_skips_unknown_jobs(deps):
+    """Reconcile skips job IDs not in the local DB."""
+    jm = deps["jm"]
+
+    count = await jm.reconcile_cancelled_jobs([
+        {"id": "nonexistent", "status": "user_skip"},
+    ])
+
+    assert count == 0
+
+
+# ------------------------------------------------------------------
 # cleanup_terminal_jobs
 # ------------------------------------------------------------------
 

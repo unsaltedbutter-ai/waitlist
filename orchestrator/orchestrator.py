@@ -87,14 +87,30 @@ async def _heartbeat_loop(
     *,
     version: str = "unknown",
     start_monotonic: float = 0.0,
+    db: Database | None = None,
+    job_manager: JobManager | None = None,
 ) -> None:
-    """Send VPS heartbeats periodically."""
+    """Send VPS heartbeats periodically. Reconciles cancelled jobs if db/job_manager provided."""
     while not shutdown.is_set():
         try:
             uptime_s = int(time.monotonic() - start_monotonic)
-            await api.heartbeat(
-                payload={"version": version, "uptime_s": uptime_s}
+
+            # Collect non-terminal job IDs for sync
+            job_ids: list[str] | None = None
+            if db is not None:
+                job_ids = await db.get_non_terminal_job_ids()
+
+            result = await api.heartbeat(
+                payload={"version": version, "uptime_s": uptime_s},
+                job_ids=job_ids,
             )
+
+            # Reconcile cancelled jobs from VPS response
+            cancelled = result.get("cancelled_jobs", [])
+            if cancelled and job_manager is not None:
+                count = await job_manager.reconcile_cancelled_jobs(cancelled)
+                if count > 0:
+                    log.info("[heartbeat] Reconciled %d terminal job(s)", count)
         except Exception:
             log.exception("[heartbeat] VPS heartbeat failed")
 
@@ -314,6 +330,8 @@ async def run(config: Config) -> None:
                 shutdown,
                 version=GIT_HASH,
                 start_monotonic=start_monotonic,
+                db=db,
+                job_manager=job_manager,
             ),
             name="heartbeat",
         ),

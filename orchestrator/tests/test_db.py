@@ -172,6 +172,33 @@ async def test_update_job_status_allows_all_whitelisted_columns(db: Database):
 
 
 @pytest.mark.asyncio
+async def test_get_non_terminal_job_ids_returns_active_jobs(db: Database):
+    await db.upsert_job(_make_job("j-active", status="active"))
+    await db.upsert_job(_make_job("j-dispatched", status="dispatched"))
+    await db.upsert_job(_make_job("j-outreach", status="outreach_sent"))
+    await db.upsert_job(_make_job("j-paid", status="completed_paid"))
+    await db.upsert_job(_make_job("j-failed", status="failed"))
+
+    ids = await db.get_non_terminal_job_ids()
+    assert set(ids) == {"j-active", "j-dispatched", "j-outreach"}
+
+
+@pytest.mark.asyncio
+async def test_get_non_terminal_job_ids_empty_when_all_terminal(db: Database):
+    await db.upsert_job(_make_job("j-paid", status="completed_paid"))
+    await db.upsert_job(_make_job("j-skip", status="user_skip"))
+
+    ids = await db.get_non_terminal_job_ids()
+    assert ids == []
+
+
+@pytest.mark.asyncio
+async def test_get_non_terminal_job_ids_empty_db(db: Database):
+    ids = await db.get_non_terminal_job_ids()
+    assert ids == []
+
+
+@pytest.mark.asyncio
 async def test_delete_terminal_jobs(db: Database):
     await db.upsert_job(_make_job("j-active", status="active"))
     await db.upsert_job(_make_job("j-dispatched", status="dispatched"))

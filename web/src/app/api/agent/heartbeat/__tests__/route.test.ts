@@ -112,4 +112,112 @@ describe("POST /api/agent/heartbeat", () => {
     const data = await res.json();
     expect(data.error).toMatch(/Internal server error/);
   });
+
+  // -- job_ids sync tests --
+
+  it("returns cancelled_jobs as empty array when no job_ids sent", async () => {
+    vi.mocked(query).mockResolvedValueOnce(mockQueryResult([]));
+
+    const req = makeRequest({ component: "orchestrator" });
+    const res = await POST(req as any, { params: Promise.resolve({}) });
+
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data.cancelled_jobs).toEqual([]);
+  });
+
+  it("returns cancelled_jobs for terminal job_ids", async () => {
+    // Heartbeat upsert
+    vi.mocked(query).mockResolvedValueOnce(mockQueryResult([]));
+    // Job sync query
+    vi.mocked(query).mockResolvedValueOnce(
+      mockQueryResult([
+        { id: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee", status: "user_skip" },
+      ])
+    );
+
+    const req = makeRequest({
+      component: "orchestrator",
+      job_ids: [
+        "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+        "11111111-2222-3333-4444-555555555555",
+      ],
+    });
+    const res = await POST(req as any, { params: Promise.resolve({}) });
+
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data.cancelled_jobs).toHaveLength(1);
+    expect(data.cancelled_jobs[0].id).toBe("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee");
+    expect(data.cancelled_jobs[0].status).toBe("user_skip");
+
+    // Verify sync query was called
+    expect(vi.mocked(query)).toHaveBeenCalledTimes(2);
+    const [sql] = vi.mocked(query).mock.calls[1];
+    expect(sql).toContain("SELECT id, status FROM jobs");
+  });
+
+  it("returns empty cancelled_jobs for empty job_ids array", async () => {
+    vi.mocked(query).mockResolvedValueOnce(mockQueryResult([]));
+
+    const req = makeRequest({
+      component: "orchestrator",
+      job_ids: [],
+    });
+    const res = await POST(req as any, { params: Promise.resolve({}) });
+
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data.cancelled_jobs).toEqual([]);
+    // Only heartbeat upsert query, no sync query
+    expect(vi.mocked(query)).toHaveBeenCalledTimes(1);
+  });
+
+  it("skips sync query for invalid job_ids (non-UUID)", async () => {
+    vi.mocked(query).mockResolvedValueOnce(mockQueryResult([]));
+
+    const req = makeRequest({
+      component: "orchestrator",
+      job_ids: ["not-a-uuid", "also-bad"],
+    });
+    const res = await POST(req as any, { params: Promise.resolve({}) });
+
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data.cancelled_jobs).toEqual([]);
+    // Only heartbeat upsert, no sync query
+    expect(vi.mocked(query)).toHaveBeenCalledTimes(1);
+  });
+
+  it("returns cancelled_jobs empty when all job_ids are non-terminal", async () => {
+    // Heartbeat upsert
+    vi.mocked(query).mockResolvedValueOnce(mockQueryResult([]));
+    // Sync query: no terminal matches
+    vi.mocked(query).mockResolvedValueOnce(mockQueryResult([]));
+
+    const req = makeRequest({
+      component: "orchestrator",
+      job_ids: ["aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"],
+    });
+    const res = await POST(req as any, { params: Promise.resolve({}) });
+
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data.cancelled_jobs).toEqual([]);
+  });
+
+  it("ignores job_ids when not an array", async () => {
+    vi.mocked(query).mockResolvedValueOnce(mockQueryResult([]));
+
+    const req = makeRequest({
+      component: "orchestrator",
+      job_ids: "not-an-array",
+    });
+    const res = await POST(req as any, { params: Promise.resolve({}) });
+
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data.cancelled_jobs).toEqual([]);
+    expect(vi.mocked(query)).toHaveBeenCalledTimes(1);
+  });
 });

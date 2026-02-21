@@ -2,20 +2,54 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { authFetch } from "@/lib/hooks/use-auth";
+import { getJobStatusConfig } from "@/lib/job-status";
 import {
   Metrics,
   SectionHeader,
+  formatDate,
   thClass,
   tdClass,
   tdMuted,
   cacheColor,
 } from "../_components";
 
+// Statuses where the operator can cancel the job
+const CANCELLABLE = new Set(["pending", "dispatched", "outreach_sent", "snoozed"]);
+// Statuses where the job is inflight (no action available)
+const INFLIGHT = new Set(["active", "awaiting_otp"]);
+
+interface LookupUser {
+  id: string;
+  nostr_npub: string;
+  debt_sats: number;
+}
+
+interface LookupJob {
+  id: string;
+  service_id: string;
+  action: string;
+  trigger: string;
+  status: string;
+  status_updated_at: string;
+  billing_date: string | null;
+  access_end_date: string | null;
+  amount_sats: number | null;
+  created_at: string;
+}
+
 export default function JobsPage() {
   const [metrics, setMetrics] = useState<Metrics | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [perfWindow, setPerfWindow] = useState<"7d" | "30d">("7d");
+
+  // Npub lookup state
+  const [npubInput, setNpubInput] = useState("");
+  const [lookupUser, setLookupUser] = useState<LookupUser | null>(null);
+  const [lookupJobs, setLookupJobs] = useState<LookupJob[]>([]);
+  const [lookupLoading, setLookupLoading] = useState(false);
+  const [lookupError, setLookupError] = useState("");
+  const [cancellingId, setCancellingId] = useState<string | null>(null);
 
   const fetchData = useCallback(async () => {
     setLoading(true);
@@ -42,6 +76,59 @@ export default function JobsPage() {
     fetchData();
   }, [fetchData]);
 
+  const searchNpub = async () => {
+    const trimmed = npubInput.trim();
+    if (!trimmed) return;
+
+    setLookupLoading(true);
+    setLookupError("");
+    setLookupUser(null);
+    setLookupJobs([]);
+
+    try {
+      const res = await authFetch(
+        `/api/operator/jobs/by-npub?npub=${encodeURIComponent(trimmed)}`
+      );
+      if (res.status === 404) {
+        setLookupError("User not found.");
+        return;
+      }
+      if (res.status === 400) {
+        const data = await res.json();
+        setLookupError(data.error || "Invalid npub.");
+        return;
+      }
+      if (!res.ok) {
+        setLookupError("Search failed.");
+        return;
+      }
+      const data = await res.json();
+      setLookupUser(data.user);
+      setLookupJobs(data.jobs);
+    } catch {
+      setLookupError("Search failed.");
+    } finally {
+      setLookupLoading(false);
+    }
+  };
+
+  const cancelJob = async (jobId: string) => {
+    setCancellingId(jobId);
+    try {
+      const res = await authFetch(`/api/operator/jobs/${jobId}/force-status`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status: "user_skip", reason: "Operator cancelled" }),
+      });
+      if (res.ok) {
+        // Refetch the lookup results
+        await searchNpub();
+      }
+    } finally {
+      setCancellingId(null);
+    }
+  };
+
   if (error === "Access denied.") {
     return <p className="text-red-400 text-sm">403 -- Not authorized.</p>;
   }
@@ -55,6 +142,109 @@ export default function JobsPage() {
 
   return (
     <div className="space-y-8">
+      {/* Npub Job Lookup */}
+      <section>
+        <SectionHeader>Job Lookup by Npub</SectionHeader>
+        <div className="flex gap-2 mb-4">
+          <input
+            type="text"
+            value={npubInput}
+            onChange={(e) => setNpubInput(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && searchNpub()}
+            placeholder="npub1... or hex pubkey"
+            className="flex-1 bg-surface border border-border rounded px-3 py-2 text-sm text-foreground placeholder:text-muted focus:outline-none focus:border-accent"
+          />
+          <button
+            type="button"
+            onClick={searchNpub}
+            disabled={lookupLoading || !npubInput.trim()}
+            className="px-4 py-2 text-sm font-medium rounded bg-accent text-background hover:bg-accent/80 disabled:opacity-50"
+          >
+            {lookupLoading ? "Searching..." : "Search"}
+          </button>
+        </div>
+
+        {lookupError && (
+          <p className="text-red-400 text-sm mb-4">{lookupError}</p>
+        )}
+
+        {lookupUser && (
+          <div className="space-y-3">
+            <div className="flex items-center gap-4 text-sm">
+              <span className="text-muted">User:</span>
+              <span className="text-foreground font-mono text-xs">
+                {lookupUser.nostr_npub.slice(0, 16)}...
+              </span>
+              {lookupUser.debt_sats > 0 && (
+                <span className="text-red-400 font-medium">
+                  Debt: {lookupUser.debt_sats.toLocaleString()} sats
+                </span>
+              )}
+            </div>
+
+            {lookupJobs.length > 0 ? (
+              <div className="overflow-x-auto">
+                <table className="w-full">
+                  <thead>
+                    <tr className="border-b border-border">
+                      <th className={thClass}>Service</th>
+                      <th className={thClass}>Action</th>
+                      <th className={thClass}>Status</th>
+                      <th className={thClass}>Billing Date</th>
+                      <th className={thClass}>Created</th>
+                      <th className={thClass}>Action</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {lookupJobs.map((j) => {
+                      const cfg = getJobStatusConfig(j.status);
+                      return (
+                        <tr key={j.id} className="border-b border-border/50">
+                          <td className={tdClass}>{j.service_id}</td>
+                          <td className={tdMuted}>{j.action}</td>
+                          <td className="px-3 py-2">
+                            <span
+                              className={`inline-block text-xs px-2 py-0.5 rounded ${cfg.badgeClass}`}
+                            >
+                              {cfg.label}
+                            </span>
+                          </td>
+                          <td className={tdMuted}>
+                            {j.billing_date
+                              ? new Date(j.billing_date).toLocaleDateString(
+                                  "en-US",
+                                  { month: "short", day: "numeric" }
+                                )
+                              : "N/A"}
+                          </td>
+                          <td className={tdMuted}>{formatDate(j.created_at)}</td>
+                          <td className="px-3 py-2">
+                            {CANCELLABLE.has(j.status) ? (
+                              <button
+                                type="button"
+                                onClick={() => cancelJob(j.id)}
+                                disabled={cancellingId === j.id}
+                                className="text-xs px-2 py-1 rounded border border-red-700/50 bg-red-900/20 text-red-400 hover:bg-red-900/40 disabled:opacity-50"
+                              >
+                                {cancellingId === j.id ? "..." : "Cancel"}
+                              </button>
+                            ) : INFLIGHT.has(j.status) ? (
+                              <span className="text-xs text-amber-400">inflight</span>
+                            ) : null}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <p className="text-muted text-sm">No jobs found for this user.</p>
+            )}
+          </div>
+        )}
+      </section>
+
       {/* Jobs Today */}
       <section>
         <SectionHeader>Jobs Today</SectionHeader>

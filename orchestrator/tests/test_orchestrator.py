@@ -29,24 +29,28 @@ class FakeNotifications:
 
 
 class FakeApi:
-    def __init__(self, healthy=True):
+    def __init__(self, healthy=True, heartbeat_response=None):
         self.call_count = 0
         self.last_payload = None
+        self.last_job_ids = None
         self._healthy = healthy
+        self._heartbeat_response = heartbeat_response or {"ok": True, "cancelled_jobs": []}
 
-    async def heartbeat(self, payload=None):
+    async def heartbeat(self, payload=None, job_ids=None):
         self.call_count += 1
         self.last_payload = payload
+        self.last_job_ids = job_ids
         if not self._healthy:
             raise ConnectionError("VPS down")
-        return True
+        return self._heartbeat_response
 
 
 class FakeDb:
-    def __init__(self, terminal_count=0, purge_count=0, fired_timer_count=0):
+    def __init__(self, terminal_count=0, purge_count=0, fired_timer_count=0, non_terminal_ids=None):
         self._terminal_count = terminal_count
         self._purge_count = purge_count
         self._fired_timer_count = fired_timer_count
+        self._non_terminal_ids = non_terminal_ids or []
         self.delete_calls = 0
         self.purge_calls = 0
         self.fired_timer_calls = 0
@@ -62,6 +66,20 @@ class FakeDb:
     async def delete_fired_timers(self, max_age_hours=168):
         self.fired_timer_calls += 1
         return self._fired_timer_count
+
+    async def get_non_terminal_job_ids(self):
+        return self._non_terminal_ids
+
+
+class FakeJobManager:
+    def __init__(self):
+        self.reconciled = []
+        self.reconcile_count = 0
+
+    async def reconcile_cancelled_jobs(self, cancelled):
+        self.reconciled.extend(cancelled)
+        self.reconcile_count += len(cancelled)
+        return len(cancelled)
 
 
 # ---------------------------------------------------------------------------
@@ -300,3 +318,105 @@ async def test_heartbeat_loop_sends_version_and_uptime():
     assert api.last_payload["version"] == "abc1234"
     assert isinstance(api.last_payload["uptime_s"], int)
     assert api.last_payload["uptime_s"] >= 0
+
+
+# ---------------------------------------------------------------------------
+# _heartbeat_loop: job sync
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_heartbeat_loop_sends_job_ids_when_db_provided():
+    """Heartbeat loop sends job_ids from db when db is provided."""
+    import time
+
+    db = FakeDb(non_terminal_ids=["j1", "j2"])
+    api = FakeApi()
+    shutdown = asyncio.Event()
+
+    async def stop_soon():
+        await asyncio.sleep(0.05)
+        shutdown.set()
+
+    task = asyncio.create_task(
+        _heartbeat_loop(
+            api,
+            shutdown,
+            interval_seconds=0,
+            version="abc1234",
+            start_monotonic=time.monotonic(),
+            db=db,
+        )
+    )
+    stop_task = asyncio.create_task(stop_soon())
+    await asyncio.gather(task, stop_task)
+
+    assert api.call_count >= 1
+    assert api.last_job_ids == ["j1", "j2"]
+
+
+@pytest.mark.asyncio
+async def test_heartbeat_loop_reconciles_cancelled_jobs():
+    """Heartbeat loop calls reconcile_cancelled_jobs when VPS returns cancelled."""
+    import time
+
+    db = FakeDb(non_terminal_ids=["j1"])
+    jm = FakeJobManager()
+    api = FakeApi(
+        heartbeat_response={
+            "ok": True,
+            "cancelled_jobs": [{"id": "j1", "status": "user_skip"}],
+        }
+    )
+    shutdown = asyncio.Event()
+
+    async def stop_soon():
+        await asyncio.sleep(0.05)
+        shutdown.set()
+
+    task = asyncio.create_task(
+        _heartbeat_loop(
+            api,
+            shutdown,
+            interval_seconds=0,
+            version="abc1234",
+            start_monotonic=time.monotonic(),
+            db=db,
+            job_manager=jm,
+        )
+    )
+    stop_task = asyncio.create_task(stop_soon())
+    await asyncio.gather(task, stop_task)
+
+    assert jm.reconcile_count >= 1
+    assert jm.reconciled[0]["id"] == "j1"
+
+
+@pytest.mark.asyncio
+async def test_heartbeat_loop_skips_reconcile_when_no_cancelled():
+    """Heartbeat loop does not call reconcile when cancelled_jobs is empty."""
+    import time
+
+    db = FakeDb(non_terminal_ids=["j1"])
+    jm = FakeJobManager()
+    api = FakeApi(heartbeat_response={"ok": True, "cancelled_jobs": []})
+    shutdown = asyncio.Event()
+
+    async def stop_soon():
+        await asyncio.sleep(0.05)
+        shutdown.set()
+
+    task = asyncio.create_task(
+        _heartbeat_loop(
+            api,
+            shutdown,
+            interval_seconds=0,
+            version="abc1234",
+            start_monotonic=time.monotonic(),
+            db=db,
+            job_manager=jm,
+        )
+    )
+    stop_task = asyncio.create_task(stop_soon())
+    await asyncio.gather(task, stop_task)
+
+    assert jm.reconcile_count == 0

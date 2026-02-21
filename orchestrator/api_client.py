@@ -235,15 +235,23 @@ class ApiClient:
 
     # -- Heartbeat -----------------------------------------------------------
 
-    async def heartbeat(self, payload: dict | None = None) -> bool:
-        """POST /api/agent/heartbeat. Returns True if 200, False otherwise."""
+    async def heartbeat(
+        self,
+        payload: dict | None = None,
+        job_ids: list[str] | None = None,
+    ) -> dict:
+        """POST /api/agent/heartbeat. Returns parsed JSON response or empty dict on failure."""
         path = "/api/agent/heartbeat"
         data: dict = {"component": "orchestrator"}
         if payload is not None:
             data["payload"] = payload
+        if job_ids is not None:
+            data["job_ids"] = job_ids
         body = json.dumps(data)
         try:
             resp = await self._request("POST", path, body=body)
-            return resp.status_code == 200
+            if resp.status_code == 200:
+                return resp.json()
+            return {}
         except httpx.HTTPError:
-            return False
+            return {}

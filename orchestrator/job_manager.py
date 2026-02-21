@@ -480,6 +480,47 @@ class JobManager:
                 return job
         return None
 
+    async def reconcile_cancelled_jobs(self, cancelled: list[dict]) -> int:
+        """Clean up jobs the VPS reports as terminal. Returns count reconciled."""
+        count = 0
+        for entry in cancelled:
+            job_id = entry.get("id")
+            vps_status = entry.get("status")
+            if not job_id or not vps_status:
+                continue
+
+            local_job = await self._db.get_job(job_id)
+            if local_job is None:
+                continue
+            if local_job["status"] in _TERMINAL_STATUSES:
+                continue
+
+            # Cancel all timer types for this job
+            for timer_type in (OUTREACH, LAST_CHANCE, IMPLIED_SKIP, OTP_TIMEOUT, PAYMENT_EXPIRY):
+                await self._timers.cancel(timer_type, job_id)
+
+            # Delete session if linked to this job
+            user_npub = local_job["user_npub"]
+            session = await self._db.get_session(user_npub)
+            if session and session.get("job_id") == job_id:
+                await self._db.delete_session(user_npub)
+
+            # Remove from dispatch queue and active set
+            if job_id in self._dispatch_queue:
+                self._dispatch_queue.remove(job_id)
+            self._active_agent_jobs.discard(job_id)
+
+            # Update local DB to match VPS terminal status
+            await self._db.update_job_status(job_id, vps_status)
+
+            log.info(
+                "Reconciled job %s: local '%s' -> VPS '%s'",
+                job_id, local_job["status"], vps_status,
+            )
+            count += 1
+
+        return count
+
     async def cleanup_terminal_jobs(self) -> int:
         """Delete locally cached terminal jobs. Called periodically."""
         return await self._db.delete_terminal_jobs()

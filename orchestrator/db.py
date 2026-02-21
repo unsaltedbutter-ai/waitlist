@@ -234,6 +234,16 @@ class Database:
         )
         await self._db.commit()
 
+    async def get_non_terminal_job_ids(self) -> list[str]:
+        """Return IDs of all locally cached non-terminal jobs."""
+        placeholders = ", ".join("?" for _ in _TERMINAL_STATUSES)
+        cursor = await self._db.execute(
+            f"SELECT id FROM jobs WHERE status NOT IN ({placeholders})",
+            _TERMINAL_STATUSES,
+        )
+        rows = await cursor.fetchall()
+        return [row[0] for row in rows]
+
     async def delete_terminal_jobs(self) -> int:
         """Delete jobs with terminal statuses. Return count deleted."""
         placeholders = ", ".join("?" for _ in _TERMINAL_STATUSES)

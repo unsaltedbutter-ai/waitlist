@@ -396,10 +396,12 @@ async def test_heartbeat_success(
     client: ApiClient, respx_mock: respx.MockRouter
 ) -> None:
     respx_mock.post(f"{BASE_URL}/api/agent/heartbeat").mock(
-        return_value=httpx.Response(200, json={"ok": True})
+        return_value=httpx.Response(
+            200, json={"ok": True, "cancelled_jobs": []}
+        )
     )
     result = await client.heartbeat()
-    assert result is True
+    assert result == {"ok": True, "cancelled_jobs": []}
 
 
 @pytest.mark.asyncio
@@ -407,10 +409,12 @@ async def test_heartbeat_with_payload(
     client: ApiClient, respx_mock: respx.MockRouter
 ) -> None:
     route = respx_mock.post(f"{BASE_URL}/api/agent/heartbeat").mock(
-        return_value=httpx.Response(200, json={"ok": True})
+        return_value=httpx.Response(
+            200, json={"ok": True, "cancelled_jobs": []}
+        )
     )
     result = await client.heartbeat(payload={"version": "abc1234", "uptime_s": 600})
-    assert result is True
+    assert result["ok"] is True
 
     sent_body = json.loads(route.calls[0].request.content)
     assert sent_body["component"] == "orchestrator"
@@ -423,10 +427,12 @@ async def test_heartbeat_without_payload_omits_key(
     client: ApiClient, respx_mock: respx.MockRouter
 ) -> None:
     route = respx_mock.post(f"{BASE_URL}/api/agent/heartbeat").mock(
-        return_value=httpx.Response(200, json={"ok": True})
+        return_value=httpx.Response(
+            200, json={"ok": True, "cancelled_jobs": []}
+        )
     )
     result = await client.heartbeat()
-    assert result is True
+    assert result["ok"] is True
 
     sent_body = json.loads(route.calls[0].request.content)
     assert sent_body == {"component": "orchestrator"}
@@ -441,4 +447,42 @@ async def test_heartbeat_failure(
         return_value=httpx.Response(500, json={"error": "down"})
     )
     result = await client.heartbeat()
-    assert result is False
+    assert result == {}
+
+
+@pytest.mark.asyncio
+async def test_heartbeat_with_job_ids(
+    client: ApiClient, respx_mock: respx.MockRouter
+) -> None:
+    route = respx_mock.post(f"{BASE_URL}/api/agent/heartbeat").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "ok": True,
+                "cancelled_jobs": [{"id": "j1", "status": "user_skip"}],
+            },
+        )
+    )
+    result = await client.heartbeat(
+        payload={"version": "abc1234", "uptime_s": 600},
+        job_ids=["j1", "j2"],
+    )
+    assert result["cancelled_jobs"] == [{"id": "j1", "status": "user_skip"}]
+
+    sent_body = json.loads(route.calls[0].request.content)
+    assert sent_body["job_ids"] == ["j1", "j2"]
+
+
+@pytest.mark.asyncio
+async def test_heartbeat_without_job_ids_omits_key(
+    client: ApiClient, respx_mock: respx.MockRouter
+) -> None:
+    route = respx_mock.post(f"{BASE_URL}/api/agent/heartbeat").mock(
+        return_value=httpx.Response(
+            200, json={"ok": True, "cancelled_jobs": []}
+        )
+    )
+    await client.heartbeat()
+
+    sent_body = json.loads(route.calls[0].request.content)
+    assert "job_ids" not in sent_body
