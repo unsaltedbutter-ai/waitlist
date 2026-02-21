@@ -34,9 +34,9 @@ export default function RootLayout({
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
       >
         {children}
-        <footer className="text-center text-muted/30 text-xs py-4 font-mono">
+        <div className="fixed bottom-2 right-3 text-muted/30 text-xs font-mono select-none pointer-events-none">
           {process.env.NEXT_PUBLIC_GIT_HASH}
-        </footer>
+        </div>
       </body>
     </html>
   );
