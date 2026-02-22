@@ -115,6 +115,19 @@ class _StuckDetector:
 # Sound helpers
 # ---------------------------------------------------------------------------
 
+def _clipboard_copy(text: str) -> None:
+    """Copy text to the macOS clipboard via pbcopy."""
+    try:
+        subprocess.run(
+            ['pbcopy'],
+            input=text.encode(),
+            check=True,
+            timeout=5,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        log.warning('pbcopy failed: %s', exc)
+
+
 def _play_attention_sound() -> None:
     """Play macOS system sound to get operator attention."""
     try:
@@ -424,30 +437,21 @@ class PlaybookRecorder:
             if code.lower() == 'skip':
                 return 'need_human'
 
-            # Type the code into the browser
-            if 'multi' in page_type and code_boxes:
-                # Multi-box: click first box, type full code (browsers auto-advance)
+            # Paste the code into the browser (clipboard + Cmd+V).
+            # Paste is how real users enter verification codes (copy from
+            # email). Sites handle it well, including multi-box auto-fill.
+            _clipboard_copy(code)
+
+            if code_boxes:
+                target = 'first code box' if 'multi' in page_type else 'code input'
                 self._click_bbox(
                     code_boxes[0]['box'], session, screenshot_b64, ref_dir, steps,
-                    'first code box', coords_mod, mouse,
+                    target, coords_mod, mouse,
                     chrome_offset=chrome_offset,
                 )
-                time.sleep(0.3)
-                for digit in code:
-                    keyboard.type_text(digit, speed='slow', accuracy='high')
-                    time.sleep(0.2)
-            else:
-                # Single box: click it, type full code
-                if code_boxes:
-                    self._click_bbox(
-                        code_boxes[0]['box'], session, screenshot_b64, ref_dir, steps,
-                        'code input', coords_mod, mouse,
-                        chrome_offset=chrome_offset,
-                    )
-                    time.sleep(0.3)
-                keyboard.hotkey('command', 'a')
-                time.sleep(0.1)
-                keyboard.type_text(code, speed='medium', accuracy='high')
+                time.sleep(0.5)  # let field acquire focus
+            keyboard.hotkey('command', 'v')
+            time.sleep(0.3)
 
             # Click submit button if one was detected
             if button_box:

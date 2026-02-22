@@ -1333,10 +1333,12 @@ class TestExecuteSigninPage:
         assert result == 'done'
         assert len(steps) == 0
 
-    def test_email_code_single_prompts_and_types(self, monkeypatch, tmp_path) -> None:
+    def test_email_code_single_pastes_code(self, monkeypatch, tmp_path) -> None:
         recorder, session, ref_dir, modules, typed, pressed, clicked, hotkeys = self._setup(monkeypatch, tmp_path)
         monkeypatch.setattr('time.sleep', lambda _: None)
         monkeypatch.setattr('builtins.input', lambda _: '123456')
+        clipboard = []
+        monkeypatch.setattr('agent.recording.recorder._clipboard_copy', lambda t: clipboard.append(t))
         steps: list[dict] = []
         response = {
             'page_type': 'email_code_single',
@@ -1352,14 +1354,17 @@ class TestExecuteSigninPage:
         assert result == 'continue'
         assert steps[0]['action'] == 'enter_code'
         assert steps[0]['page_type'] == 'email_code_single'
-        # Should have clicked the code box, typed the code, and clicked verify button
+        # Should have: clipboard copy, click code box, Cmd+V paste, click verify button
+        assert clipboard == ['123456']
+        assert ('command', 'v') in hotkeys
         assert len(clicked) >= 2  # code box + verify button
-        assert '123456' in typed
 
-    def test_email_code_multi_types_digits(self, monkeypatch, tmp_path) -> None:
+    def test_email_code_multi_pastes_code(self, monkeypatch, tmp_path) -> None:
         recorder, session, ref_dir, modules, typed, pressed, clicked, hotkeys = self._setup(monkeypatch, tmp_path)
         monkeypatch.setattr('time.sleep', lambda _: None)
         monkeypatch.setattr('builtins.input', lambda _: '1234')
+        clipboard = []
+        monkeypatch.setattr('agent.recording.recorder._clipboard_copy', lambda t: clipboard.append(t))
         steps: list[dict] = []
         response = {
             'page_type': 'email_code_multi',
@@ -1380,8 +1385,10 @@ class TestExecuteSigninPage:
         assert result == 'continue'
         assert steps[0]['page_type'] == 'email_code_multi'
         assert len(steps[0]['code_boxes']) == 4
-        # Multi-box: clicks first box, types each digit
-        assert typed == ['1', '2', '3', '4']
+        # Multi-box: clipboard copy, click first box, Cmd+V paste
+        assert clipboard == ['1234']
+        assert ('command', 'v') in hotkeys
+        assert len(clicked) >= 1  # first code box
 
     def test_code_skip_returns_need_human(self, monkeypatch, tmp_path) -> None:
         """Typing 'skip' at the code prompt falls back to need_human."""
@@ -1403,10 +1410,11 @@ class TestExecuteSigninPage:
         assert result == 'need_human'
 
     def test_phone_code_no_button_presses_enter(self, monkeypatch, tmp_path) -> None:
-        """When no verify button is detected, presses enter after typing code."""
+        """When no verify button is detected, presses enter after pasting code."""
         recorder, session, ref_dir, modules, typed, pressed, clicked, hotkeys = self._setup(monkeypatch, tmp_path)
         monkeypatch.setattr('time.sleep', lambda _: None)
         monkeypatch.setattr('builtins.input', lambda _: '99')
+        monkeypatch.setattr('agent.recording.recorder._clipboard_copy', lambda t: None)
         steps: list[dict] = []
         response = {
             'page_type': 'phone_code_multi',
