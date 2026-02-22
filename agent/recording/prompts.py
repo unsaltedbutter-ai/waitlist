@@ -141,7 +141,8 @@ You MUST respond with exactly one JSON object (no markdown fences, no extra text
   "confidence": 0.0,
   "reasoning": "brief explanation of why this action is correct",
   "is_checkpoint": false,
-  "checkpoint_prompt": ""
+  "checkpoint_prompt": "",
+  "billing_end_date": "YYYY-MM-DD or null"
 }
 
 Rules:
@@ -149,6 +150,7 @@ Rules:
 - For type_text, NEVER include actual credentials. Use semantic descriptions.
 - Set is_checkpoint to true when a significant page transition is expected
 - Set action to "done" when the current phase is complete
+- When action is "done" after a cancel flow, extract the billing/service end date from the confirmation screen into billing_end_date (YYYY-MM-DD format). Set to null if not visible or not applicable.
 - If you see a CAPTCHA or something unexpected, set state to "need_human"\
 """
 

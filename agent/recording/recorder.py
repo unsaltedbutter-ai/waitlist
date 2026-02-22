@@ -546,9 +546,10 @@ class PlaybookRecorder:
             time.sleep(0.3)
             keyboard.hotkey('command', 'a')
             time.sleep(0.1)
+            email_pasted = False
             email_val = self.credentials.get('email', '')
             if email_val:
-                self._enter_credential(email_val, keyboard)
+                email_pasted = self._enter_credential(email_val, keyboard)
             steps.append({'action': 'type_text', 'value': '{email}'})
             print(f'    -> Step {len(steps)-1}: type_text "{{email}}" (auto)')
 
@@ -557,7 +558,12 @@ class PlaybookRecorder:
             steps.append({'action': 'press_key', 'value': 'tab'})
             print(f'    -> Step {len(steps)-1}: press_key "tab"')
 
-            time.sleep(0.2)
+            # If email was pasted, add a delay before the password to simulate
+            # switching to password manager and copying the password.
+            if email_pasted:
+                time.sleep(random.uniform(1.5, 3.5))
+            else:
+                time.sleep(0.2)
             keyboard.hotkey('command', 'a')
             time.sleep(0.1)
             pass_val = self.credentials.get('pass', '')
@@ -798,6 +804,9 @@ class PlaybookRecorder:
                     continue
                 else:
                     # Flow complete
+                    billing_date = response.get('billing_end_date')
+                    if billing_date:
+                        print(f'\n  Billing end date: {billing_date}')
                     print('\n  Flow complete!')
                     break
 
@@ -993,18 +1002,23 @@ class PlaybookRecorder:
         return playbook_data
 
     @staticmethod
-    def _enter_credential(value: str, keyboard) -> None:
+    def _enter_credential(value: str, keyboard) -> bool:
         """Type or paste a credential value. Randomly picks paste (~40%) vs type.
 
         Real users do both: some type credentials from memory, some paste
         from a password manager. Mixing both makes behavior more natural.
+
+        Returns True if paste was used (caller may want to add delay
+        before the next paste to simulate switching to password manager).
         """
         if random.random() < 0.4:
             _clipboard_copy(value)
             keyboard.hotkey('command', 'v')
             time.sleep(0.15)
+            return True
         else:
             keyboard.type_text(value, speed='medium', accuracy='high')
+            return False
 
     # Keywords indicating the click target is an input field (not a button/link)
     _FIELD_INDICATORS = ('field', 'input', 'box', 'textbox', 'text box')
