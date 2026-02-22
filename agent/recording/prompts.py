@@ -239,7 +239,9 @@ Decision tree (check in order):
 - Am I on the account/settings page? -> find the Cancel link and click it
 - Am I on a retention offer page? -> find and click "Continue Cancellation"
 - Am I on the final confirmation page? -> click "Finish Cancellation", set is_checkpoint to true
-- Do I see a cancellation confirmation message? -> action: "done"
+- IMPORTANT: Can I see ANY button or link labeled "Cancel", "Finish Cancellation", "Finish Cancel", or "Complete Cancellation" on the page? -> click it, even if the page also shows a scheduled end date. The flow is NOT done until no such buttons remain.
+- Am I on a "Manage your membership" page with expandable sections? -> click the "Cancel" section or "+" icon to reveal the finish button
+- Do I see a cancellation confirmation AND there are NO cancel/finish buttons visible? -> action: "done"
 - Loading spinner or page transition? -> action: "wait"
 - CAPTCHA or something unexpected? -> set state to "need_human"
 
