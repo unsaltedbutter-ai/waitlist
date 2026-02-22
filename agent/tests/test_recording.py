@@ -1275,8 +1275,12 @@ class TestExecuteSigninPage:
         recorder.verbose = False
 
         class FakeSession:
+            pid = 12345
             window_id = 99
             bounds = {'x': 0, 'y': 0, 'width': 1280, 'height': 900}
+
+        # Stub out window focus (no real window in tests)
+        monkeypatch.setattr('agent.input.window.focus_window_by_pid', lambda pid: True)
 
         typed = []
         pressed = []

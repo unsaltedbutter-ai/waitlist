@@ -406,6 +406,10 @@ class PlaybookRecorder:
             if url.lower() == 'skip':
                 return 'need_human'
 
+            # Re-activate Chrome (terminal stole focus during input())
+            from agent.input.window import focus_window_by_pid
+            focus_window_by_pid(session.pid)
+
             # Navigate to the verification URL
             from agent import browser as browser_mod
             browser_mod.navigate(session, url, fast=True)
@@ -436,6 +440,10 @@ class PlaybookRecorder:
             code = input(f'\n  Enter {code_label} verification code (or "skip" for manual): ').strip()
             if code.lower() == 'skip':
                 return 'need_human'
+
+            # Re-activate Chrome (terminal stole focus during input())
+            from agent.input.window import focus_window_by_pid
+            focus_window_by_pid(session.pid)
 
             # Paste the code into the browser (clipboard + Cmd+V).
             # Paste is how real users enter verification codes (copy from
