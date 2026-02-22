@@ -80,18 +80,7 @@ set_display_scale(1.0)
 # Shared fixtures
 # ---------------------------------------------------------------------------
 
-from agent.inference import (
-    CheckpointResult,
-    FindElementResult,
-    MockInferenceClient,
-)
-from agent.playbook import JobContext, Playbook, PlaybookStep
-
-
-@pytest.fixture()
-def mock_inference() -> MockInferenceClient:
-    """A MockInferenceClient with default image dimensions."""
-    return MockInferenceClient(image_width=2560, image_height=1800)
+from agent.playbook import JobContext
 
 
 @pytest.fixture()
@@ -108,32 +97,4 @@ def job_context() -> JobContext:
             'name': 'Alice Smith',
             'zip': '90210',
         },
-    )
-
-
-@pytest.fixture()
-def simple_playbook() -> Playbook:
-    """A minimal playbook with navigate, click, and verify_success steps."""
-    return Playbook(
-        service='netflix',
-        flow='cancel',
-        version=1,
-        notes='Test playbook',
-        last_validated=None,
-        steps=(
-            PlaybookStep(
-                action='navigate',
-                url='https://www.netflix.com/login',
-            ),
-            PlaybookStep(
-                action='click',
-                target_description='Sign In button',
-                ref_region=(500, 300, 700, 350),
-            ),
-            PlaybookStep(
-                action='verify_success',
-                checkpoint=True,
-                checkpoint_prompt='Is the cancel confirmed?',
-            ),
-        ),
     )
