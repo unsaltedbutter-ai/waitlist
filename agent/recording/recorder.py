@@ -537,7 +537,7 @@ class PlaybookRecorder:
             return 'continue'
 
         if page_type == 'user_pass' and email_box:
-            # Click email, select-all (clear pre-filled), type, tab, type password, enter
+            # Click email, select-all (clear pre-filled), type/paste, tab, type/paste password, enter
             self._click_bbox(
                 email_box, session, screenshot_b64, ref_dir, steps,
                 'email input', coords_mod, mouse,
@@ -548,7 +548,7 @@ class PlaybookRecorder:
             time.sleep(0.1)
             email_val = self.credentials.get('email', '')
             if email_val:
-                keyboard.type_text(email_val, speed='medium', accuracy='high')
+                self._enter_credential(email_val, keyboard)
             steps.append({'action': 'type_text', 'value': '{email}'})
             print(f'    -> Step {len(steps)-1}: type_text "{{email}}" (auto)')
 
@@ -562,7 +562,7 @@ class PlaybookRecorder:
             time.sleep(0.1)
             pass_val = self.credentials.get('pass', '')
             if pass_val:
-                keyboard.type_text(pass_val, speed='medium', accuracy='high')
+                self._enter_credential(pass_val, keyboard)
             steps.append({'action': 'type_text', 'value': '{pass}', 'sensitive': True})
             print(f'    -> Step {len(steps)-1}: type_text "{{pass}}" (auto)')
 
@@ -574,7 +574,7 @@ class PlaybookRecorder:
             return 'continue'
 
         if page_type == 'user_only' and email_box:
-            # Click email, select-all (clear pre-filled), type, enter
+            # Click email, select-all (clear pre-filled), type/paste, enter
             self._click_bbox(
                 email_box, session, screenshot_b64, ref_dir, steps,
                 'email input', coords_mod, mouse,
@@ -585,7 +585,7 @@ class PlaybookRecorder:
             time.sleep(0.1)
             email_val = self.credentials.get('email', '')
             if email_val:
-                keyboard.type_text(email_val, speed='medium', accuracy='high')
+                self._enter_credential(email_val, keyboard)
             steps.append({'action': 'type_text', 'value': '{email}'})
             print(f'    -> Step {len(steps)-1}: type_text "{{email}}" (auto)')
 
@@ -597,7 +597,7 @@ class PlaybookRecorder:
             return 'continue'
 
         if page_type == 'pass_only' and password_box:
-            # Click password, select-all (clear pre-filled), type, enter
+            # Click password, select-all (clear pre-filled), type/paste, enter
             self._click_bbox(
                 password_box, session, screenshot_b64, ref_dir, steps,
                 'password input', coords_mod, mouse,
@@ -608,7 +608,7 @@ class PlaybookRecorder:
             time.sleep(0.1)
             pass_val = self.credentials.get('pass', '')
             if pass_val:
-                keyboard.type_text(pass_val, speed='medium', accuracy='high')
+                self._enter_credential(pass_val, keyboard)
             steps.append({'action': 'type_text', 'value': '{pass}', 'sensitive': True})
             print(f'    -> Step {len(steps)-1}: type_text "{{pass}}" (auto)')
 
@@ -900,7 +900,7 @@ class PlaybookRecorder:
                         auto_type_hint, self.credentials,
                     )
                     if actual_value:
-                        keyboard.type_text(actual_value, speed='medium', accuracy='high')
+                        self._enter_credential(actual_value, keyboard)
                     step_num = len(steps)
                     type_step: dict = {
                         'action': 'type_text',
@@ -918,7 +918,7 @@ class PlaybookRecorder:
                 )
 
                 if actual_value:
-                    keyboard.type_text(actual_value, speed='medium', accuracy='high')
+                    self._enter_credential(actual_value, keyboard)
 
                 step_data = {
                     'action': 'type_text',
@@ -991,6 +991,20 @@ class PlaybookRecorder:
         print(f'{len(steps)} steps recorded.')
 
         return playbook_data
+
+    @staticmethod
+    def _enter_credential(value: str, keyboard) -> None:
+        """Type or paste a credential value. Randomly picks paste (~40%) vs type.
+
+        Real users do both: some type credentials from memory, some paste
+        from a password manager. Mixing both makes behavior more natural.
+        """
+        if random.random() < 0.4:
+            _clipboard_copy(value)
+            keyboard.hotkey('command', 'v')
+            time.sleep(0.15)
+        else:
+            keyboard.type_text(value, speed='medium', accuracy='high')
 
     # Keywords indicating the click target is an input field (not a button/link)
     _FIELD_INDICATORS = ('field', 'input', 'box', 'textbox', 'text box')

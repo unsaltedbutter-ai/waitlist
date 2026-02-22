@@ -192,17 +192,17 @@ def velocity_profile(num_points: int, base_delay: float = 0.01) -> list[float]:
 def movement_duration(distance: float) -> float:
     """
     Estimate total movement time based on Fitts's Law approximation.
-    Short moves (~50px): 200-400ms.
-    Long moves (~1000px): 600-1200ms.
+    Short moves (~50px): ~180ms.
+    Long moves (~1000px): ~450ms.
     Returns duration in seconds with gaussian noise.
     """
     if distance < 1:
         return 0.0
 
     # log-based scaling loosely inspired by Fitts's Law
-    base = 0.15 + 0.12 * math.log2(1 + distance / 50)
+    base = 0.10 + 0.08 * math.log2(1 + distance / 50)
     noise = random.gauss(1.0, 0.15)  # 15% variance
-    return max(0.1, base * noise)
+    return max(0.07, base * noise)
 
 
 def num_waypoints(distance: float) -> int:

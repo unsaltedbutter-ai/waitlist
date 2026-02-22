@@ -1554,9 +1554,11 @@ class TestExecuteSigninPage:
         )
         assert result == 'need_human'
 
-    def test_user_pass_types_both_credentials(self, monkeypatch, tmp_path) -> None:
+    def test_user_pass_enters_both_credentials(self, monkeypatch, tmp_path) -> None:
         recorder, session, ref_dir, modules, typed, pressed, clicked, hotkeys = self._setup(monkeypatch, tmp_path)
         monkeypatch.setattr('time.sleep', lambda _: None)
+        clipboard = []
+        monkeypatch.setattr('agent.recording.recorder._clipboard_copy', lambda t: clipboard.append(t))
         steps: list[dict] = []
         response = {
             'page_type': 'user_pass',
@@ -1571,20 +1573,25 @@ class TestExecuteSigninPage:
             ref_dir, steps, modules,
         )
         assert result == 'continue'
-        # click email, type email, tab, type pass, enter
+        # click email, type/paste email, tab, type/paste pass, enter
         assert len(steps) == 5
         assert steps[0]['action'] == 'click'
         assert steps[1] == {'action': 'type_text', 'value': '{email}'}
         assert steps[2] == {'action': 'press_key', 'value': 'tab'}
         assert steps[3] == {'action': 'type_text', 'value': '{pass}', 'sensitive': True}
         assert steps[4] == {'action': 'press_key', 'value': 'enter'}
-        assert typed == ['user@test.com', 'secret123']
+        # Credentials entered via type or paste (random per call)
+        entered = typed + clipboard
+        assert 'user@test.com' in entered
+        assert 'secret123' in entered
         assert pressed == ['tab', 'enter']
         assert len(clicked) == 1
 
-    def test_user_only_types_email_and_enter(self, monkeypatch, tmp_path) -> None:
+    def test_user_only_enters_email_and_enter(self, monkeypatch, tmp_path) -> None:
         recorder, session, ref_dir, modules, typed, pressed, clicked, hotkeys = self._setup(monkeypatch, tmp_path)
         monkeypatch.setattr('time.sleep', lambda _: None)
+        clipboard = []
+        monkeypatch.setattr('agent.recording.recorder._clipboard_copy', lambda t: clipboard.append(t))
         steps: list[dict] = []
         response = {
             'page_type': 'user_only',
@@ -1603,12 +1610,15 @@ class TestExecuteSigninPage:
         assert steps[0]['action'] == 'click'
         assert steps[1] == {'action': 'type_text', 'value': '{email}'}
         assert steps[2] == {'action': 'press_key', 'value': 'enter'}
-        assert typed == ['user@test.com']
+        entered = typed + clipboard
+        assert 'user@test.com' in entered
         assert pressed == ['enter']
 
-    def test_pass_only_types_password_and_enter(self, monkeypatch, tmp_path) -> None:
+    def test_pass_only_enters_password_and_enter(self, monkeypatch, tmp_path) -> None:
         recorder, session, ref_dir, modules, typed, pressed, clicked, hotkeys = self._setup(monkeypatch, tmp_path)
         monkeypatch.setattr('time.sleep', lambda _: None)
+        clipboard = []
+        monkeypatch.setattr('agent.recording.recorder._clipboard_copy', lambda t: clipboard.append(t))
         steps: list[dict] = []
         response = {
             'page_type': 'pass_only',
@@ -1627,7 +1637,8 @@ class TestExecuteSigninPage:
         assert steps[0]['action'] == 'click'
         assert steps[1] == {'action': 'type_text', 'value': '{pass}', 'sensitive': True}
         assert steps[2] == {'action': 'press_key', 'value': 'enter'}
-        assert typed == ['secret123']
+        entered = typed + clipboard
+        assert 'secret123' in entered
         assert pressed == ['enter']
 
     def test_button_only_clicks_button(self, monkeypatch, tmp_path) -> None:
