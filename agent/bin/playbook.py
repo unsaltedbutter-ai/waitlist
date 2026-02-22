@@ -800,6 +800,19 @@ def cmd_learn(args):
         print('  e.g. --plan Premium  or  --plan "Standard with ads"')
         sys.exit(1)
 
+    # Validate VLM settings (from args or env vars)
+    missing = []
+    if not args.vlm_url:
+        missing.append('--vlm-url or VLM_URL')
+    if not args.vlm_key:
+        missing.append('--vlm-key or VLM_KEY')
+    if not args.vlm_model:
+        missing.append('--vlm-model or VLM_MODEL')
+    if missing:
+        print(f'ERROR: Missing VLM config: {", ".join(missing)}')
+        print('  Set via CLI flags or environment variables.')
+        sys.exit(1)
+
     # Slugify plan tier for use in the filename
     plan_slug = _slugify_plan(plan) if plan else ''
 
@@ -982,12 +995,15 @@ def main():
     p_learn.add_argument('--email', required=True, help='Account email')
     p_learn.add_argument('--password', required=True, help='Account password')
     p_learn.add_argument('--cvv', default='', help='Card CVV (for services that require it on resume)')
-    p_learn.add_argument('--vlm-url', required=True, dest='vlm_url',
-                         help='VLM API base URL (e.g. https://api.x.ai)')
-    p_learn.add_argument('--vlm-key', required=True, dest='vlm_key',
-                         help='VLM API key')
-    p_learn.add_argument('--vlm-model', required=True, dest='vlm_model',
-                         help='VLM model name (e.g. grok-2-vision-latest)')
+    p_learn.add_argument('--vlm-url', dest='vlm_url',
+                         default=os.environ.get('VLM_URL', ''),
+                         help='VLM API base URL (env: VLM_URL)')
+    p_learn.add_argument('--vlm-key', dest='vlm_key',
+                         default=os.environ.get('VLM_KEY', ''),
+                         help='VLM API key (env: VLM_KEY)')
+    p_learn.add_argument('--vlm-model', dest='vlm_model',
+                         default=os.environ.get('VLM_MODEL', ''),
+                         help='VLM model name (env: VLM_MODEL)')
     p_learn.add_argument('--plan', default='', help='Plan tier for resume flows')
     p_learn.add_argument('--variant', default='',
                          help='Output filename suffix (e.g. home -> netflix_cancel_home.json)')
