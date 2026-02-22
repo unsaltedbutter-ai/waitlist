@@ -15,6 +15,7 @@ from session import (
     OTP_CONFIRM,
     EXECUTING,
     AWAITING_OTP,
+    AWAITING_CREDENTIAL,
     INVOICE_SENT,
 )
 from timers import TimerQueue, OTP_TIMEOUT, PAYMENT_EXPIRY
@@ -447,6 +448,86 @@ async def test_otp_input_wrong_state(deps):
     await s.handle_otp_input("npub1alice", "123456")
 
     agent.relay_otp.assert_not_awaited()
+
+
+# ------------------------------------------------------------------
+# handle_credential_needed: EXECUTING -> AWAITING_CREDENTIAL
+# ------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_credential_needed(deps):
+    s = deps["session"]
+    db = deps["db"]
+    send_dm = deps["send_dm"]
+
+    await db.upsert_session("npub1alice", EXECUTING, job_id="job-1")
+    await s.handle_credential_needed("job-1", "disney_plus", "cvv")
+
+    session = await db.get_session("npub1alice")
+    assert session["state"] == "AWAITING_CREDENTIAL"
+
+    send_dm.assert_awaited_once()
+    msg = send_dm.call_args[0][1]
+    assert "CVV" in msg or "security code" in msg
+
+
+@pytest.mark.asyncio
+async def test_credential_needed_no_session(deps):
+    """If no session for this job, log warning and do nothing."""
+    s = deps["session"]
+    send_dm = deps["send_dm"]
+
+    await s.handle_credential_needed("nonexistent-job", "netflix", "cvv")
+    send_dm.assert_not_awaited()
+
+
+# ------------------------------------------------------------------
+# handle_credential_input: AWAITING_CREDENTIAL -> EXECUTING
+# ------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_credential_input(deps):
+    s = deps["session"]
+    db = deps["db"]
+    agent = deps["agent"]
+    send_dm = deps["send_dm"]
+
+    await db.upsert_session("npub1alice", EXECUTING, job_id="job-1")
+    # Simulate credential needed first (sets internal state)
+    await s.handle_credential_needed("job-1", "disney_plus", "cvv")
+    send_dm.reset_mock()
+
+    await db.upsert_session(
+        "npub1alice", "AWAITING_CREDENTIAL", job_id="job-1"
+    )
+    await s.handle_credential_input("npub1alice", "123")
+
+    # State transitions to EXECUTING
+    session = await db.get_session("npub1alice")
+    assert session["state"] == EXECUTING
+
+    # Agent was told to relay the credential
+    agent.relay_credential.assert_awaited_once_with("job-1", "cvv", "123")
+
+    # DM acknowledgement sent
+    send_dm.assert_awaited_once()
+    msg = send_dm.call_args[0][1]
+    assert "Got it" in msg
+
+
+@pytest.mark.asyncio
+async def test_credential_input_wrong_state(deps):
+    """If not in AWAITING_CREDENTIAL, do nothing."""
+    s = deps["session"]
+    db = deps["db"]
+    agent = deps["agent"]
+
+    await db.upsert_session("npub1alice", EXECUTING, job_id="job-1")
+    await s.handle_credential_input("npub1alice", "123")
+
+    agent.relay_credential.assert_not_awaited()
 
 
 # ------------------------------------------------------------------

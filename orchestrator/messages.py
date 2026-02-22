@@ -112,6 +112,29 @@ def otp_timeout() -> str:
 
 
 # ---------------------------------------------------------------------------
+# Credential flow
+# ---------------------------------------------------------------------------
+
+
+def credential_needed(service_id: str, credential_name: str) -> str:
+    """Ask user for a credential (CVV, ZIP, etc.)."""
+    name = display_name(service_id)
+    labels = {
+        'cvv': 'CVV/security code',
+        'zip': 'ZIP code',
+        'name': 'full name',
+        'birth': 'date of birth',
+    }
+    label = labels.get(credential_name, credential_name)
+    return f"{name} is asking for your {label}. What is it?"
+
+
+def credential_received() -> str:
+    """Acknowledge credential received."""
+    return "Got it. Entering that now..."
+
+
+# ---------------------------------------------------------------------------
 # Result
 # ---------------------------------------------------------------------------
 

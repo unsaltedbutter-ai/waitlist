@@ -25,7 +25,12 @@ def _build_app(server: AgentCallbackServer) -> web.Application:
     """
     app = web.Application()
     app.router.add_post("/callback/otp-needed", server._handle_otp_needed)
+    app.router.add_post(
+        "/callback/credential-needed", server._handle_credential_needed
+    )
     app.router.add_post("/callback/result", server._handle_result)
+    app.router.add_post("/cli-dispatch", server._handle_cli_dispatch)
+    app.router.add_get("/cli-job/{job_id}", server._handle_cli_job)
     app.router.add_get("/health", server._handle_health)
     return app
 
@@ -284,3 +289,154 @@ async def test_health(aio_client: AioTestClient) -> None:
     assert resp.status == 200
     body = await resp.json()
     assert body == {"ok": True}
+
+
+# -- Credential needed ---------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_credential_needed_callback(aio_client: AioTestClient) -> None:
+    """POST /callback/credential-needed fires the registered callback."""
+    received = []
+
+    async def on_credential(job_id: str, service: str, credential_name: str) -> None:
+        received.append((job_id, service, credential_name))
+
+    aio_client.app[_server_key].set_credential_callback(on_credential)
+
+    resp = await aio_client.post(
+        "/callback/credential-needed",
+        json={"job_id": "j1", "service": "disney_plus", "credential_name": "cvv"},
+    )
+    assert resp.status == 200
+    body = await resp.json()
+    assert body == {"ok": True}
+
+    assert len(received) == 1
+    assert received[0] == ("j1", "disney_plus", "cvv")
+
+
+@pytest.mark.asyncio
+async def test_credential_needed_missing_fields(aio_client: AioTestClient) -> None:
+    """POST /callback/credential-needed with missing fields returns 400."""
+    resp = await aio_client.post(
+        "/callback/credential-needed",
+        json={"job_id": "j1", "service": "netflix"},
+    )
+    assert resp.status == 400
+
+
+@pytest.mark.asyncio
+async def test_credential_needed_no_callback(aio_client: AioTestClient) -> None:
+    """POST /callback/credential-needed without a callback returns 200."""
+    resp = await aio_client.post(
+        "/callback/credential-needed",
+        json={"job_id": "j1", "service": "netflix", "credential_name": "cvv"},
+    )
+    assert resp.status == 200
+
+
+@pytest.mark.asyncio
+async def test_credential_callback_error_returns_500(aio_client: AioTestClient) -> None:
+    """If the credential callback raises, the server returns 500."""
+
+    async def bad_callback(job_id: str, service: str, credential_name: str) -> None:
+        raise ValueError("boom")
+
+    aio_client.app[_server_key].set_credential_callback(bad_callback)
+
+    resp = await aio_client.post(
+        "/callback/credential-needed",
+        json={"job_id": "j1", "service": "netflix", "credential_name": "cvv"},
+    )
+    assert resp.status == 500
+
+
+# -- CLI dispatch --------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_cli_dispatch_success(aio_client: AioTestClient) -> None:
+    """POST /cli-dispatch with callback returns job_id."""
+
+    async def on_dispatch(npub, service, action, credentials, plan_id):
+        return "cli-12345"
+
+    aio_client.app[_server_key].set_cli_dispatch_callback(on_dispatch)
+
+    resp = await aio_client.post(
+        "/cli-dispatch",
+        json={
+            "npub": "npub1abc",
+            "service": "disney",
+            "action": "resume",
+            "credentials": {"email": "a@b.com", "pass": "x"},
+            "plan_id": "premium",
+        },
+    )
+    assert resp.status == 200
+    body = await resp.json()
+    assert body["ok"] is True
+    assert body["job_id"] == "cli-12345"
+
+
+@pytest.mark.asyncio
+async def test_cli_dispatch_missing_fields(aio_client: AioTestClient) -> None:
+    """POST /cli-dispatch with missing required fields returns 400."""
+    resp = await aio_client.post(
+        "/cli-dispatch",
+        json={"npub": "npub1abc"},
+    )
+    assert resp.status == 400
+
+
+@pytest.mark.asyncio
+async def test_cli_dispatch_no_callback(aio_client: AioTestClient) -> None:
+    """POST /cli-dispatch without callback returns 503."""
+    resp = await aio_client.post(
+        "/cli-dispatch",
+        json={
+            "npub": "npub1abc",
+            "service": "disney",
+            "action": "resume",
+            "credentials": {"email": "a", "pass": "b"},
+        },
+    )
+    assert resp.status == 503
+
+
+# -- CLI job poll --------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_cli_job_running(aio_client: AioTestClient) -> None:
+    """GET /cli-job/{id} returns running when no result stored."""
+    resp = await aio_client.get("/cli-job/cli-12345")
+    assert resp.status == 200
+    body = await resp.json()
+    assert body["status"] == "running"
+
+
+@pytest.mark.asyncio
+async def test_cli_job_completed(aio_client: AioTestClient) -> None:
+    """GET /cli-job/{id} returns completed when result is stored."""
+    aio_client.app[_server_key].store_cli_result(
+        "cli-99", {"success": True, "access_end_date": "2026-04-01"}
+    )
+    resp = await aio_client.get("/cli-job/cli-99")
+    assert resp.status == 200
+    body = await resp.json()
+    assert body["status"] == "completed"
+    assert body["result"]["access_end_date"] == "2026-04-01"
+
+
+@pytest.mark.asyncio
+async def test_cli_job_failed(aio_client: AioTestClient) -> None:
+    """GET /cli-job/{id} returns failed when result has success=false."""
+    aio_client.app[_server_key].store_cli_result(
+        "cli-fail", {"success": False, "error": "Login failed"}
+    )
+    resp = await aio_client.get("/cli-job/cli-fail")
+    assert resp.status == 200
+    body = await resp.json()
+    assert body["status"] == "failed"

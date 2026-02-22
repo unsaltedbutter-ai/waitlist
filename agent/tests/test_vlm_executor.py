@@ -644,6 +644,232 @@ class TestAutoTypeAfterClick:
 
 
 # ---------------------------------------------------------------------------
+# Credential callback tests
+# ---------------------------------------------------------------------------
+
+class TestCredentialCallback:
+    def test_type_text_cvv_triggers_callback(self):
+        """type_text with CVV hint and no cvv credential triggers credential callback."""
+        type_cvv = {
+            'state': 'payment',
+            'action': 'type_text',
+            'text_to_type': 'the cvv',
+            'target_description': 'CVV field',
+            'confidence': 0.9,
+            'reasoning': 'type cvv',
+        }
+        loop = asyncio.new_event_loop()
+        calls = []
+
+        async def cred_callback(job_id, service, credential_name):
+            calls.append((job_id, service, credential_name))
+            return '123'
+
+        vlm = _make_vlm([SIGNED_IN, type_cvv, CANCEL_DONE])
+
+        import threading
+        thread = threading.Thread(target=loop.run_forever, daemon=True)
+        thread.start()
+        try:
+            executor = VLMExecutor(
+                vlm, settle_delay=0,
+                credential_callback=cred_callback,
+                loop=loop,
+            )
+            result = executor.run(
+                'netflix', 'cancel',
+                {'email': 'a@b.com', 'pass': 'x'},
+                job_id='job-cred',
+            )
+            assert result.success
+            assert len(calls) == 1
+            assert calls[0] == ('job-cred', 'netflix', 'cvv')
+        finally:
+            loop.call_soon_threadsafe(loop.stop)
+            thread.join(timeout=2)
+            loop.close()
+
+    def test_click_cvv_field_triggers_callback(self):
+        """Clicking a CVV input field with no cvv credential triggers callback."""
+        click_cvv = {
+            'state': 'payment',
+            'action': 'click',
+            'target_description': 'CVV input field',
+            'bounding_box': [100, 200, 300, 230],
+            'confidence': 0.9,
+            'reasoning': 'click cvv field',
+        }
+        loop = asyncio.new_event_loop()
+        calls = []
+
+        async def cred_callback(job_id, service, credential_name):
+            calls.append((job_id, service, credential_name))
+            return '456'
+
+        vlm = _make_vlm([SIGNED_IN, click_cvv, CANCEL_DONE])
+
+        import threading
+        thread = threading.Thread(target=loop.run_forever, daemon=True)
+        thread.start()
+        try:
+            executor = VLMExecutor(
+                vlm, settle_delay=0,
+                credential_callback=cred_callback,
+                loop=loop,
+            )
+            result = executor.run(
+                'netflix', 'cancel',
+                {'email': 'a@b.com', 'pass': 'x'},
+                job_id='job-cred2',
+            )
+            assert result.success
+            assert len(calls) == 1
+            assert calls[0] == ('job-cred2', 'netflix', 'cvv')
+        finally:
+            loop.call_soon_threadsafe(loop.stop)
+            thread.join(timeout=2)
+            loop.close()
+
+    def test_credential_persists_in_session(self):
+        """Once callback provides a credential, it persists for subsequent uses."""
+        type_cvv_1 = {
+            'state': 'payment',
+            'action': 'type_text',
+            'text_to_type': 'the cvv',
+            'confidence': 0.9,
+            'reasoning': 'type cvv again',
+        }
+        type_cvv_2 = {
+            'state': 'payment retry',
+            'action': 'type_text',
+            'text_to_type': 'the cvv',
+            'confidence': 0.9,
+            'reasoning': 'type cvv again',
+        }
+        loop = asyncio.new_event_loop()
+        calls = []
+
+        async def cred_callback(job_id, service, credential_name):
+            calls.append(credential_name)
+            return '789'
+
+        vlm = _make_vlm([SIGNED_IN, type_cvv_1, type_cvv_2, CANCEL_DONE])
+
+        import threading
+        thread = threading.Thread(target=loop.run_forever, daemon=True)
+        thread.start()
+        try:
+            executor = VLMExecutor(
+                vlm, settle_delay=0,
+                credential_callback=cred_callback,
+                loop=loop,
+            )
+            result = executor.run(
+                'netflix', 'cancel',
+                {'email': 'a@b.com', 'pass': 'x'},
+                job_id='job-persist',
+            )
+            assert result.success
+            # Callback only called once; second use finds it in credentials dict
+            assert len(calls) == 1
+        finally:
+            loop.call_soon_threadsafe(loop.stop)
+            thread.join(timeout=2)
+            loop.close()
+
+    def test_no_callback_skips_credential(self):
+        """With no credential callback, missing credential is silently skipped."""
+        type_cvv = {
+            'state': 'payment',
+            'action': 'type_text',
+            'text_to_type': 'the cvv',
+            'confidence': 0.9,
+            'reasoning': 'type cvv',
+        }
+        vlm = _make_vlm([SIGNED_IN, type_cvv, CANCEL_DONE])
+        executor = VLMExecutor(vlm, settle_delay=0)
+        result = executor.run(
+            'netflix', 'cancel',
+            {'email': 'a@b.com', 'pass': 'x'},
+        )
+        assert result.success
+
+    def test_callback_returns_none_skips(self):
+        """If credential callback returns None, credential is skipped."""
+        type_cvv = {
+            'state': 'payment',
+            'action': 'type_text',
+            'text_to_type': 'the cvv',
+            'confidence': 0.9,
+            'reasoning': 'type cvv',
+        }
+        loop = asyncio.new_event_loop()
+
+        async def cred_callback(job_id, service, credential_name):
+            return None
+
+        vlm = _make_vlm([SIGNED_IN, type_cvv, CANCEL_DONE])
+
+        import threading
+        thread = threading.Thread(target=loop.run_forever, daemon=True)
+        thread.start()
+        try:
+            executor = VLMExecutor(
+                vlm, settle_delay=0,
+                credential_callback=cred_callback,
+                loop=loop,
+            )
+            result = executor.run(
+                'netflix', 'cancel',
+                {'email': 'a@b.com', 'pass': 'x'},
+            )
+            assert result.success
+        finally:
+            loop.call_soon_threadsafe(loop.stop)
+            thread.join(timeout=2)
+            loop.close()
+
+    def test_existing_credential_no_callback(self):
+        """When credential already in dict, callback is NOT called."""
+        type_cvv = {
+            'state': 'payment',
+            'action': 'type_text',
+            'text_to_type': 'the cvv',
+            'confidence': 0.9,
+            'reasoning': 'type cvv',
+        }
+        loop = asyncio.new_event_loop()
+        calls = []
+
+        async def cred_callback(job_id, service, credential_name):
+            calls.append(credential_name)
+            return '999'
+
+        vlm = _make_vlm([SIGNED_IN, type_cvv, CANCEL_DONE])
+
+        import threading
+        thread = threading.Thread(target=loop.run_forever, daemon=True)
+        thread.start()
+        try:
+            executor = VLMExecutor(
+                vlm, settle_delay=0,
+                credential_callback=cred_callback,
+                loop=loop,
+            )
+            result = executor.run(
+                'netflix', 'cancel',
+                {'email': 'a@b.com', 'pass': 'x', 'cvv': '321'},
+            )
+            assert result.success
+            # Callback never called because cvv was already in credentials
+            assert len(calls) == 0
+        finally:
+            loop.call_soon_threadsafe(loop.stop)
+            thread.join(timeout=2)
+            loop.close()
+
+
+# ---------------------------------------------------------------------------
 # ExecutionResult structure tests
 # ---------------------------------------------------------------------------
 

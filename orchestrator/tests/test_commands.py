@@ -9,7 +9,9 @@ import pytest
 import pytest_asyncio
 
 from commands import CommandRouter, parse_service, SERVICE_ALIASES
-from session import IDLE, OTP_CONFIRM, AWAITING_OTP, EXECUTING, INVOICE_SENT
+from session import (
+    IDLE, OTP_CONFIRM, AWAITING_OTP, AWAITING_CREDENTIAL, EXECUTING, INVOICE_SENT,
+)
 import messages
 
 
@@ -208,6 +210,46 @@ async def test_awaiting_otp_non_digits_sends_busy():
     await router.handle_dm(ALICE, "help")
 
     deps["session"].handle_otp_input.assert_not_awaited()
+    deps["send_dm"].assert_awaited_once_with(ALICE, messages.busy())
+
+
+# ==================================================================
+# State-based routing: AWAITING_CREDENTIAL
+# ==================================================================
+
+
+@pytest.mark.asyncio
+async def test_awaiting_credential_forwards_value():
+    """Non-empty text during AWAITING_CREDENTIAL should be forwarded as credential."""
+    router, deps = _make_router()
+    deps["session"].get_state.return_value = AWAITING_CREDENTIAL
+
+    await router.handle_dm(ALICE, "123")
+
+    deps["session"].handle_credential_input.assert_awaited_once_with(ALICE, "123")
+    deps["send_dm"].assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_awaiting_credential_forwards_text():
+    """Text credential values (names, zip codes) should be forwarded."""
+    router, deps = _make_router()
+    deps["session"].get_state.return_value = AWAITING_CREDENTIAL
+
+    await router.handle_dm(ALICE, "90210")
+
+    deps["session"].handle_credential_input.assert_awaited_once_with(ALICE, "90210")
+
+
+@pytest.mark.asyncio
+async def test_awaiting_credential_empty_sends_busy():
+    """Empty input during AWAITING_CREDENTIAL should send busy message."""
+    router, deps = _make_router()
+    deps["session"].get_state.return_value = AWAITING_CREDENTIAL
+
+    await router.handle_dm(ALICE, "   ")
+
+    deps["session"].handle_credential_input.assert_not_awaited()
     deps["send_dm"].assert_awaited_once_with(ALICE, messages.busy())
 
 

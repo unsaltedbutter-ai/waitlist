@@ -15,6 +15,8 @@ from messages import (
     action_success_resume,
     already_has_account,
     busy,
+    credential_needed,
+    credential_received,
     debt_block,
     display_name,
     error_generic,
@@ -144,6 +146,32 @@ class TestOtpFlow:
         msg = otp_timeout()
         assert "15 minutes" in msg
         assert "cancelled" in msg
+
+
+# ---------------------------------------------------------------------------
+# Credential flow
+# ---------------------------------------------------------------------------
+
+
+class TestCredentialFlow:
+    def test_credential_needed_cvv(self) -> None:
+        msg = credential_needed("disney_plus", "cvv")
+        assert "Disney+" in msg
+        assert "CVV" in msg or "security code" in msg
+
+    def test_credential_needed_zip(self) -> None:
+        msg = credential_needed("netflix", "zip")
+        assert "Netflix" in msg
+        assert "ZIP" in msg
+
+    def test_credential_needed_unknown(self) -> None:
+        msg = credential_needed("hulu", "ssn")
+        assert "Hulu" in msg
+        assert "ssn" in msg
+
+    def test_credential_received(self) -> None:
+        msg = credential_received()
+        assert "Got it" in msg
 
 
 # ---------------------------------------------------------------------------

@@ -127,6 +127,55 @@ async def test_relay_otp_sends_code(client: AgentClient) -> None:
     assert body["code"] == "654321"
 
 
+# -- relay_credential ----------------------------------------------------------
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_relay_credential_success(client: AgentClient) -> None:
+    route = respx.post(f"{AGENT_URL}/credential").mock(
+        return_value=httpx.Response(200, json={"ok": True})
+    )
+    result = await client.relay_credential("j1", "cvv", "123")
+    assert result is True
+    assert route.called
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_relay_credential_sends_body(client: AgentClient) -> None:
+    route = respx.post(f"{AGENT_URL}/credential").mock(
+        return_value=httpx.Response(200, json={"ok": True})
+    )
+    await client.relay_credential("j42", "zip", "90210")
+    import json
+
+    body = json.loads(route.calls[0].request.content)
+    assert body["job_id"] == "j42"
+    assert body["credential_name"] == "zip"
+    assert body["value"] == "90210"
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_relay_credential_rejected(client: AgentClient) -> None:
+    respx.post(f"{AGENT_URL}/credential").mock(
+        return_value=httpx.Response(404, json={"error": "No such job"})
+    )
+    result = await client.relay_credential("j_missing", "cvv", "123")
+    assert result is False
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_relay_credential_connection_error(client: AgentClient) -> None:
+    respx.post(f"{AGENT_URL}/credential").mock(
+        side_effect=httpx.ConnectError("refused")
+    )
+    result = await client.relay_credential("j1", "cvv", "123")
+    assert result is False
+
+
 # -- abort ---------------------------------------------------------------------
 
 

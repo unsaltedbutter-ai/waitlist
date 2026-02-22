@@ -3,11 +3,13 @@
 
 Usage:
     python -m agent.bin.playbook run --service netflix --action cancel
+    python -m agent.bin.playbook run --service disney --action resume --plan "Disney+ & Hulu" --npub npub1abc...
 """
 
 import argparse
 import asyncio
 import getpass
+import json
 import os
 import re
 import sys
@@ -39,10 +41,14 @@ def _slugify_plan(plan: str) -> str:
 
 
 # ------------------------------------------------------------------
-# run command
+# run command (local mode: VLMExecutor runs on this machine)
 # ------------------------------------------------------------------
 
 def cmd_run(args):
+    # --npub mode: dispatch via orchestrator instead of running locally
+    if args.npub:
+        return cmd_run_npub(args)
+
     from agent.profile import PROFILES, NORMAL
     from agent.recording.vlm_client import VLMClient
     from agent.vlm_executor import VLMExecutor
@@ -64,9 +70,6 @@ def cmd_run(args):
     email = input('Email: ').strip()
     password = getpass.getpass('Password: ')
     credentials = {'email': email, 'pass': password}
-    if args.cvv:
-        cvv = getpass.getpass('CVV: ')
-        credentials['cvv'] = cvv
 
     # Plan tier for resume
     plan_tier = ''
@@ -83,7 +86,7 @@ def cmd_run(args):
         model=args.vlm_model,
     )
 
-    # Set up async event loop for OTP callback
+    # Set up async event loop for OTP and credential callbacks
     loop = asyncio.new_event_loop()
     threading.Thread(target=loop.run_forever, daemon=True).start()
 
@@ -93,6 +96,12 @@ def cmd_run(args):
         )
         return code or None
 
+    async def credential_callback(job_id, service, credential_name):
+        value = await loop.run_in_executor(
+            None, lambda: getpass.getpass(f'\nEnter {credential_name} (empty to skip): ').strip(),
+        )
+        return value or None
+
     # Build profile
     profile = PROFILES.get(args.profile) or NORMAL
 
@@ -101,6 +110,7 @@ def cmd_run(args):
         vlm=vlm,
         profile=profile,
         otp_callback=otp_callback,
+        credential_callback=credential_callback,
         loop=loop,
         settle_delay=args.settle_delay,
         max_steps=args.max_steps,
@@ -149,6 +159,90 @@ def cmd_run(args):
 
 
 # ------------------------------------------------------------------
+# run command (--npub mode: dispatch via orchestrator)
+# ------------------------------------------------------------------
+
+def cmd_run_npub(args):
+    import httpx
+
+    orchestrator_url = args.orchestrator_url.rstrip('/')
+    if not orchestrator_url:
+        print('ERROR: --orchestrator-url or ORCHESTRATOR_URL required for --npub mode')
+        sys.exit(1)
+
+    # Collect credentials
+    email = input('Email: ').strip()
+    password = getpass.getpass('Password: ')
+    credentials = {'email': email, 'pass': password}
+
+    plan_tier = ''
+    if args.plan:
+        plan_tier = _slugify_plan(args.plan)
+
+    print()
+    print(f'Service:      {args.service}')
+    print(f'Action:       {args.action}')
+    print(f'Npub:         {args.npub}')
+    print(f'Orchestrator: {orchestrator_url}')
+    if plan_tier:
+        print(f'Plan:         {args.plan} ({plan_tier})')
+    print()
+    print('Dispatching to orchestrator...')
+
+    try:
+        payload = {
+            'npub': args.npub,
+            'service': args.service,
+            'action': args.action,
+            'credentials': credentials,
+            'plan_id': plan_tier,
+        }
+        resp = httpx.post(
+            f'{orchestrator_url}/cli-dispatch',
+            json=payload,
+            timeout=30.0,
+        )
+        if resp.status_code != 200:
+            print(f'ERROR: Orchestrator returned {resp.status_code}: {resp.text}')
+            return
+
+        data = resp.json()
+        job_id = data.get('job_id')
+        print(f'Job dispatched: {job_id}')
+        print('OTP and credential prompts will go to the user via Nostr DM.')
+        print('Polling for result...')
+        print()
+
+        # Poll for completion
+        while True:
+            time.sleep(5)
+            try:
+                poll_resp = httpx.get(
+                    f'{orchestrator_url}/cli-job/{job_id}',
+                    timeout=10.0,
+                )
+                poll_data = poll_resp.json()
+                status = poll_data.get('status', 'running')
+                if status != 'running':
+                    result = poll_data.get('result', {})
+                    print(f'Status:   {status.upper()}')
+                    if result.get('access_end_date'):
+                        print(f'Billing:  {result["access_end_date"]}')
+                    if result.get('error'):
+                        print(f'Error:    {result["error"]}')
+                    break
+            except httpx.HTTPError as exc:
+                print(f'Poll error: {exc}')
+            print('.', end='', flush=True)
+
+    finally:
+        # Zero credentials
+        for key in list(credentials.keys()):
+            credentials[key] = '\x00' * len(credentials[key])
+        credentials.clear()
+
+
+# ------------------------------------------------------------------
 # main
 # ------------------------------------------------------------------
 
@@ -177,8 +271,11 @@ def main():
                        help='Flow type')
     p_run.add_argument('--plan', default='',
                        help='Plan tier for resume (e.g. "Premium", "Standard with ads")')
-    p_run.add_argument('--cvv', action='store_true',
-                       help='Prompt for CVV (services that require it on resume)')
+    p_run.add_argument('--npub', default=None,
+                       help='User npub for orchestrator dispatch mode (OTP/credentials via Nostr DM)')
+    p_run.add_argument('--orchestrator-url', dest='orchestrator_url',
+                       default=os.environ.get('ORCHESTRATOR_URL', ''),
+                       help='Orchestrator URL for --npub mode (env: ORCHESTRATOR_URL)')
     p_run.add_argument('--vlm-url', dest='vlm_url',
                        default=os.environ.get('VLM_URL', ''),
                        help='VLM API base URL (env: VLM_URL)')

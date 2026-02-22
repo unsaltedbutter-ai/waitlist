@@ -13,7 +13,10 @@ import messages
 from api_client import ApiClient
 from config import Config
 from job_manager import JobManager
-from session import Session, IDLE, OTP_CONFIRM, AWAITING_OTP, EXECUTING, INVOICE_SENT
+from session import (
+    Session, IDLE, OTP_CONFIRM, AWAITING_OTP, AWAITING_CREDENTIAL,
+    EXECUTING, INVOICE_SENT,
+)
 
 log = logging.getLogger(__name__)
 
@@ -78,6 +81,16 @@ class CommandRouter:
             if self._is_otp_like(normalized):
                 stripped = normalized.replace(" ", "").replace("-", "")
                 await self._session.handle_otp_input(sender_npub, stripped)
+            else:
+                await self._send_dm(sender_npub, messages.busy())
+            return
+
+        # AWAITING_CREDENTIAL: forward user's reply as credential value
+        if state == AWAITING_CREDENTIAL:
+            if normalized:
+                await self._session.handle_credential_input(
+                    sender_npub, normalized,
+                )
             else:
                 await self._send_dm(sender_npub, messages.busy())
             return

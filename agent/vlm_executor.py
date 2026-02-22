@@ -201,7 +201,9 @@ class VLMExecutor:
         profile: Human behavioral profile for timing.
         otp_callback: Async callable(job_id, service) -> str|None.
             Called when the VLM detects an OTP/verification code page.
-        loop: Event loop for scheduling the async otp_callback from
+        credential_callback: Async callable(job_id, service, credential_name) -> str|None.
+            Called when a credential (e.g. CVV) is needed but not in the credentials dict.
+        loop: Event loop for scheduling async callbacks from
             the synchronous executor thread.
         settle_delay: Seconds to wait after each action for page to settle.
         max_steps: Maximum VLM analysis steps before aborting.
@@ -212,6 +214,7 @@ class VLMExecutor:
         vlm: VLMClient,
         profile: HumanProfile | None = None,
         otp_callback: Callable | None = None,
+        credential_callback: Callable | None = None,
         loop: asyncio.AbstractEventLoop | None = None,
         settle_delay: float = 2.5,
         max_steps: int = 60,
@@ -219,6 +222,7 @@ class VLMExecutor:
         self.vlm = vlm
         self.profile = profile or NORMAL
         self._otp_callback = otp_callback
+        self._credential_callback = credential_callback
         self._loop = loop
         self.settle_delay = settle_delay
         self.max_steps = max_steps
@@ -452,17 +456,29 @@ class VLMExecutor:
                         time.sleep(0.3)
                         keyboard.hotkey('command', 'a')
                         time.sleep(0.1)
-                        _, actual_value, _ = _resolve_credential(
+                        template, actual_value, _ = _resolve_credential(
                             auto_hint, credentials,
                         )
+                        if not actual_value and template.startswith('{'):
+                            cred_key = template.strip('{}')
+                            value = self._request_credential(job_id, service, cred_key)
+                            if value:
+                                credentials[cred_key] = value
+                                actual_value = value
                         if actual_value:
                             _enter_credential(actual_value)
                         step_count += 1
 
                 elif vlm_action == 'type_text':
-                    _, actual_value, _ = _resolve_credential(
+                    template, actual_value, _ = _resolve_credential(
                         text_to_type, credentials,
                     )
+                    if not actual_value and template.startswith('{'):
+                        cred_key = template.strip('{}')
+                        value = self._request_credential(job_id, service, cred_key)
+                        if value:
+                            credentials[cred_key] = value
+                            actual_value = value
                     if actual_value:
                         _enter_credential(actual_value)
                     step_count += 1
@@ -725,4 +741,30 @@ class VLMExecutor:
             return future.result(timeout=900)  # 15 min, matching server timeout
         except Exception as exc:
             log.error('OTP callback failed: %s', exc)
+            return None
+
+    # ------------------------------------------------------------------
+    # Credential bridge
+    # ------------------------------------------------------------------
+
+    def _request_credential(
+        self, job_id: str, service: str, credential_name: str,
+    ) -> str | None:
+        """Request a missing credential via the async callback.
+
+        Same bridge pattern as _request_otp: schedules the async callback
+        on the event loop from the synchronous executor thread.
+        """
+        if self._credential_callback is None or self._loop is None:
+            log.warning('Credential %s needed but no callback configured', credential_name)
+            return None
+
+        try:
+            future = asyncio.run_coroutine_threadsafe(
+                self._credential_callback(job_id, service, credential_name),
+                self._loop,
+            )
+            return future.result(timeout=900)  # 15 min
+        except Exception as exc:
+            log.error('Credential callback failed for %s: %s', credential_name, exc)
             return None

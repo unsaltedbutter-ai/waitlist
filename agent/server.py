@@ -54,7 +54,7 @@ except Exception:
 
 @dataclass
 class ActiveJob:
-    """Tracks a currently-running job and its OTP channel."""
+    """Tracks a currently-running job and its OTP/credential channels."""
 
     job_id: str
     service: str
@@ -62,6 +62,7 @@ class ActiveJob:
     plan_id: str = ''
     task: asyncio.Task | None = None
     otp_future: asyncio.Future | None = None
+    credential_future: asyncio.Future | None = None
     started_at: float = field(default_factory=time.monotonic)
 
 
@@ -118,6 +119,7 @@ class Agent:
         # Register routes
         self._app.router.add_post("/execute", self._handle_execute)
         self._app.router.add_post("/otp", self._handle_otp)
+        self._app.router.add_post("/credential", self._handle_credential)
         self._app.router.add_post("/abort", self._handle_abort)
         self._app.router.add_get("/health", self._handle_health)
 
@@ -251,6 +253,43 @@ class Agent:
 
         return web.json_response({"ok": True})
 
+    async def _handle_credential(self, request: web.Request) -> web.Response:
+        """POST /credential
+
+        Body: {"job_id": str, "credential_name": str, "value": str}
+        Delivers a credential value to the currently running job.
+        """
+        try:
+            data = await request.json()
+        except Exception:
+            return web.json_response({"error": "Invalid JSON"}, status=400)
+
+        job_id = data.get("job_id")
+        credential_name = data.get("credential_name")
+        value = data.get("value")
+
+        if not job_id or not credential_name or not value:
+            return web.json_response(
+                {"error": "Missing job_id, credential_name, or value"}, status=400
+            )
+
+        active = self._active_job
+        if active is None or active.job_id != job_id:
+            log.warning("Credential for unknown/inactive job %s", job_id)
+            return web.json_response(
+                {"error": f"No active job with id {job_id}"}, status=404
+            )
+
+        if active.credential_future is not None and not active.credential_future.done():
+            active.credential_future.set_result(value)
+            log.info("Credential '%s' delivered for job %s", credential_name, job_id)
+        else:
+            log.warning(
+                "Credential arrived for job %s but no future is waiting", job_id
+            )
+
+        return web.json_response({"ok": True})
+
     async def _handle_abort(self, request: web.Request) -> web.Response:
         """POST /abort
 
@@ -324,6 +363,7 @@ class Agent:
                 vlm=self._vlm,
                 profile=self._profile,
                 otp_callback=self.request_otp,
+                credential_callback=self.request_credential,
                 loop=self._loop,
             )
 
@@ -466,6 +506,74 @@ class Agent:
             return None
         finally:
             active.otp_future = None
+
+    # ------------------------------------------------------------------
+    # Credential support (called from executor thread via the event loop)
+    # ------------------------------------------------------------------
+
+    async def request_credential(
+        self, job_id: str, service: str, credential_name: str,
+    ) -> str | None:
+        """Request a credential from the orchestrator and wait for it.
+
+        Called when the executor encounters a field (e.g. CVV) that is not
+        in the credentials dict. Posts to the orchestrator's
+        /callback/credential-needed endpoint, then blocks until the
+        orchestrator relays the value back via POST /credential.
+
+        Returns the credential value, or None if timed out.
+        """
+        if self._http_client is None:
+            log.error("Cannot request credential: HTTP client not initialized")
+            return None
+
+        active = self._active_job
+        if active is None or active.job_id != job_id:
+            log.error("Credential request for non-active job %s", job_id)
+            return None
+
+        # Create a future that the /credential handler will resolve
+        loop = asyncio.get_running_loop()
+        active.credential_future = loop.create_future()
+
+        # Notify orchestrator that we need a credential
+        url = f"{self._orchestrator_url}/callback/credential-needed"
+        payload = {
+            "job_id": job_id,
+            "service": service,
+            "credential_name": credential_name,
+        }
+        try:
+            resp = await self._http_client.post(url, json=payload)
+            if resp.status_code != 200:
+                log.error(
+                    "Orchestrator rejected credential request for job %s: %d",
+                    job_id,
+                    resp.status_code,
+                )
+                return None
+        except httpx.HTTPError as exc:
+            log.error(
+                "Failed to request credential for job %s: %s", job_id, exc
+            )
+            return None
+
+        # Wait for the value (up to 15 minutes, matching OTP timeout)
+        cred_timeout = int(os.environ.get("OTP_TIMEOUT_SECONDS", "900"))
+        try:
+            value = await asyncio.wait_for(
+                active.credential_future, timeout=cred_timeout
+            )
+            log.info("Received credential '%s' for job %s", credential_name, job_id)
+            return value
+        except asyncio.TimeoutError:
+            log.warning(
+                "Credential '%s' timed out for job %s after %ds",
+                credential_name, job_id, cred_timeout,
+            )
+            return None
+        finally:
+            active.credential_future = None
 
 
 # ---------------------------------------------------------------------------

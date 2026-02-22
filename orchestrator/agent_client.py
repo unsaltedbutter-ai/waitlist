@@ -103,6 +103,38 @@ class AgentClient:
             log.error("Agent OTP relay failed for job %s: %s", job_id, exc)
             return False
 
+    # -- Credential relay --------------------------------------------------------
+
+    async def relay_credential(
+        self, job_id: str, credential_name: str, value: str,
+    ) -> bool:
+        """POST /credential. Relay a credential value to the agent mid-session.
+
+        Returns True if accepted (200), False otherwise.
+        """
+        client = self._ensure_started()
+        try:
+            resp = await client.post(
+                f"{self._base_url}/credential",
+                json={
+                    "job_id": job_id,
+                    "credential_name": credential_name,
+                    "value": value,
+                },
+            )
+            accepted = resp.status_code == 200
+            if not accepted:
+                log.warning(
+                    "Agent rejected credential relay for job %s: %d",
+                    job_id, resp.status_code,
+                )
+            return accepted
+        except httpx.HTTPError as exc:
+            log.error(
+                "Agent credential relay failed for job %s: %s", job_id, exc
+            )
+            return False
+
     # -- Abort -------------------------------------------------------------------
 
     async def abort(self, job_id: str) -> bool:

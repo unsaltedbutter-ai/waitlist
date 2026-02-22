@@ -1,7 +1,7 @@
 """Per-user conversation state machine.
 
 One session per user max. Manages transitions through the states:
-IDLE, OTP_CONFIRM, EXECUTING, AWAITING_OTP, INVOICE_SENT.
+IDLE, OTP_CONFIRM, EXECUTING, AWAITING_OTP, AWAITING_CREDENTIAL, INVOICE_SENT.
 """
 
 from __future__ import annotations
@@ -23,6 +23,7 @@ IDLE = "IDLE"
 OTP_CONFIRM = "OTP_CONFIRM"
 EXECUTING = "EXECUTING"
 AWAITING_OTP = "AWAITING_OTP"
+AWAITING_CREDENTIAL = "AWAITING_CREDENTIAL"
 INVOICE_SENT = "INVOICE_SENT"
 
 
@@ -46,6 +47,8 @@ class Session:
         self._config = config
         self._send_dm = send_dm
         self._send_operator_dm = send_operator_dm
+        # In-memory tracking for pending credential requests (keyed by user_npub)
+        self._pending_credentials: dict[str, str] = {}
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -263,6 +266,66 @@ class Session:
         # NOTE: No explicit log_message here. The inbound message was already
         # logged by nostr_handler with automatic OTP redaction (see db.py).
 
+    async def handle_credential_needed(
+        self, job_id: str, service: str, credential_name: str,
+    ) -> None:
+        """Agent callback: needs a credential. EXECUTING -> AWAITING_CREDENTIAL."""
+        session = await self._get_session_by_job_id(job_id)
+        if session is None:
+            log.warning("handle_credential_needed: no session for job %s", job_id)
+            return
+
+        user_npub = session["user_npub"]
+
+        # Track which credential we're waiting for
+        self._pending_credentials[user_npub] = credential_name
+
+        # Update state to AWAITING_CREDENTIAL
+        await self._db.upsert_session(
+            user_npub, AWAITING_CREDENTIAL, job_id=job_id,
+            otp_attempts=session["otp_attempts"],
+        )
+
+        # DM user for credential
+        await self._send_dm(
+            user_npub, messages.credential_needed(service, credential_name)
+        )
+
+        # Reset timeout timer (reuse OTP timeout)
+        await self._timers.cancel(OTP_TIMEOUT, job_id)
+        await self._timers.schedule_delay(
+            OTP_TIMEOUT, job_id, self._config.otp_timeout_seconds
+        )
+
+    async def handle_credential_input(
+        self, user_npub: str, value: str,
+    ) -> None:
+        """User sends a credential value. AWAITING_CREDENTIAL -> EXECUTING."""
+        session = await self._db.get_session(user_npub)
+        if session is None or session["state"] != AWAITING_CREDENTIAL:
+            log.warning(
+                "handle_credential_input: unexpected state for %s", user_npub
+            )
+            return
+
+        job_id = session["job_id"]
+        credential_name = self._pending_credentials.pop(user_npub, "unknown")
+
+        # Relay value to agent
+        await self._agent.relay_credential(job_id, credential_name, value)
+
+        # Update state to EXECUTING
+        await self._db.upsert_session(
+            user_npub, EXECUTING, job_id=job_id,
+            otp_attempts=session["otp_attempts"],
+        )
+
+        # Cancel timeout timer
+        await self._timers.cancel(OTP_TIMEOUT, job_id)
+
+        # DM acknowledgement
+        await self._send_dm(user_npub, messages.credential_received())
+
     async def handle_result(
         self,
         job_id: str,
@@ -271,7 +334,7 @@ class Session:
         error: str | None,
         duration_seconds: int,
     ) -> None:
-        """Agent callback: job finished. EXECUTING/AWAITING_OTP -> INVOICE_SENT or IDLE."""
+        """Agent callback: job finished. EXECUTING/AWAITING_OTP/AWAITING_CREDENTIAL -> INVOICE_SENT or IDLE."""
         session = await self._get_session_by_job_id(job_id)
         if session is None:
             log.warning("handle_result: no session for job %s", job_id)
@@ -455,8 +518,8 @@ class Session:
         job_id = session["job_id"]
         state = session["state"]
 
-        # If EXECUTING or AWAITING_OTP, abort the agent job
-        if state in (EXECUTING, AWAITING_OTP) and job_id:
+        # If EXECUTING, AWAITING_OTP, or AWAITING_CREDENTIAL, abort the agent job
+        if state in (EXECUTING, AWAITING_OTP, AWAITING_CREDENTIAL) and job_id:
             await self._agent.abort(job_id)
 
         # Cancel all timers for the job
