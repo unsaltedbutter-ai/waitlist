@@ -553,22 +553,43 @@ class PlaybookRecorder:
             steps.append({'action': 'type_text', 'value': '{email}'})
             print(f'    -> Step {len(steps)-1}: type_text "{{email}}" (auto)')
 
-            time.sleep(0.2)
-            keyboard.press_key('tab')
-            steps.append({'action': 'press_key', 'value': 'tab'})
-            print(f'    -> Step {len(steps)-1}: press_key "tab"')
-
-            # If email was pasted, add a delay before the password to simulate
-            # switching to password manager and copying the password.
             if email_pasted:
-                time.sleep(random.uniform(1.5, 3.5))
+                # Simulate switching to password manager: move mouse
+                # off-screen, defocus Chrome, wait, refocus, click password box.
+                time.sleep(random.uniform(0.3, 0.6))
+                self._simulate_app_switch(session, mouse)
+                time.sleep(random.uniform(2.0, 4.0))
+
+                from agent.input.window import focus_window_by_pid
+                focus_window_by_pid(session.pid)
+
+                # Click password box directly, then paste
+                self._click_bbox(
+                    password_box or email_box, session, screenshot_b64,
+                    ref_dir, steps, 'password input', coords_mod, mouse,
+                    chrome_offset=chrome_offset,
+                )
+                time.sleep(0.2)
+                keyboard.hotkey('command', 'a')
+                time.sleep(0.1)
+                pass_val = self.credentials.get('pass', '')
+                if pass_val:
+                    _clipboard_copy(pass_val)
+                    keyboard.hotkey('command', 'v')
+                    time.sleep(0.15)
             else:
                 time.sleep(0.2)
-            keyboard.hotkey('command', 'a')
-            time.sleep(0.1)
-            pass_val = self.credentials.get('pass', '')
-            if pass_val:
-                self._enter_credential(pass_val, keyboard)
+                keyboard.press_key('tab')
+                steps.append({'action': 'press_key', 'value': 'tab'})
+                print(f'    -> Step {len(steps)-1}: press_key "tab"')
+
+                time.sleep(0.2)
+                keyboard.hotkey('command', 'a')
+                time.sleep(0.1)
+                pass_val = self.credentials.get('pass', '')
+                if pass_val:
+                    self._enter_credential(pass_val, keyboard)
+
             steps.append({'action': 'type_text', 'value': '{pass}', 'sensitive': True})
             print(f'    -> Step {len(steps)-1}: type_text "{{pass}}" (auto)')
 
@@ -1000,6 +1021,24 @@ class PlaybookRecorder:
         print(f'{len(steps)} steps recorded.')
 
         return playbook_data
+
+    @staticmethod
+    def _simulate_app_switch(session, mouse_mod) -> None:
+        """Move mouse toward the dock and defocus Chrome.
+
+        Simulates a user switching to a password manager: mouse drifts
+        down toward the dock, then Finder is activated (blurring Chrome).
+        Caller is responsible for the wait duration and refocusing Chrome.
+        """
+        bounds = session.bounds
+        # Move mouse toward dock area (bottom-center of screen)
+        dock_x = bounds.get('x', 0) + bounds.get('width', 1280) // 2
+        dock_y = bounds.get('y', 0) + bounds.get('height', 900) + 60
+        mouse_mod.move_to(dock_x, dock_y, fast=False)
+
+        # Activate Finder (neutral, always running) to blur Chrome
+        from agent.input.window import focus_window
+        focus_window('Finder')
 
     @staticmethod
     def _enter_credential(value: str, keyboard) -> bool:

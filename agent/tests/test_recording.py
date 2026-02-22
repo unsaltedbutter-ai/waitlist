@@ -1074,9 +1074,13 @@ class TestRecorderIntegration:
         monkeypatch.setattr(rec_mod, 'crop_browser_chrome', lambda b64: (b64, 0))
         monkeypatch.setattr('agent.input.coords.image_to_screen', lambda ix, iy, bounds, **kw: (ix, iy))
         monkeypatch.setattr('agent.input.mouse.click', lambda x, y, **kw: None)
+        monkeypatch.setattr('agent.input.mouse.move_to', lambda x, y, **kw: None)
         monkeypatch.setattr('agent.input.keyboard.type_text', lambda text, speed='medium', accuracy='high': None)
         monkeypatch.setattr('agent.input.keyboard.press_key', lambda key: None)
+        monkeypatch.setattr('agent.input.keyboard.hotkey', lambda *keys: None)
         monkeypatch.setattr('agent.input.scroll.scroll', lambda direction, amount: None)
+        monkeypatch.setattr('agent.input.window.focus_window_by_pid', lambda pid: True)
+        monkeypatch.setattr('agent.input.window.focus_window', lambda name: True)
 
         # Patch _load_session and _save_session
         monkeypatch.setattr(
@@ -1114,16 +1118,27 @@ class TestRecorderIntegration:
         assert '{email}' in values
         assert '{pass}' in values
 
-        # Sign-in page handler: click email -> type email -> tab -> type pass -> enter
+        # Sign-in page handler: click email -> type email -> ... -> type pass -> enter
+        # The exact sequence varies (tab between fields when typed, or
+        # click password box when pasted with app-switch simulation).
         email_click_idx = next(
             i for i, s in enumerate(result['steps'])
             if s['action'] == 'click' and 'email' in s.get('target_description', '').lower()
         )
         assert result['steps'][email_click_idx + 1]['action'] == 'type_text'
         assert result['steps'][email_click_idx + 1]['value'] == '{email}'
-        assert result['steps'][email_click_idx + 2] == {'action': 'press_key', 'value': 'tab'}
-        assert result['steps'][email_click_idx + 3]['value'] == '{pass}'
-        assert result['steps'][email_click_idx + 4] == {'action': 'press_key', 'value': 'enter'}
+        # Find password type step (may be 2 or 3 steps after email)
+        pass_idx = next(
+            i for i, s in enumerate(result['steps'])
+            if s.get('action') == 'type_text' and s.get('value') == '{pass}'
+        )
+        assert pass_idx > email_click_idx + 1
+        # Enter follows password
+        enter_idx = next(
+            i for i, s in enumerate(result['steps'])
+            if i > pass_idx and s.get('action') == 'press_key' and s.get('value') == 'enter'
+        )
+        assert enter_idx == pass_idx + 1
 
         # Check password step is marked sensitive
         pass_steps = [s for s in type_steps if s['value'] == '{pass}']
@@ -1200,9 +1215,13 @@ class TestRecorderIntegration:
         monkeypatch.setattr(rec_mod, 'crop_browser_chrome', lambda b64: (b64, 0))
         monkeypatch.setattr('agent.input.coords.image_to_screen', lambda ix, iy, bounds, **kw: (ix, iy))
         monkeypatch.setattr('agent.input.mouse.click', lambda x, y, **kw: None)
+        monkeypatch.setattr('agent.input.mouse.move_to', lambda x, y, **kw: None)
         monkeypatch.setattr('agent.input.keyboard.type_text', lambda text, speed='medium', accuracy='high': None)
         monkeypatch.setattr('agent.input.keyboard.press_key', lambda key: None)
+        monkeypatch.setattr('agent.input.keyboard.hotkey', lambda *keys: None)
         monkeypatch.setattr('agent.input.scroll.scroll', lambda direction, amount: None)
+        monkeypatch.setattr('agent.input.window.focus_window_by_pid', lambda pid: True)
+        monkeypatch.setattr('agent.input.window.focus_window', lambda name: True)
         monkeypatch.setattr(
             PlaybookRecorder, '_load_session',
             staticmethod(lambda sf: fake_session),
@@ -1281,8 +1300,9 @@ class TestExecuteSigninPage:
             window_id = 99
             bounds = {'x': 0, 'y': 0, 'width': 1280, 'height': 900}
 
-        # Stub out window focus (no real window in tests)
+        # Stub out window focus/defocus (no real window in tests)
         monkeypatch.setattr('agent.input.window.focus_window_by_pid', lambda pid: True)
+        monkeypatch.setattr('agent.input.window.focus_window', lambda name: True)
 
         typed = []
         pressed = []
@@ -1312,6 +1332,10 @@ class TestExecuteSigninPage:
             @staticmethod
             def click(x, y, **kw):
                 clicked.append((x, y))
+
+            @staticmethod
+            def move_to(x, y, **kw):
+                pass
 
         class FakeScroll:
             @staticmethod
@@ -1573,19 +1597,20 @@ class TestExecuteSigninPage:
             ref_dir, steps, modules,
         )
         assert result == 'continue'
-        # click email, type/paste email, tab, type/paste pass, enter
-        assert len(steps) == 5
-        assert steps[0]['action'] == 'click'
-        assert steps[1] == {'action': 'type_text', 'value': '{email}'}
-        assert steps[2] == {'action': 'press_key', 'value': 'tab'}
-        assert steps[3] == {'action': 'type_text', 'value': '{pass}', 'sensitive': True}
-        assert steps[4] == {'action': 'press_key', 'value': 'enter'}
-        # Credentials entered via type or paste (random per call)
+        # Both credentials entered via type or paste (random per call).
+        # When email is pasted: click email, type email, click password, type pass, enter (no tab)
+        # When email is typed: click email, type email, tab, type/paste pass, enter
         entered = typed + clipboard
         assert 'user@test.com' in entered
         assert 'secret123' in entered
-        assert pressed == ['tab', 'enter']
-        assert len(clicked) == 1
+
+        # Check step structure (common parts)
+        assert steps[0]['action'] == 'click'  # email click
+        assert steps[1] == {'action': 'type_text', 'value': '{email}'}
+        # Password step and enter are always last two
+        assert steps[-2] == {'action': 'type_text', 'value': '{pass}', 'sensitive': True}
+        assert steps[-1] == {'action': 'press_key', 'value': 'enter'}
+        assert 'enter' in pressed
 
     def test_user_only_enters_email_and_enter(self, monkeypatch, tmp_path) -> None:
         recorder, session, ref_dir, modules, typed, pressed, clicked, hotkeys = self._setup(monkeypatch, tmp_path)
