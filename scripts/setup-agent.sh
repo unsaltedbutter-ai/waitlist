@@ -89,6 +89,13 @@ check_only() {
         ok=false
     fi
 
+    # Private prompts
+    if "$VENV_DIR/bin/pip" show unsaltedbutter-prompts &>/dev/null 2>&1; then
+        echo "Prompts: unsaltedbutter-prompts (installed)"
+    else
+        echo "Prompts: NOT installed (using generic stubs)"
+    fi
+
     # Chrome
     local chrome="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
     if [ -x "$chrome" ]; then
@@ -158,7 +165,24 @@ main() {
     "$VENV_DIR/bin/pip" install -r "$COMPONENT_DIR/requirements.txt" --quiet
     echo "Dependencies installed."
 
-    # 5. Env files
+    # 5. Private prompts package (optional but recommended)
+    PROMPTS_DIR="$PROJECT_ROOT/../unsaltedbutter-prompts"
+    if [ -d "$PROMPTS_DIR/unsaltedbutter_prompts" ]; then
+        echo ""
+        echo "Installing private prompts package..."
+        "$VENV_DIR/bin/pip" install -e "$PROMPTS_DIR" --quiet
+        echo "Prompts: unsaltedbutter-prompts (installed from $PROMPTS_DIR)"
+    else
+        echo ""
+        echo "NOTE: Private prompts package not found at $PROMPTS_DIR"
+        echo "  The agent will use generic stub prompts (fine for development)."
+        echo "  For production, clone the prompts repo as a sibling directory:"
+        echo "    cd $PROJECT_ROOT/.."
+        echo "    git clone git@github.unsaltedbutter:unsaltedbutter-ai/prompts.git unsaltedbutter-prompts"
+        echo "    Then re-run this script."
+    fi
+
+    # 6. Env files
     mkdir -p "$ENV_DIR"
     NEEDS_CONFIG=false
 
@@ -187,7 +211,7 @@ main() {
         echo "Config: $ENV_FILE (exists, permissions verified)"
     fi
 
-    # 6. Chrome check
+    # 7. Chrome check
     local chrome="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
     if [ -x "$chrome" ]; then
         echo "Chrome: installed"
@@ -196,7 +220,7 @@ main() {
         echo "  The agent needs Google Chrome installed to run."
     fi
 
-    # 7. Smoke test
+    # 8. Smoke test
     echo ""
     echo "Running import smoke test..."
     if PYTHONPATH="$PROJECT_ROOT" "$VENV_DIR/bin/python" -c "from agent.config import AGENT_PORT; import pyautogui; import httpx; print('All imports OK')" 2>&1; then
@@ -205,7 +229,7 @@ main() {
         echo "WARNING: Import check failed. Check dependencies."
     fi
 
-    # 8. Summary
+    # 9. Summary
     echo ""
     echo "=== Setup Complete ==="
     echo ""
