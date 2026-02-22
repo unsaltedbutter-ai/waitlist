@@ -528,6 +528,8 @@ class Session:
         )
 
         # Insert a local job record so callbacks can find it
+        from datetime import datetime, timezone
+
         await self._db.upsert_job({
             "id": job_id,
             "user_npub": user_npub,
@@ -535,6 +537,7 @@ class Session:
             "action": action,
             "trigger": "cli",
             "status": "active",
+            "created_at": datetime.now(timezone.utc).isoformat(),
         })
 
         # Dispatch to agent
