@@ -81,28 +81,32 @@ class Session:
             log.error("Job %s (%s %s) failed: %s", job_id, action, service_id, error)
 
         # Update VPS and local job status to failed
-        try:
-            await self._api.update_job_status(job_id, "failed")
-        except Exception:
-            log.exception("Failed to update VPS job status for %s", job_id)
+        # CLI-dispatched jobs don't exist on the VPS, skip remote update
+        if not job_id.startswith("cli-"):
+            try:
+                await self._api.update_job_status(job_id, "failed")
+            except Exception:
+                log.exception("Failed to update VPS job status for %s", job_id)
         await self._db.update_job_status(job_id, "failed")
 
-        # Cancel: DM user immediately (constraint #11). Resume: silent.
-        if action == "cancel":
-            await self._send_dm(
-                user_npub,
-                messages.action_failed_cancel(service_id),
-            )
-        else:
-            await self._send_dm(
-                user_npub,
-                messages.action_failed_resume(service_id),
-            )
+        # CLI jobs: no DMs, CLI is polling for result
+        if not job_id.startswith("cli-"):
+            # Cancel: DM user immediately (constraint #11). Resume: silent.
+            if action == "cancel":
+                await self._send_dm(
+                    user_npub,
+                    messages.action_failed_cancel(service_id),
+                )
+            else:
+                await self._send_dm(
+                    user_npub,
+                    messages.action_failed_resume(service_id),
+                )
 
-        # Always notify operator
-        await self._send_operator_dm(
-            messages.operator_job_failed(job_id, service_id, error)
-        )
+            # Always notify operator
+            await self._send_operator_dm(
+                messages.operator_job_failed(job_id, service_id, error)
+            )
 
         # Clean up session
         await self._db.delete_session(user_npub)
@@ -355,54 +359,60 @@ class Session:
         action = job["action"]
 
         if success:
-            # Send success DM (different per action type)
-            if action == "cancel":
-                await self._send_dm(
-                    user_npub,
-                    messages.action_success_cancel(service_id, access_end_date),
-                )
+            if job_id.startswith("cli-"):
+                # CLI jobs: no DM, no invoice, just clean up session
+                log.info("CLI job %s succeeded", job_id)
+                await self._db.update_job_status(job_id, "completed")
+                await self._db.delete_session(user_npub)
             else:
-                await self._send_dm(
-                    user_npub,
-                    messages.action_success_resume(service_id),
+                # Send success DM (different per action type)
+                if action == "cancel":
+                    await self._send_dm(
+                        user_npub,
+                        messages.action_success_cancel(service_id, access_end_date),
+                    )
+                else:
+                    await self._send_dm(
+                        user_npub,
+                        messages.action_success_resume(service_id),
+                    )
+
+                # Update local job with access_end_date if present
+                update_kwargs = {}
+                if access_end_date:
+                    update_kwargs["access_end_date"] = access_end_date
+
+                # Create invoice via VPS API
+                invoice_data = await self._api.create_invoice(
+                    job_id, self._config.action_price_sats, user_npub
                 )
 
-            # Update local job with access_end_date if present
-            update_kwargs = {}
-            if access_end_date:
-                update_kwargs["access_end_date"] = access_end_date
+                # Update local job with invoice_id and amount
+                await self._db.update_job_status(
+                    job_id,
+                    "active",
+                    invoice_id=invoice_data["invoice_id"],
+                    amount_sats=self._config.action_price_sats,
+                    **update_kwargs,
+                )
 
-            # Create invoice via VPS API
-            invoice_data = await self._api.create_invoice(
-                job_id, self._config.action_price_sats, user_npub
-            )
+                # Send invoice DM
+                await self._send_dm(
+                    user_npub,
+                    messages.invoice(
+                        invoice_data["amount_sats"], invoice_data["bolt11"]
+                    ),
+                )
 
-            # Update local job with invoice_id and amount
-            await self._db.update_job_status(
-                job_id,
-                "active",
-                invoice_id=invoice_data["invoice_id"],
-                amount_sats=self._config.action_price_sats,
-                **update_kwargs,
-            )
+                # Transition session to INVOICE_SENT
+                await self._db.upsert_session(
+                    user_npub, INVOICE_SENT, job_id=job_id
+                )
 
-            # Send invoice DM
-            await self._send_dm(
-                user_npub,
-                messages.invoice(
-                    invoice_data["amount_sats"], invoice_data["bolt11"]
-                ),
-            )
-
-            # Transition session to INVOICE_SENT
-            await self._db.upsert_session(
-                user_npub, INVOICE_SENT, job_id=job_id
-            )
-
-            # Schedule payment expiry timer (24h)
-            await self._timers.schedule_delay(
-                PAYMENT_EXPIRY, job_id, self._config.payment_expiry_seconds
-            )
+                # Schedule payment expiry timer (24h)
+                await self._timers.schedule_delay(
+                    PAYMENT_EXPIRY, job_id, self._config.payment_expiry_seconds
+                )
         else:
             await self._fail_job(user_npub, job, error)
 
