@@ -1159,6 +1159,29 @@ class TestRecorderIntegration:
             saved = json.load(f)
         assert saved == result
 
+        # Verify manifest has correct page boundaries.
+        # VLM flow: user_pass -> signed_in -> click Account -> click Cancel -> click Finish -> done
+        # Expected pages:
+        #   0: sign-in (user_pass form submit)
+        #   1: cancel browse (click Account)
+        #   2: cancel settings (click Cancel Membership, checkpoint)
+        #   3: cancel confirm (click Finish Cancellation, checkpoint)
+        # signed_in and done iterations produce empty pages that get filtered.
+        manifest_path = tmp_path / 'ref' / 'netflix_cancel' / '_manifest.json'
+        assert manifest_path.exists()
+        with open(manifest_path) as f:
+            manifest = json.load(f)
+        assert manifest['service'] == 'netflix'
+        assert manifest['flow'] == 'cancel'
+        pages = manifest['pages']
+        assert len(pages) == 4, f'Expected 4 pages, got {len(pages)}: {pages}'
+        assert pages[0]['label'] == 'sign-in'
+        assert pages[0]['boundary'] == 'submit'
+        assert pages[1]['label'] == 'cancel'
+        assert pages[1]['boundary'] == 'click'
+        assert pages[2]['boundary'] == 'checkpoint'
+        assert pages[3]['boundary'] == 'checkpoint'
+
     def test_resume_includes_tier(self, monkeypatch, tmp_path) -> None:
         """Resume playbooks with plan_tier should include 'tier' in output."""
         responses = [
@@ -1251,6 +1274,179 @@ class TestRecorderIntegration:
             saved = json.load(f)
         assert saved['tier'] == 'premium'
 
+    def test_multi_step_signin_creates_page_per_screen(self, monkeypatch, tmp_path) -> None:
+        """Multi-step sign-in: each sub-screen (email, code, profile) gets its own page."""
+        responses = [
+            # Sign-in step 1: user_only (email entry)
+            {'page_type': 'user_only', 'email_box': [400, 300, 700, 330],
+             'password_box': None, 'button_box': [400, 400, 700, 440],
+             'profile_box': None, 'confidence': 0.95,
+             'reasoning': 'Email-only login page'},
+            # Sign-in step 2: email_code_multi (4-digit code)
+            {'page_type': 'email_code_multi', 'email_box': None, 'password_box': None,
+             'button_box': [400, 420, 600, 460], 'profile_box': None,
+             'code_boxes': [
+                 {'label': 'code_1', 'box': [380, 320, 420, 360]},
+                 {'label': 'code_2', 'box': [430, 320, 470, 360]},
+                 {'label': 'code_3', 'box': [480, 320, 520, 360]},
+                 {'label': 'code_4', 'box': [530, 320, 570, 360]},
+             ],
+             'confidence': 0.90, 'reasoning': 'Four digit inputs'},
+            # Sign-in step 3: profile_select
+            {'page_type': 'profile_select', 'email_box': None, 'password_box': None,
+             'button_box': None, 'profile_box': [200, 300, 350, 450],
+             'confidence': 0.94, 'reasoning': 'Profile picker'},
+            # Sign-in step 4: signed_in (phase transition)
+            {'page_type': 'signed_in', 'email_box': None, 'password_box': None,
+             'button_box': None, 'profile_box': None,
+             'confidence': 0.98, 'reasoning': 'Signed in'},
+            # Cancel step 1: click Cancel
+            {'state': 'Account page', 'action': 'click',
+             'target_description': 'Cancel Membership link',
+             'bounding_box': [300, 500, 500, 530],
+             'text_to_type': '', 'key_to_press': '',
+             'confidence': 0.91, 'reasoning': 'Found cancel link',
+             'is_checkpoint': True, 'checkpoint_prompt': ''},
+            # Cancel step 2: scroll down to find button
+            {'state': 'Retention page', 'action': 'scroll_down',
+             'target_description': '', 'bounding_box': None,
+             'text_to_type': '', 'key_to_press': '',
+             'confidence': 0.85, 'reasoning': 'Need to scroll to see button',
+             'is_checkpoint': False, 'checkpoint_prompt': ''},
+            # Cancel step 3: click Continue Cancellation
+            {'state': 'Retention page scrolled', 'action': 'click',
+             'target_description': 'Continue Cancellation button',
+             'bounding_box': [400, 600, 600, 640],
+             'text_to_type': '', 'key_to_press': '',
+             'confidence': 0.92, 'reasoning': 'Reject retention offer',
+             'is_checkpoint': False, 'checkpoint_prompt': ''},
+            # Cancel step 4: done
+            {'state': 'Cancelled', 'action': 'done',
+             'target_description': '', 'bounding_box': None,
+             'text_to_type': '', 'key_to_press': '',
+             'confidence': 0.99, 'reasoning': 'Complete',
+             'is_checkpoint': False, 'checkpoint_prompt': '',
+             'billing_end_date': '2026-03-15'},
+        ]
+        call_idx = {'n': 0}
+
+        class MockVLM:
+            last_inference_ms = 0
+            _normalized_coords = False
+            MAX_IMAGE_WIDTH = 1280
+
+            def analyze(self, screenshot_b64, system_prompt, user_message=''):
+                idx = call_idx['n']
+                call_idx['n'] += 1
+                if idx < len(responses):
+                    return responses[idx], 1.0
+                return {'action': 'done', 'state': 'fallback', 'confidence': 1.0}, 1.0
+
+            def close(self):
+                pass
+
+        class FakeSession:
+            pid = 12345
+            process = None
+            profile_dir = str(tmp_path / 'chrome-profile')
+            window_id = 99
+            bounds = {'x': 0, 'y': 0, 'width': 1280, 'height': 900}
+
+        fake_session = FakeSession()
+
+        import agent.recording.recorder as rec_mod
+        monkeypatch.setattr(rec_mod, 'PLAYBOOK_DIR', tmp_path)
+        monkeypatch.setattr(rec_mod, 'PLAYBOOK_REF_DIR', tmp_path / 'ref')
+        monkeypatch.setattr('time.sleep', lambda _: None)
+        # Operator enters verification code
+        monkeypatch.setattr('builtins.input', lambda _: '1234')
+
+        ss_counter = {'n': 0}
+        def _unique_screenshot(wid):
+            ss_counter['n'] += 1
+            return f'fake_{ss_counter["n"]}'
+
+        monkeypatch.setattr('agent.browser.create_session', lambda: fake_session)
+        monkeypatch.setattr('agent.browser.get_session_window', lambda s: s.bounds)
+        monkeypatch.setattr('agent.browser.navigate', lambda s, url, fast=False: None)
+        monkeypatch.setattr('agent.screenshot.capture_to_base64', _unique_screenshot)
+        monkeypatch.setattr('agent.screenshot.capture_window', lambda wid, path: None)
+        monkeypatch.setattr(rec_mod, 'crop_browser_chrome', lambda b64: (b64, 0))
+        monkeypatch.setattr('agent.input.coords.image_to_screen', lambda ix, iy, bounds, **kw: (ix, iy))
+        monkeypatch.setattr('agent.input.mouse.click', lambda x, y, **kw: None)
+        monkeypatch.setattr('agent.input.mouse.move_to', lambda x, y, **kw: None)
+        monkeypatch.setattr('agent.input.keyboard.type_text', lambda text, speed='medium', accuracy='high': None)
+        monkeypatch.setattr('agent.input.keyboard.press_key', lambda key: None)
+        monkeypatch.setattr('agent.input.keyboard.hotkey', lambda *keys: None)
+        monkeypatch.setattr('agent.input.scroll.scroll', lambda direction, amount: None)
+        monkeypatch.setattr('agent.input.window.focus_window_by_pid', lambda pid: True)
+        monkeypatch.setattr('agent.input.window.focus_window', lambda name: True)
+        monkeypatch.setattr('agent.recording.recorder._clipboard_copy', lambda t: None)
+        monkeypatch.setattr(PlaybookRecorder, '_load_session', staticmethod(lambda sf: fake_session))
+        monkeypatch.setattr(PlaybookRecorder, '_save_session', staticmethod(lambda s, sf: None))
+
+        recorder = PlaybookRecorder.__new__(PlaybookRecorder)
+        recorder.vlm = MockVLM()
+        recorder.service = 'netflix'
+        recorder.flow = 'cancel'
+        recorder.credentials = {'email': 'test@netflix.com', 'pass': 'hunter2'}
+        recorder.plan_tier = ''
+        recorder.plan_display = ''
+        recorder.variant = ''
+        recorder.max_steps = 60
+        recorder.settle_delay = 0
+        recorder.verbose = False
+        recorder.debug = False
+        recorder._prompts = recorder._build_prompt_chain()
+        recorder._prompt_idx = 0
+        recorder._prompt_labels = recorder._build_prompt_labels()
+        recorder._pages = []
+        recorder._current_page_start = None
+        recorder._current_page_screenshot = None
+        recorder._current_page_label = ''
+        recorder._page_count = 0
+
+        result = recorder.run('https://www.netflix.com/login')
+
+        # Verify manifest page boundaries
+        manifest_path = tmp_path / 'ref' / 'netflix_cancel' / '_manifest.json'
+        assert manifest_path.exists()
+        with open(manifest_path) as f:
+            manifest = json.load(f)
+
+        pages = manifest['pages']
+        # Expected pages (each view = one action):
+        #   0: sign-in email_only (submit after enter)
+        #   1: sign-in code_entry (submit after verify button)
+        #   2: sign-in profile_select (submit after clicking profile)
+        #   3: cancel (click Cancel Membership, checkpoint)
+        #   4: cancel (scroll down)
+        #   5: cancel (click Continue Cancellation)
+        # Empty pages (signed_in, done) are filtered out.
+        assert len(pages) == 6, f'Expected 6 pages, got {len(pages)}: {[p["label"] for p in pages]}'
+
+        # Sign-in sub-screens each get their own page
+        assert pages[0]['label'] == 'sign-in'
+        assert pages[0]['boundary'] == 'submit'
+        assert pages[1]['label'] == 'sign-in'
+        assert pages[1]['boundary'] == 'submit'
+        assert pages[2]['label'] == 'sign-in'
+        assert pages[2]['boundary'] == 'submit'
+
+        # Cancel pages: each action is its own view
+        assert pages[3]['label'] == 'cancel'
+        assert pages[3]['boundary'] == 'checkpoint'
+        assert pages[4]['label'] == 'cancel'
+        assert pages[4]['boundary'] == 'scroll'
+        assert pages[5]['label'] == 'cancel'
+        assert pages[5]['boundary'] == 'click'
+
+        # Each view has exactly one action
+        for page in pages[3:]:
+            start, end = page['step_range']
+            page_steps = result['steps'][start:end + 1]
+            assert len(page_steps) == 1, f'Page {page["page_index"]} has {len(page_steps)} steps, expected 1'
+
     def test_variant_in_filename(self, monkeypatch, tmp_path) -> None:
         """Verify variant suffix appears in the output filename."""
         # Quick test: just check filename generation
@@ -1294,6 +1490,13 @@ class TestExecuteSigninPage:
         recorder.credentials = {'email': 'user@test.com', 'pass': 'secret123'}
         recorder.verbose = False
         recorder.debug = False
+        # Page boundary tracking (normally set by __init__)
+        recorder._pages = []
+        recorder._current_page_start = None
+        recorder._current_page_screenshot = None
+        recorder._current_page_label = ''
+        recorder._page_count = 0
+        recorder._pending_page_open = False
 
         class FakeSession:
             pid = 12345

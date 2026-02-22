@@ -418,6 +418,8 @@ class PlaybookRecorder:
             browser_mod.navigate(session, url, fast=True)
             steps.append({'action': 'navigate', 'url': '{email_link}'})
             print(f'    -> Step {len(steps)-1}: navigate to verification URL')
+            self._close_current_page(len(steps), 'submit')
+            self._pending_page_open = True
             return 'continue'
 
         # Code entry states: prompt operator for code, type it into the browser
@@ -485,6 +487,8 @@ class PlaybookRecorder:
                 time.sleep(0.2)
                 keyboard.press_key('enter')
 
+            self._close_current_page(len(steps), 'submit')
+            self._pending_page_open = True
             return 'continue'
 
         # Unknown state: try to auto-recover by executing the VLM's suggested actions
@@ -513,6 +517,8 @@ class PlaybookRecorder:
                     time.sleep(0.5)
                 else:
                     print(f'    Skipping unknown action: {act_type}')
+            self._close_current_page(len(steps), 'submit')
+            self._pending_page_open = True
             return 'continue'
 
         # Save ref screenshot (reuse the existing capture, no second screenshot)
@@ -526,6 +532,8 @@ class PlaybookRecorder:
                 'first profile', coords_mod, mouse,
                 chrome_offset=chrome_offset,
             )
+            self._close_current_page(len(steps), 'submit')
+            self._pending_page_open = True
             return 'continue'
 
         if page_type == 'button_only' and button_box:
@@ -534,6 +542,8 @@ class PlaybookRecorder:
                 'Sign In button', coords_mod, mouse, is_checkpoint=True,
                 chrome_offset=chrome_offset,
             )
+            self._close_current_page(len(steps), 'submit')
+            self._pending_page_open = True
             return 'continue'
 
         if page_type == 'user_pass' and email_box:
@@ -597,6 +607,8 @@ class PlaybookRecorder:
             keyboard.press_key('enter')
             steps.append({'action': 'press_key', 'value': 'enter'})
             print(f'    -> Step {len(steps)-1}: press_key "enter"')
+            self._close_current_page(len(steps), 'submit')
+            self._pending_page_open = True
             time.sleep(1.0)  # let form submit before next screenshot
             return 'continue'
 
@@ -620,6 +632,8 @@ class PlaybookRecorder:
             keyboard.press_key('enter')
             steps.append({'action': 'press_key', 'value': 'enter'})
             print(f'    -> Step {len(steps)-1}: press_key "enter"')
+            self._close_current_page(len(steps), 'submit')
+            self._pending_page_open = True
             time.sleep(1.0)  # let form submit before next screenshot
             return 'continue'
 
@@ -643,6 +657,8 @@ class PlaybookRecorder:
             keyboard.press_key('enter')
             steps.append({'action': 'press_key', 'value': 'enter'})
             print(f'    -> Step {len(steps)-1}: press_key "enter"')
+            self._close_current_page(len(steps), 'submit')
+            self._pending_page_open = True
             time.sleep(1.0)  # let form submit before next screenshot
             return 'continue'
 
@@ -912,11 +928,6 @@ class PlaybookRecorder:
                 steps.append(step_data)
                 print(f'    -> Step {step_num}: click "{target_desc}" bbox={scaled_bbox}')
 
-                # Checkpoint clicks mark page boundaries
-                if is_checkpoint:
-                    self._close_current_page(len(steps), 'checkpoint')
-                    self._pending_page_open = True
-
                 # Auto-type after clicking an input field. VLMs can't
                 # distinguish focused vs unfocused empty fields visually,
                 # so we infer the credential from the target description
@@ -941,6 +952,12 @@ class PlaybookRecorder:
                         type_step['sensitive'] = True
                     steps.append(type_step)
                     print(f'    -> Step {step_num}: type_text "{template_var}" (auto)')
+                    # Clicked an input field and typed: same view, no boundary.
+                else:
+                    # Clicked a button or link: view changes, end this script.
+                    boundary_type = 'checkpoint' if is_checkpoint else 'click'
+                    self._close_current_page(len(steps), boundary_type)
+                    self._pending_page_open = True
 
             elif action == 'type_text':
                 template_var, actual_value, sensitive = _resolve_credential(
@@ -974,6 +991,10 @@ class PlaybookRecorder:
                 })
                 print(f'    -> Step {step_num}: scroll {direction} ({scroll_clicks} clicks, ~{scroll_clicks * px_per_click}px)')
 
+                # Scroll changes the view; end this script.
+                self._close_current_page(len(steps), 'scroll')
+                self._pending_page_open = True
+
             elif action == 'press_key' and key_to_press:
                 keyboard.press_key(key_to_press)
                 steps.append({
@@ -981,6 +1002,10 @@ class PlaybookRecorder:
                     'value': key_to_press,
                 })
                 print(f'    -> Step {step_num}: press_key "{key_to_press}"')
+
+                # Key press (enter, etc.) changes the view; end this script.
+                self._close_current_page(len(steps), 'submit')
+                self._pending_page_open = True
 
             elif action == 'wait':
                 # VLM says page is loading, just wait (no step recorded)
