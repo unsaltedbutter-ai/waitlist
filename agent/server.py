@@ -28,7 +28,7 @@ import httpx
 from aiohttp import web
 from dotenv import load_dotenv
 
-from agent.config import AGENT_PORT, VLM_KEY, VLM_MODEL, VLM_URL
+from agent.config import AGENT_PORT
 from agent.playbook import ExecutionResult
 from agent.profile import NORMAL, PROFILES
 from agent.recording.vlm_client import VLMClient
@@ -106,15 +106,22 @@ class Agent:
         self._loop = asyncio.get_running_loop()
         self._http_client = httpx.AsyncClient(timeout=30.0)
 
+        # Read VLM config fresh from env (dotenv runs before start(), but
+        # after module imports, so module-level constants are stale).
+        vlm_url = os.environ.get("VLM_URL", "")
+        vlm_key = os.environ.get("VLM_KEY", "")
+        vlm_model = os.environ.get("VLM_MODEL", "qwen3-vl-32b")
+
         # Create VLM client
-        if not VLM_URL:
+        if not vlm_url:
             log.warning("VLM_URL not set; jobs will fail until configured")
         self._vlm = VLMClient(
-            base_url=VLM_URL or "http://localhost:8080",
-            api_key=VLM_KEY,
-            model=VLM_MODEL,
+            base_url=vlm_url or "http://localhost:8080",
+            api_key=vlm_key,
+            model=vlm_model,
         )
-        log.info("VLM client: model=%s url=%s", VLM_MODEL, VLM_URL or "(not set)")
+        self._vlm_model = vlm_model
+        log.info("VLM client: model=%s url=%s", vlm_model, vlm_url or "(not set)")
 
         # Register routes
         self._app.router.add_post("/execute", self._handle_execute)
@@ -323,7 +330,7 @@ class Agent:
         status: dict = {
             "ok": True,
             "version": GIT_HASH,
-            "vlm_model": VLM_MODEL,
+            "vlm_model": self._vlm_model,
         }
         if self._active_job:
             status["active_job"] = self._active_job.job_id
@@ -613,7 +620,7 @@ async def run() -> None:
         "Agent %s running (port=%d, vlm=%s, profile=%s)",
         GIT_HASH,
         port,
-        VLM_MODEL,
+        os.environ.get("VLM_MODEL", "qwen3-vl-32b"),
         profile_name,
     )
 
