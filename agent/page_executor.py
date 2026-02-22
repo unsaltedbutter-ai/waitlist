@@ -278,8 +278,9 @@ class PageExecutor:
                 )
                 mouse.click(int(screen_x), int(screen_y), fast=self._profile.mouse_fast)
 
-            # Capture for operator review
+            # Capture for operator review + dynamic cache
             self._capture_for_review(cropped_img, flow, result)
+            self._cache_dynamic_page(cropped_img, flow, result)
 
             duration = round(time.monotonic() - step_start, 2)
             step_results.append(StepResult(
@@ -345,6 +346,59 @@ class PageExecutor:
             log.info('Captured unknown page for review: %s', prefix)
         except Exception:
             log.warning('Failed to capture page for review', exc_info=True)
+
+    def _cache_dynamic_page(
+        self,
+        img: 'Image.Image',
+        flow: FlowConfig,
+        vlm_result: InferActionResult,
+    ) -> None:
+        """Cache a VLM fallback result as a dynamic page entry."""
+        try:
+            ts = int(time.time() * 1000)
+            page_id = f'{flow.service}_{flow.flow}_dyn_{ts}'
+
+            self._cache.insert(
+                page_id, flow.service, [flow.flow], img,
+                source='dynamic',
+            )
+
+            # Build a single-action page playbook and save it
+            from agent.config import PAGES_DIR
+            from agent.page_playbook import PagePlaybook
+            from agent.playbook import PlaybookStep
+
+            step_dict: dict = {'action': vlm_result.action}
+            if vlm_result.action == 'click':
+                step_dict['bounding_box'] = [
+                    vlm_result.target_x, vlm_result.target_y,
+                    vlm_result.target_x, vlm_result.target_y,
+                ]
+                step_dict['target_description'] = vlm_result.reasoning
+            elif vlm_result.action == 'type_text':
+                step_dict['text_to_type'] = vlm_result.text
+            elif vlm_result.action in ('scroll_down', 'scroll_up'):
+                step_dict['direction'] = vlm_result.action.split('_')[1]
+
+            page_pb = PagePlaybook(
+                page_id=page_id,
+                service=flow.service,
+                flows=(flow.flow,),
+                actions=(PlaybookStep.from_dict(step_dict),),
+                wait_after_sec=(1.5, 3.0),
+                terminal=False,
+                notes=f'Dynamic VLM fallback (confidence: {vlm_result.confidence})',
+            )
+
+            PAGES_DIR.mkdir(parents=True, exist_ok=True)
+            page_path = PAGES_DIR / f'{page_id}.json'
+            with open(page_path, 'w') as f:
+                json.dump(page_pb.to_dict(), f, indent=2)
+                f.write('\n')
+
+            log.info('Cached dynamic page: %s', page_id)
+        except Exception:
+            log.warning('Failed to cache dynamic page', exc_info=True)
 
     # ------------------------------------------------------------------
     # Helpers

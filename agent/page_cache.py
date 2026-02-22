@@ -32,6 +32,7 @@ CREATE TABLE IF NOT EXISTS page_hashes (
     sha256_full TEXT NOT NULL,
     sha256_blurred TEXT NOT NULL,
     phash TEXT NOT NULL,
+    source TEXT NOT NULL DEFAULT 'learned',
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     last_hit TEXT,
     hit_count INTEGER NOT NULL DEFAULT 0
@@ -57,6 +58,19 @@ class PageCache:
         self._conn = sqlite3.connect(self._db_path)
         self._conn.row_factory = sqlite3.Row
         self._conn.executescript(_SCHEMA)
+        self._migrate()
+
+    def _migrate(self) -> None:
+        """Add columns that may be missing from older databases."""
+        cols = {
+            row[1]
+            for row in self._conn.execute('PRAGMA table_info(page_hashes)')
+        }
+        if 'source' not in cols:
+            self._conn.execute(
+                "ALTER TABLE page_hashes ADD COLUMN source TEXT NOT NULL DEFAULT 'learned'"
+            )
+            self._conn.commit()
 
     # ------------------------------------------------------------------
     # Lookup
@@ -146,15 +160,20 @@ class PageCache:
 
     def insert(
         self, page_id: str, service: str, flows: list[str], img: Image.Image,
+        *, source: str = 'learned',
     ) -> None:
-        """Insert a new page hash entry with its flow associations."""
+        """Insert a new page hash entry with its flow associations.
+
+        Args:
+            source: 'learned' (from playbook save) or 'dynamic' (from VLM fallback at runtime).
+        """
         sha_full, sha_blur, phash_hex = compute_all_hashes(img)
         self._conn.execute(
             """
-            INSERT INTO page_hashes (page_id, service, sha256_full, sha256_blurred, phash)
-            VALUES (?, ?, ?, ?, ?)
+            INSERT INTO page_hashes (page_id, service, sha256_full, sha256_blurred, phash, source)
+            VALUES (?, ?, ?, ?, ?, ?)
             """,
-            (page_id, service, sha_full, sha_blur, phash_hex),
+            (page_id, service, sha_full, sha_blur, phash_hex, source),
         )
         for flow in flows:
             self._conn.execute(
@@ -179,6 +198,30 @@ class PageCache:
             'entries': row['cnt'],
             'total_hits': row['hits'],
         }
+
+    def expire_dynamic(self, max_age_days: int = 14, min_hits: int = 2) -> int:
+        """Delete dynamic entries older than max_age_days with fewer than min_hits.
+
+        Learned entries are never expired. Returns number of rows deleted.
+        """
+        cur = self._conn.execute(
+            """
+            DELETE FROM page_hashes
+            WHERE source = 'dynamic'
+              AND hit_count < ?
+              AND created_at < datetime('now', ? || ' days')
+            """,
+            (min_hits, f'-{max_age_days}'),
+        )
+        deleted = cur.rowcount
+        if deleted:
+            # Clean up orphaned page_flows entries
+            self._conn.execute("""
+                DELETE FROM page_flows
+                WHERE page_id NOT IN (SELECT DISTINCT page_id FROM page_hashes)
+            """)
+        self._conn.commit()
+        return deleted
 
     # ------------------------------------------------------------------
     # Lifecycle
