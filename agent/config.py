@@ -5,8 +5,6 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-# --- Inference (Mac Studio) ---
-INFERENCE_URL = os.getenv('STUDIO_URL', 'http://192.168.1.100:8420')
 AGENT_PORT = int(os.getenv('AGENT_PORT', '8421'))
 
 # --- VLM (production executor) ---
@@ -34,7 +32,7 @@ def _resolve_playbook_dir() -> Path:
         if p.is_dir():
             return p
     try:
-        from unsaltedbutter_prompts.playbooks import get_playbook_dir  # type: ignore[import-untyped]
+        from unsaltedbutter_prompts.dev.playbooks import get_playbook_dir  # type: ignore[import-untyped]
         return get_playbook_dir()
     except ImportError:
         pass
@@ -48,7 +46,6 @@ SCREENSHOT_DIR = Path('/tmp/ub-screenshots')
 # --- Timeouts (seconds) ---
 STEP_TIMEOUT = 60.0
 TOTAL_EXECUTION_TIMEOUT = 300.0
-INFERENCE_TIMEOUT = 45.0
 PAGE_LOAD_WAIT = 2.5
 
 # --- Recording ---

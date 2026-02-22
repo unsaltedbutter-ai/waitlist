@@ -57,7 +57,6 @@ unsaltedbutter.ai/
 |-- agent/                       <- Python agent (BUILT)
 |-- orchestrator/                <- Python orchestrator (BUILT)
 |-- nostr-bot/                   <- Python Nostr bot (BUILT)
-|-- inference/                   <- Inference server (SKELETON, blocked on hardware)
 +-- scripts/                     <- deployment + ops scripts
 ```
 
@@ -66,7 +65,7 @@ unsaltedbutter.ai/
 - **Web**: Next.js 14+ (App Router), TypeScript, PostgreSQL 16, BTCPay Server
 - **Agent**: Python 3.11+, pyautogui, pynput, Pillow, pyobjc (macOS)
 - **Orchestrator**: Python 3.11+, nostr-sdk, httpx
-- **Inference**: Qwen3-VL-32B (Q4) via llama.cpp/MLX on Mac Studio M3 Ultra
+- **Inference**: Qwen3-VL-32B via llama.cpp on Mac Studio (OpenAI-compatible HTTP)
 - **Payments**: BTCPay Server (self-hosted, Lightning Network): BTC only, no Stripe
 - **Auth**: Nostr only (NIP-07 + OTP via bot), JWT sessions
 - **Encryption**: AES-256-GCM, local keyfile (never in DB or env vars)
@@ -84,4 +83,4 @@ unsaltedbutter.ai/
 - All BTC held by company. Diamond hands.
 
 ## Current Status
-All components built and deployed. Inference server blocked on Mac Studio hardware. See MEMORY.md for test counts and remaining work.
+All components built and deployed. See MEMORY.md for test counts and remaining work.

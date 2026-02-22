@@ -15,7 +15,7 @@ and the recorder substitutes locally.
 from __future__ import annotations
 
 try:
-    from unsaltedbutter_prompts.recording import (  # type: ignore[import-untyped]
+    from unsaltedbutter_prompts.prompts import (  # type: ignore[import-untyped]
         SERVICE_HINTS,
         build_cancel_prompt,
         build_resume_prompt,

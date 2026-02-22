@@ -578,11 +578,9 @@ def cmd_record(args):
 # ------------------------------------------------------------------
 
 def cmd_test(args):
-    from agent.config import INFERENCE_URL
     from agent.executor import PlaybookExecutor
     from agent.inference import (
         CoordinateInferenceClient,
-        HttpInferenceClient,
         MockInferenceClient,
     )
     from agent.playbook import JobContext, Playbook
@@ -607,20 +605,12 @@ def cmd_test(args):
     elif args.mock:
         print('Using MockInferenceClient')
         inference = MockInferenceClient()
+    elif has_coords:
+        print('Using recorded coordinates (no inference server)')
+        inference = CoordinateInferenceClient()
     else:
-        studio_url = os.getenv('STUDIO_URL', INFERENCE_URL)
-        try:
-            import httpx
-            httpx.get(f'{studio_url}/health', timeout=3.0)
-            print(f'Using inference server: {studio_url}')
-            inference = HttpInferenceClient(base_url=studio_url)
-        except Exception:
-            if has_coords:
-                print(f'Inference server not reachable ({studio_url}), using recorded coordinates.')
-                inference = CoordinateInferenceClient()
-            else:
-                print(f'Inference server not reachable ({studio_url}), using mock.')
-                inference = MockInferenceClient()
+        print('Using MockInferenceClient (no recorded coordinates)')
+        inference = MockInferenceClient()
 
     # Dummy job context with randomized email to avoid "welcome back" flows
     _words = ['apple', 'google', 'netflix', 'nvidia', 'amd', 'dolby',

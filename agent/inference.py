@@ -1,13 +1,10 @@
 """Inference client: VLM integration for element finding, checkpoints, and freeform inference.
 
-Defines the contract between the agent (Mac Mini) and the inference server (Mac Studio).
-The Mac Studio's FastAPI server will implement /api/find_element, /api/checkpoint,
-and /api/infer_action endpoints.
-
-Three client implementations:
-  HttpInferenceClient    - real VLM on Mac Studio (production)
+Two client implementations:
   CoordinateInferenceClient - recorded ref_region from playbook (no VLM needed)
   MockInferenceClient    - random center-ish coords (loop testing)
+
+Production VLM inference uses VLMExecutor (vlm_executor.py), not these clients.
 """
 
 from __future__ import annotations
@@ -15,10 +12,6 @@ from __future__ import annotations
 import random
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-
-import httpx
-
-from agent.config import INFERENCE_TIMEOUT, INFERENCE_URL
 
 
 # ---------------------------------------------------------------------------
@@ -102,91 +95,6 @@ class InferenceClient(ABC):
         context: str = '',
     ) -> InferActionResult:
         """Full inference fallback: decide what to do next."""
-
-
-# ---------------------------------------------------------------------------
-# HTTP client (talks to Mac Studio FastAPI)
-# ---------------------------------------------------------------------------
-
-class HttpInferenceClient(InferenceClient):
-    """POST to the Mac Studio inference server."""
-
-    def __init__(self, base_url: str = INFERENCE_URL, timeout: float = INFERENCE_TIMEOUT):
-        self._base_url = base_url.rstrip('/')
-        self._client = httpx.Client(timeout=timeout)
-
-    def find_element(
-        self,
-        screenshot_b64: str,
-        description: str,
-        context: str = '',
-        ref_region: tuple[int, int, int, int] | None = None,
-    ) -> FindElementResult:
-        resp = self._client.post(
-            f'{self._base_url}/api/find_element',
-            json={
-                'screenshot': screenshot_b64,
-                'description': description,
-                'context': context,
-            },
-        )
-        resp.raise_for_status()
-        data = resp.json()
-        return FindElementResult(
-            x1=data['x1'],
-            y1=data['y1'],
-            x2=data['x2'],
-            y2=data['y2'],
-            confidence=data.get('confidence', 0.0),
-        )
-
-    def checkpoint(
-        self,
-        screenshot_b64: str,
-        prompt: str,
-        context: str = '',
-    ) -> CheckpointResult:
-        resp = self._client.post(
-            f'{self._base_url}/api/checkpoint',
-            json={
-                'screenshot': screenshot_b64,
-                'prompt': prompt,
-                'context': context,
-            },
-        )
-        resp.raise_for_status()
-        data = resp.json()
-        return CheckpointResult(
-            on_track=data['on_track'],
-            confidence=data.get('confidence', 0.0),
-            reasoning=data.get('reasoning', ''),
-        )
-
-    def infer_action(
-        self,
-        screenshot_b64: str,
-        context: str = '',
-    ) -> InferActionResult:
-        resp = self._client.post(
-            f'{self._base_url}/api/infer_action',
-            json={
-                'screenshot': screenshot_b64,
-                'context': context,
-            },
-        )
-        resp.raise_for_status()
-        data = resp.json()
-        return InferActionResult(
-            action=data.get('action', 'click'),
-            target_x=data.get('target_x', 0),
-            target_y=data.get('target_y', 0),
-            text=data.get('text', ''),
-            confidence=data.get('confidence', 0.0),
-            reasoning=data.get('reasoning', ''),
-        )
-
-    def close(self) -> None:
-        self._client.close()
 
 
 # ---------------------------------------------------------------------------
