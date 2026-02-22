@@ -179,6 +179,9 @@ PLIST
     <key>ThrottleInterval</key>
     <integer>10</integer>
 
+    <key>LimitLoadToSessionType</key>
+    <string>Aqua</string>
+
     <key>StandardOutPath</key>
     <string>${LOG_DIR}/agent-stdout.log</string>
 
