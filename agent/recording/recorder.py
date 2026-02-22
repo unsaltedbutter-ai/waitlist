@@ -373,9 +373,32 @@ class PlaybookRecorder:
             print('    Page loading, waiting...')
             return 'continue'
 
-        # States that always need human intervention
-        if page_type in ('email_link', 'captcha'):
+        # Captcha always needs human intervention
+        if page_type == 'captcha':
             return 'need_human'
+
+        # Email link: prompt operator for the verification URL
+        if page_type == 'email_link':
+            step_num = len(steps)
+            ref_path = ref_dir / f'step_{step_num:02d}.png'
+            self._save_ref_image(screenshot_b64, ref_path)
+            steps.append({
+                'action': 'email_link',
+                'page_type': page_type,
+            })
+            print(f'    -> Step {step_num}: email_link (check email for verification URL)')
+
+            _play_attention_sound()
+            url = input('\n  Paste verification URL from email (or "skip" for manual): ').strip()
+            if url.lower() == 'skip':
+                return 'need_human'
+
+            # Navigate to the verification URL
+            from agent import browser as browser_mod
+            browser_mod.navigate(session, url, fast=True)
+            steps.append({'action': 'navigate', 'url': '{email_link}'})
+            print(f'    -> Step {len(steps)-1}: navigate to verification URL')
+            return 'continue'
 
         # Code entry states: prompt operator for code, type it into the browser
         if page_type in ('email_code_single', 'email_code_multi',
@@ -503,11 +526,13 @@ class PlaybookRecorder:
             email_val = self.credentials.get('email', '')
             if email_val:
                 keyboard.type_text(email_val, speed='medium', accuracy='high')
+            self._save_ref_image(screenshot_b64, ref_dir / f'step_{len(steps):02d}.png')
             steps.append({'action': 'type_text', 'value': '{email}'})
             print(f'    -> Step {len(steps)-1}: type_text "{{email}}" (auto)')
 
             time.sleep(0.2)
             keyboard.press_key('tab')
+            self._save_ref_image(screenshot_b64, ref_dir / f'step_{len(steps):02d}.png')
             steps.append({'action': 'press_key', 'value': 'tab'})
             print(f'    -> Step {len(steps)-1}: press_key "tab"')
 
@@ -517,11 +542,13 @@ class PlaybookRecorder:
             pass_val = self.credentials.get('pass', '')
             if pass_val:
                 keyboard.type_text(pass_val, speed='medium', accuracy='high')
+            self._save_ref_image(screenshot_b64, ref_dir / f'step_{len(steps):02d}.png')
             steps.append({'action': 'type_text', 'value': '{pass}', 'sensitive': True})
             print(f'    -> Step {len(steps)-1}: type_text "{{pass}}" (auto)')
 
             time.sleep(0.2)
             keyboard.press_key('enter')
+            self._save_ref_image(screenshot_b64, ref_dir / f'step_{len(steps):02d}.png')
             steps.append({'action': 'press_key', 'value': 'enter'})
             print(f'    -> Step {len(steps)-1}: press_key "enter"')
             time.sleep(1.0)  # let form submit before next screenshot
@@ -540,11 +567,13 @@ class PlaybookRecorder:
             email_val = self.credentials.get('email', '')
             if email_val:
                 keyboard.type_text(email_val, speed='medium', accuracy='high')
+            self._save_ref_image(screenshot_b64, ref_dir / f'step_{len(steps):02d}.png')
             steps.append({'action': 'type_text', 'value': '{email}'})
             print(f'    -> Step {len(steps)-1}: type_text "{{email}}" (auto)')
 
             time.sleep(0.2)
             keyboard.press_key('enter')
+            self._save_ref_image(screenshot_b64, ref_dir / f'step_{len(steps):02d}.png')
             steps.append({'action': 'press_key', 'value': 'enter'})
             print(f'    -> Step {len(steps)-1}: press_key "enter"')
             time.sleep(1.0)  # let form submit before next screenshot
@@ -563,11 +592,13 @@ class PlaybookRecorder:
             pass_val = self.credentials.get('pass', '')
             if pass_val:
                 keyboard.type_text(pass_val, speed='medium', accuracy='high')
+            self._save_ref_image(screenshot_b64, ref_dir / f'step_{len(steps):02d}.png')
             steps.append({'action': 'type_text', 'value': '{pass}', 'sensitive': True})
             print(f'    -> Step {len(steps)-1}: type_text "{{pass}}" (auto)')
 
             time.sleep(0.2)
             keyboard.press_key('enter')
+            self._save_ref_image(screenshot_b64, ref_dir / f'step_{len(steps):02d}.png')
             steps.append({'action': 'press_key', 'value': 'enter'})
             print(f'    -> Step {len(steps)-1}: press_key "enter"')
             time.sleep(1.0)  # let form submit before next screenshot
@@ -855,6 +886,7 @@ class PlaybookRecorder:
                     if actual_value:
                         keyboard.type_text(actual_value, speed='medium', accuracy='high')
                     step_num = len(steps)
+                    self._save_ref_image(screenshot_b64, ref_dir / f'step_{step_num:02d}.png')
                     type_step: dict = {
                         'action': 'type_text',
                         'target_description': target_desc,

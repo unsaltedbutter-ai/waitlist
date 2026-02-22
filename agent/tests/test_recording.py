@@ -1367,6 +1367,74 @@ class TestExecuteSigninPage:
         assert result == 'continue'
         assert 'enter' in pressed
 
+    def test_email_link_prompts_and_navigates(self, monkeypatch, tmp_path) -> None:
+        """Email link: prompts for URL, navigates browser to it."""
+        recorder, session, ref_dir, modules, typed, pressed, clicked, hotkeys = self._setup(monkeypatch, tmp_path)
+        monkeypatch.setattr('time.sleep', lambda _: None)
+        monkeypatch.setattr('builtins.input', lambda _: 'https://netflix.com/verify?token=abc123')
+        navigated = []
+        monkeypatch.setattr('agent.browser.navigate', lambda s, url, fast=False: navigated.append(url))
+        steps: list[dict] = []
+        response = {
+            'page_type': 'email_link',
+            'email_box': None, 'password_box': None,
+            'button_box': None, 'profile_box': None,
+            'code_boxes': None,
+            'confidence': 0.90, 'reasoning': 'Check email for link',
+        }
+        result = recorder._execute_signin_page(
+            response, 1.0, session, _make_test_png_b64(800, 600),
+            ref_dir, steps, modules,
+        )
+        assert result == 'continue'
+        assert steps[0]['action'] == 'email_link'
+        assert steps[1]['action'] == 'navigate'
+        assert steps[1]['url'] == '{email_link}'
+        assert navigated == ['https://netflix.com/verify?token=abc123']
+
+    def test_email_link_skip_returns_need_human(self, monkeypatch, tmp_path) -> None:
+        """Typing 'skip' at the email link prompt falls back to need_human."""
+        recorder, session, ref_dir, modules, *_ = self._setup(monkeypatch, tmp_path)
+        monkeypatch.setattr('time.sleep', lambda _: None)
+        monkeypatch.setattr('builtins.input', lambda _: 'skip')
+        steps: list[dict] = []
+        response = {
+            'page_type': 'email_link',
+            'email_box': None, 'password_box': None,
+            'button_box': None, 'profile_box': None,
+            'code_boxes': None,
+            'confidence': 0.85, 'reasoning': 'Email verification link needed',
+        }
+        result = recorder._execute_signin_page(
+            response, 1.0, session, _make_test_png_b64(800, 600),
+            ref_dir, steps, modules,
+        )
+        assert result == 'need_human'
+
+    def test_user_pass_saves_ref_for_all_steps(self, monkeypatch, tmp_path) -> None:
+        """Each step in user_pass handler should have a ref screenshot."""
+        recorder, session, ref_dir, modules, typed, pressed, clicked, hotkeys = self._setup(monkeypatch, tmp_path)
+        monkeypatch.setattr('time.sleep', lambda _: None)
+        steps: list[dict] = []
+        response = {
+            'page_type': 'user_pass',
+            'email_box': [100, 200, 400, 230],
+            'password_box': [100, 260, 400, 290],
+            'button_box': [100, 320, 400, 350],
+            'profile_box': None,
+            'confidence': 0.95, 'reasoning': 'Login form',
+        }
+        recorder._execute_signin_page(
+            response, 1.0, session, _make_test_png_b64(800, 600),
+            ref_dir, steps, modules,
+        )
+        # 5 steps: click, type_text email, press_key tab, type_text pass, press_key enter
+        assert len(steps) == 5
+        # Each step should have a ref screenshot file
+        for i in range(5):
+            ref_path = ref_dir / f'step_{i:02d}.png'
+            assert ref_path.exists(), f'Missing ref screenshot for step {i}'
+
     def test_spinner_returns_continue(self, monkeypatch, tmp_path) -> None:
         recorder, session, ref_dir, modules, *_ = self._setup(monkeypatch, tmp_path)
         steps: list[dict] = []
