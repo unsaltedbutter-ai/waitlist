@@ -265,6 +265,7 @@ async def run(config: Config) -> None:
         host=config.callback_host, port=config.callback_port
     )
     callback_server.set_otp_callback(session.handle_otp_needed)
+    callback_server.set_credential_callback(session.handle_credential_needed)
 
     async def _result_callback(
         job_id: str,
@@ -277,8 +278,29 @@ async def run(config: Config) -> None:
             job_id, success, access_end_date, error, duration_seconds
         )
         await job_manager.on_job_complete(job_id)
+        # Store result for CLI polling if it was a CLI-dispatched job
+        if job_id.startswith("cli-"):
+            callback_server.store_cli_result(job_id, {
+                "success": success,
+                "access_end_date": access_end_date,
+                "error": error,
+                "duration_seconds": duration_seconds,
+            })
 
     callback_server.set_result_callback(_result_callback)
+
+    async def _cli_dispatch(
+        npub: str, service: str, action: str,
+        credentials: dict, plan_id: str,
+    ) -> str:
+        import time as _time
+        job_id = f"cli-{int(_time.time())}"
+        await session.handle_cli_dispatch(
+            npub, service, action, credentials, plan_id, job_id,
+        )
+        return job_id
+
+    callback_server.set_cli_dispatch_callback(_cli_dispatch)
     await callback_server.start()
 
     # -- Subscribe to Nostr events --

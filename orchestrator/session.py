@@ -482,9 +482,9 @@ class Session:
 
         user_npub = session["user_npub"]
 
-        if session["state"] != AWAITING_OTP:
+        if session["state"] not in (AWAITING_OTP, AWAITING_CREDENTIAL):
             log.warning(
-                "handle_otp_timeout: session for %s is %s, not AWAITING_OTP",
+                "handle_otp_timeout: session for %s is %s, not AWAITING_OTP/AWAITING_CREDENTIAL",
                 user_npub, session["state"],
             )
             return
@@ -508,6 +508,48 @@ class Session:
 
         # Delete session
         await self._db.delete_session(user_npub)
+
+    async def handle_cli_dispatch(
+        self,
+        user_npub: str,
+        service: str,
+        action: str,
+        credentials: dict,
+        plan_id: str,
+        job_id: str,
+    ) -> None:
+        """CLI dispatch: create session and send job to agent.
+
+        Skips the OTP confirm flow (CLI user is already at the terminal).
+        """
+        # Create session in EXECUTING state
+        await self._db.upsert_session(
+            user_npub, EXECUTING, job_id=job_id, otp_attempts=0
+        )
+
+        # Insert a local job record so callbacks can find it
+        await self._db.upsert_job({
+            "id": job_id,
+            "user_npub": user_npub,
+            "service_id": service,
+            "action": action,
+            "trigger": "cli",
+            "status": "active",
+        })
+
+        # Dispatch to agent
+        accepted = await self._agent.execute(
+            job_id, service, action, credentials, plan_id=plan_id
+        )
+        if not accepted:
+            log.error("Agent rejected CLI job %s", job_id)
+            await self._db.delete_session(user_npub)
+            return
+
+        # Schedule OTP timeout (covers credential waits too)
+        await self._timers.schedule_delay(
+            OTP_TIMEOUT, job_id, self._config.otp_timeout_seconds
+        )
 
     async def cancel_session(self, user_npub: str) -> None:
         """Force-cancel a session (e.g., user sends 'cancel' mid-flow)."""
