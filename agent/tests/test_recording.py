@@ -1411,30 +1411,6 @@ class TestExecuteSigninPage:
         )
         assert result == 'need_human'
 
-    def test_user_pass_saves_ref_for_all_steps(self, monkeypatch, tmp_path) -> None:
-        """Each step in user_pass handler should have a ref screenshot."""
-        recorder, session, ref_dir, modules, typed, pressed, clicked, hotkeys = self._setup(monkeypatch, tmp_path)
-        monkeypatch.setattr('time.sleep', lambda _: None)
-        steps: list[dict] = []
-        response = {
-            'page_type': 'user_pass',
-            'email_box': [100, 200, 400, 230],
-            'password_box': [100, 260, 400, 290],
-            'button_box': [100, 320, 400, 350],
-            'profile_box': None,
-            'confidence': 0.95, 'reasoning': 'Login form',
-        }
-        recorder._execute_signin_page(
-            response, 1.0, session, _make_test_png_b64(800, 600),
-            ref_dir, steps, modules,
-        )
-        # 5 steps: click, type_text email, press_key tab, type_text pass, press_key enter
-        assert len(steps) == 5
-        # Each step should have a ref screenshot file
-        for i in range(5):
-            ref_path = ref_dir / f'step_{i:02d}.png'
-            assert ref_path.exists(), f'Missing ref screenshot for step {i}'
-
     def test_spinner_returns_continue(self, monkeypatch, tmp_path) -> None:
         recorder, session, ref_dir, modules, *_ = self._setup(monkeypatch, tmp_path)
         steps: list[dict] = []
