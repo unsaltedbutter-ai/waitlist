@@ -962,6 +962,20 @@ def cmd_save(args):
 # ------------------------------------------------------------------
 
 def main():
+    # Load env files (same pattern as agent/server.py)
+    from pathlib import Path
+    try:
+        from dotenv import load_dotenv
+        ub_dir = Path.home() / '.unsaltedbutter'
+        shared_env = ub_dir / 'shared.env'
+        component_env = ub_dir / 'agent.env'
+        if shared_env.exists():
+            load_dotenv(str(shared_env))
+        if component_env.exists():
+            load_dotenv(str(component_env), override=True)
+    except ImportError:
+        pass  # dotenv not installed, rely on shell env
+
     parser = argparse.ArgumentParser(description='Playbook recorder, tester, and manager')
     sub = parser.add_subparsers(dest='command')
 
