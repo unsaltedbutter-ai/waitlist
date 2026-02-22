@@ -87,7 +87,7 @@ def cmd_run(args):
     loop = asyncio.new_event_loop()
     threading.Thread(target=loop.run_forever, daemon=True).start()
 
-    async def otp_callback(job_id, service, prompt):
+    async def otp_callback(job_id, service):
         code = await loop.run_in_executor(
             None, lambda: input('\nEnter verification code (empty to skip): ').strip(),
         )

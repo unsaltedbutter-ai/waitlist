@@ -199,7 +199,7 @@ class VLMExecutor:
     Args:
         vlm: VLMClient instance for screenshot analysis.
         profile: Human behavioral profile for timing.
-        otp_callback: Async callable(job_id, service, prompt) -> str|None.
+        otp_callback: Async callable(job_id, service) -> str|None.
             Called when the VLM detects an OTP/verification code page.
         loop: Event loop for scheduling the async otp_callback from
             the synchronous executor thread.
