@@ -958,6 +958,62 @@ def cmd_save(args):
     print(f'  Flow config: {result.flow_config_path}')
 
 
+def cmd_rebuild_cache(args):
+    from agent.config import PAGE_HASH_DB, PAGES_DIR, REF_SCREENSHOTS_DIR
+    from agent.page_cache import PageCache
+
+    if not REF_SCREENSHOTS_DIR.is_dir():
+        print(f'ERROR: Ref screenshots dir not found: {REF_SCREENSHOTS_DIR}')
+        sys.exit(1)
+
+    # Delete existing DB and rebuild from scratch
+    if PAGE_HASH_DB.exists():
+        PAGE_HASH_DB.unlink()
+        print(f'Deleted existing: {PAGE_HASH_DB}')
+
+    PAGE_HASH_DB.parent.mkdir(parents=True, exist_ok=True)
+    cache = PageCache(PAGE_HASH_DB)
+
+    inserted = 0
+    skipped = 0
+
+    for png_path in sorted(REF_SCREENSHOTS_DIR.glob('*.png')):
+        page_id = png_path.stem
+
+        # Load the page playbook to get service and flows
+        page_json = PAGES_DIR / f'{page_id}.json'
+        if not page_json.exists():
+            print(f'  SKIP {page_id} (no matching page playbook)')
+            skipped += 1
+            continue
+
+        with open(page_json) as f:
+            page_data = json.load(f)
+
+        service = page_data.get('service', '')
+        flows = list(page_data.get('flows', []))
+        source = page_data.get('notes', '')
+        is_dynamic = 'Dynamic' in source
+
+        if not service or not flows:
+            print(f'  SKIP {page_id} (missing service or flows in playbook)')
+            skipped += 1
+            continue
+
+        from PIL import Image
+        img = Image.open(png_path)
+        cache.insert(page_id, service, flows, img,
+                     source='dynamic' if is_dynamic else 'learned')
+        inserted += 1
+        print(f'  {page_id} ({service}, {",".join(flows)})')
+
+    cache.close()
+    print(f'\nRebuilt {PAGE_HASH_DB}:')
+    print(f'  {inserted} entries inserted')
+    if skipped:
+        print(f'  {skipped} skipped (no matching playbook)')
+
+
 # ------------------------------------------------------------------
 # main
 # ------------------------------------------------------------------
@@ -1041,6 +1097,7 @@ def main():
                         help='Skip interactive page naming (auto-generate IDs)')
 
     sub.add_parser('list', help='List all playbooks')
+    sub.add_parser('rebuild-cache', help='Rebuild page_hashes.db from ref screenshots')
 
     args = parser.parse_args()
 
@@ -1054,6 +1111,7 @@ def main():
         'save': cmd_save,
         'test': cmd_test,
         'list': cmd_list,
+        'rebuild-cache': cmd_rebuild_cache,
     }
     dispatch[args.command](args)
 

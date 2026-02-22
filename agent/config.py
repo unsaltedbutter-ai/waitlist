@@ -68,10 +68,21 @@ PAGE_HASH_DB = Path(os.getenv(
     'PAGE_HASH_DB',
     str(Path.home() / '.unsaltedbutter' / 'page_hashes.db'),
 ))
-REF_SCREENSHOTS_DIR = Path(os.getenv(
-    'REF_SCREENSHOTS_DIR',
-    str(Path.home() / '.unsaltedbutter' / 'ref_screenshots'),
-))
+def _resolve_ref_screenshots_dir() -> Path:
+    """Resolve ref screenshots directory: env var > private package > local."""
+    env = os.environ.get('REF_SCREENSHOTS_DIR')
+    if env:
+        p = Path(env)
+        if p.is_dir():
+            return p
+    try:
+        from unsaltedbutter_prompts.playbooks import get_ref_screenshots_dir  # type: ignore[import-untyped]
+        return get_ref_screenshots_dir()
+    except (ImportError, AttributeError):
+        pass
+    return Path(__file__).parent / 'playbooks' / 'ref_screenshots'
+
+REF_SCREENSHOTS_DIR = _resolve_ref_screenshots_dir()
 REVIEW_QUEUE_DIR = Path(os.getenv(
     'REVIEW_QUEUE_DIR',
     str(Path.home() / '.unsaltedbutter' / 'review_queue'),
