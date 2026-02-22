@@ -1046,6 +1046,7 @@ class TestRecorderIntegration:
         recorder.max_steps = 60
         recorder.settle_delay = 0  # no waiting in tests
         recorder.verbose = False
+        recorder.debug = False
         recorder._prompts = recorder._build_prompt_chain()
         recorder._prompt_idx = 0
         recorder._prompt_labels = recorder._build_prompt_labels()
@@ -1273,6 +1274,7 @@ class TestExecuteSigninPage:
         recorder.service = 'netflix'
         recorder.credentials = {'email': 'user@test.com', 'pass': 'secret123'}
         recorder.verbose = False
+        recorder.debug = False
 
         class FakeSession:
             pid = 12345

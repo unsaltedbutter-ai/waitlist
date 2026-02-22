@@ -172,6 +172,7 @@ class PlaybookRecorder:
         max_steps: int = 60,
         settle_delay: float = 2.5,
         verbose: bool = False,
+        debug: bool = False,
     ) -> None:
         self.vlm = vlm
         self.service = service
@@ -183,6 +184,7 @@ class PlaybookRecorder:
         self.max_steps = max_steps
         self.settle_delay = settle_delay
         self.verbose = verbose
+        self.debug = debug
 
         # Build prompt chain
         self._prompts = self._build_prompt_chain()
@@ -315,10 +317,11 @@ class PlaybookRecorder:
               f'screen=({sx:.0f},{sy:.0f})')
 
         step_num = len(steps)
-        self._save_debug_overlay(
-            screenshot_b64, scaled,
-            ref_dir / f'step_{step_num:02d}_debug.png',
-        )
+        if self.debug:
+            self._save_debug_overlay(
+                screenshot_b64, scaled,
+                ref_dir / f'step_{step_num:02d}_debug.png',
+            )
         mouse_mod.click(sx, sy, fast=True)
 
         step_data: dict = {
@@ -451,12 +454,20 @@ class PlaybookRecorder:
             _clipboard_copy(code)
 
             if code_boxes:
-                target = 'first code box' if 'multi' in page_type else 'code input'
-                self._click_bbox(
-                    code_boxes[0]['box'], session, screenshot_b64, ref_dir, steps,
-                    target, coords_mod, mouse,
-                    chrome_offset=chrome_offset,
+                # Click the first code box to focus it (no step recorded:
+                # this click is part of the enter_code action, not a
+                # separate playbook step).
+                box = code_boxes[0]['box']
+                bw = box[2] - box[0]
+                bh = box[3] - box[1]
+                cx = (box[0] + box[2]) / 2 + random.gauss(0, bw * 0.05)
+                cy = (box[1] + box[3]) / 2 + random.gauss(0, bh * 0.05)
+                cx = max(box[0], min(cx, box[2]))
+                cy = max(box[1], min(cy, box[3]))
+                sx, sy = coords_mod.image_to_screen(
+                    cx, cy, session.bounds, chrome_offset=chrome_offset,
                 )
+                mouse.click(sx, sy, fast=True)
                 time.sleep(0.5)  # let field acquire focus
             keyboard.hotkey('command', 'v')
             time.sleep(0.3)
@@ -852,10 +863,11 @@ class PlaybookRecorder:
                       f'screen=({sx:.0f},{sy:.0f}) bounds={session.bounds}')
 
                 # Save debug overlay: draw bbox on the FULL screenshot
-                self._save_debug_overlay(
-                    screenshot_b64, scaled_bbox,
-                    ref_dir / f'step_{step_num:02d}_debug.png',
-                )
+                if self.debug:
+                    self._save_debug_overlay(
+                        screenshot_b64, scaled_bbox,
+                        ref_dir / f'step_{step_num:02d}_debug.png',
+                    )
 
                 mouse.click(sx, sy, fast=True)
 

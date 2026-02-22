@@ -841,6 +841,7 @@ def cmd_learn(args):
         max_steps=args.max_steps,
         settle_delay=args.settle_delay,
         verbose=args.verbose,
+        debug=args.debug,
     )
 
     try:
@@ -1029,6 +1030,8 @@ def main():
                          help='VLM temperature (default: 0.1, Kimi K2.5 requires 1.0)')
     p_learn.add_argument('--verbose', action='store_true',
                          help='Print full system prompts for each phase')
+    p_learn.add_argument('--debug', action='store_true',
+                         help='Save debug overlay images (bbox visualization)')
 
     p_save = sub.add_parser('save', help='Convert recording to page-based playbooks')
     p_save.add_argument('--service', required=True, help='Service name (e.g. netflix)')
