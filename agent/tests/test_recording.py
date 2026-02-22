@@ -1229,6 +1229,8 @@ class TestExecuteSigninPage:
             def image_to_screen(ix, iy, bounds, **kw):
                 return (ix, iy)
 
+        hotkeys = []
+
         class FakeKeyboard:
             @staticmethod
             def type_text(text, speed='medium', accuracy='high'):
@@ -1237,6 +1239,10 @@ class TestExecuteSigninPage:
             @staticmethod
             def press_key(key):
                 pressed.append(key)
+
+            @staticmethod
+            def hotkey(*keys):
+                hotkeys.append(keys)
 
         class FakeMouse:
             @staticmethod
@@ -1252,7 +1258,7 @@ class TestExecuteSigninPage:
         ref_dir = tmp_path / 'ref'
         ref_dir.mkdir()
 
-        return recorder, FakeSession(), ref_dir, modules, typed, pressed, clicked
+        return recorder, FakeSession(), ref_dir, modules, typed, pressed, clicked, hotkeys
 
     def test_signed_in_returns_done(self, monkeypatch, tmp_path) -> None:
         recorder, session, ref_dir, modules, *_ = self._setup(monkeypatch, tmp_path)
@@ -1269,8 +1275,10 @@ class TestExecuteSigninPage:
         assert result == 'done'
         assert len(steps) == 0
 
-    def test_email_code_single_returns_need_human(self, monkeypatch, tmp_path) -> None:
-        recorder, session, ref_dir, modules, *_ = self._setup(monkeypatch, tmp_path)
+    def test_email_code_single_prompts_and_types(self, monkeypatch, tmp_path) -> None:
+        recorder, session, ref_dir, modules, typed, pressed, clicked, hotkeys = self._setup(monkeypatch, tmp_path)
+        monkeypatch.setattr('time.sleep', lambda _: None)
+        monkeypatch.setattr('builtins.input', lambda _: '123456')
         steps: list[dict] = []
         response = {
             'page_type': 'email_code_single',
@@ -1283,14 +1291,17 @@ class TestExecuteSigninPage:
             response, 1.0, session, _make_test_png_b64(800, 600),
             ref_dir, steps, modules,
         )
-        assert result == 'need_human'
-        assert len(steps) == 1
+        assert result == 'continue'
         assert steps[0]['action'] == 'enter_code'
         assert steps[0]['page_type'] == 'email_code_single'
-        assert len(steps[0]['code_boxes']) == 1
+        # Should have clicked the code box, typed the code, and clicked verify button
+        assert len(clicked) >= 2  # code box + verify button
+        assert '123456' in typed
 
-    def test_email_code_multi_records_boxes(self, monkeypatch, tmp_path) -> None:
-        recorder, session, ref_dir, modules, *_ = self._setup(monkeypatch, tmp_path)
+    def test_email_code_multi_types_digits(self, monkeypatch, tmp_path) -> None:
+        recorder, session, ref_dir, modules, typed, pressed, clicked, hotkeys = self._setup(monkeypatch, tmp_path)
+        monkeypatch.setattr('time.sleep', lambda _: None)
+        monkeypatch.setattr('builtins.input', lambda _: '1234')
         steps: list[dict] = []
         response = {
             'page_type': 'email_code_multi',
@@ -1308,13 +1319,17 @@ class TestExecuteSigninPage:
             response, 1.0, session, _make_test_png_b64(800, 600),
             ref_dir, steps, modules,
         )
-        assert result == 'need_human'
+        assert result == 'continue'
         assert steps[0]['page_type'] == 'email_code_multi'
         assert len(steps[0]['code_boxes']) == 4
-        assert steps[0]['button_box'] == [400, 420, 600, 460]
+        # Multi-box: clicks first box, types each digit
+        assert typed == ['1', '2', '3', '4']
 
-    def test_phone_code_single_returns_need_human(self, monkeypatch, tmp_path) -> None:
+    def test_code_skip_returns_need_human(self, monkeypatch, tmp_path) -> None:
+        """Typing 'skip' at the code prompt falls back to need_human."""
         recorder, session, ref_dir, modules, *_ = self._setup(monkeypatch, tmp_path)
+        monkeypatch.setattr('time.sleep', lambda _: None)
+        monkeypatch.setattr('builtins.input', lambda _: 'skip')
         steps: list[dict] = []
         response = {
             'page_type': 'phone_code_single',
@@ -1329,8 +1344,11 @@ class TestExecuteSigninPage:
         )
         assert result == 'need_human'
 
-    def test_phone_code_multi_returns_need_human(self, monkeypatch, tmp_path) -> None:
-        recorder, session, ref_dir, modules, *_ = self._setup(monkeypatch, tmp_path)
+    def test_phone_code_no_button_presses_enter(self, monkeypatch, tmp_path) -> None:
+        """When no verify button is detected, presses enter after typing code."""
+        recorder, session, ref_dir, modules, typed, pressed, clicked, hotkeys = self._setup(monkeypatch, tmp_path)
+        monkeypatch.setattr('time.sleep', lambda _: None)
+        monkeypatch.setattr('builtins.input', lambda _: '99')
         steps: list[dict] = []
         response = {
             'page_type': 'phone_code_multi',
@@ -1346,7 +1364,8 @@ class TestExecuteSigninPage:
             response, 1.0, session, _make_test_png_b64(800, 600),
             ref_dir, steps, modules,
         )
-        assert result == 'need_human'
+        assert result == 'continue'
+        assert 'enter' in pressed
 
     def test_spinner_returns_continue(self, monkeypatch, tmp_path) -> None:
         recorder, session, ref_dir, modules, *_ = self._setup(monkeypatch, tmp_path)
@@ -1379,7 +1398,7 @@ class TestExecuteSigninPage:
         assert result == 'need_human'
 
     def test_unknown_with_actions_returns_continue(self, monkeypatch, tmp_path) -> None:
-        recorder, session, ref_dir, modules, typed, pressed, clicked = self._setup(monkeypatch, tmp_path)
+        recorder, session, ref_dir, modules, typed, pressed, clicked, hotkeys = self._setup(monkeypatch, tmp_path)
         monkeypatch.setattr('time.sleep', lambda _: None)
         steps: list[dict] = []
         response = {
@@ -1420,7 +1439,7 @@ class TestExecuteSigninPage:
         assert result == 'need_human'
 
     def test_user_pass_types_both_credentials(self, monkeypatch, tmp_path) -> None:
-        recorder, session, ref_dir, modules, typed, pressed, clicked = self._setup(monkeypatch, tmp_path)
+        recorder, session, ref_dir, modules, typed, pressed, clicked, hotkeys = self._setup(monkeypatch, tmp_path)
         monkeypatch.setattr('time.sleep', lambda _: None)
         steps: list[dict] = []
         response = {
@@ -1448,7 +1467,7 @@ class TestExecuteSigninPage:
         assert len(clicked) == 1
 
     def test_user_only_types_email_and_enter(self, monkeypatch, tmp_path) -> None:
-        recorder, session, ref_dir, modules, typed, pressed, clicked = self._setup(monkeypatch, tmp_path)
+        recorder, session, ref_dir, modules, typed, pressed, clicked, hotkeys = self._setup(monkeypatch, tmp_path)
         monkeypatch.setattr('time.sleep', lambda _: None)
         steps: list[dict] = []
         response = {
@@ -1472,7 +1491,7 @@ class TestExecuteSigninPage:
         assert pressed == ['enter']
 
     def test_pass_only_types_password_and_enter(self, monkeypatch, tmp_path) -> None:
-        recorder, session, ref_dir, modules, typed, pressed, clicked = self._setup(monkeypatch, tmp_path)
+        recorder, session, ref_dir, modules, typed, pressed, clicked, hotkeys = self._setup(monkeypatch, tmp_path)
         monkeypatch.setattr('time.sleep', lambda _: None)
         steps: list[dict] = []
         response = {
@@ -1496,7 +1515,7 @@ class TestExecuteSigninPage:
         assert pressed == ['enter']
 
     def test_button_only_clicks_button(self, monkeypatch, tmp_path) -> None:
-        recorder, session, ref_dir, modules, typed, pressed, clicked = self._setup(monkeypatch, tmp_path)
+        recorder, session, ref_dir, modules, typed, pressed, clicked, hotkeys = self._setup(monkeypatch, tmp_path)
         steps: list[dict] = []
         response = {
             'page_type': 'button_only',
@@ -1515,7 +1534,7 @@ class TestExecuteSigninPage:
         assert steps[0].get('checkpoint') is True
 
     def test_profile_select_clicks_profile(self, monkeypatch, tmp_path) -> None:
-        recorder, session, ref_dir, modules, typed, pressed, clicked = self._setup(monkeypatch, tmp_path)
+        recorder, session, ref_dir, modules, typed, pressed, clicked, hotkeys = self._setup(monkeypatch, tmp_path)
         steps: list[dict] = []
         response = {
             'page_type': 'profile_select',
@@ -1553,7 +1572,7 @@ class TestExecuteSigninPage:
 
     def test_scale_factor_applied_to_bboxes(self, monkeypatch, tmp_path) -> None:
         """Bboxes should be scaled by scale_factor before clicking."""
-        recorder, session, ref_dir, modules, typed, pressed, clicked = self._setup(monkeypatch, tmp_path)
+        recorder, session, ref_dir, modules, typed, pressed, clicked, hotkeys = self._setup(monkeypatch, tmp_path)
         monkeypatch.setattr('time.sleep', lambda _: None)
         steps: list[dict] = []
         response = {

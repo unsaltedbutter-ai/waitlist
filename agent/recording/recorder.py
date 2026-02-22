@@ -377,7 +377,7 @@ class PlaybookRecorder:
         if page_type in ('email_link', 'captcha'):
             return 'need_human'
 
-        # Code entry states: record the boxes for the playbook, then need human for OTP
+        # Code entry states: prompt operator for code, type it into the browser
         if page_type in ('email_code_single', 'email_code_multi',
                          'phone_code_single', 'phone_code_multi'):
             step_num = len(steps)
@@ -393,7 +393,53 @@ class PlaybookRecorder:
                 step_data['button_box'] = button_box
             steps.append(step_data)
             print(f'    -> Step {step_num}: enter_code ({page_type}, {len(code_boxes)} boxes)')
-            return 'need_human'
+
+            # Prompt operator for the verification code
+            _play_attention_sound()
+            code_label = 'email' if 'email' in page_type else 'phone'
+            code = input(f'\n  Enter {code_label} verification code (or "skip" for manual): ').strip()
+            if code.lower() == 'skip':
+                return 'need_human'
+
+            # Type the code into the browser
+            if 'multi' in page_type and code_boxes:
+                # Multi-box: click first box, type full code (browsers auto-advance)
+                self._click_bbox(
+                    code_boxes[0]['box'], session, screenshot_b64, ref_dir, steps,
+                    'first code box', coords_mod, mouse,
+                    chrome_offset=chrome_offset,
+                )
+                time.sleep(0.3)
+                for digit in code:
+                    keyboard.type_text(digit, speed='slow', accuracy='high')
+                    time.sleep(0.2)
+            else:
+                # Single box: click it, type full code
+                if code_boxes:
+                    self._click_bbox(
+                        code_boxes[0]['box'], session, screenshot_b64, ref_dir, steps,
+                        'code input', coords_mod, mouse,
+                        chrome_offset=chrome_offset,
+                    )
+                    time.sleep(0.3)
+                keyboard.hotkey('command', 'a')
+                time.sleep(0.1)
+                keyboard.type_text(code, speed='medium', accuracy='high')
+
+            # Click submit button if one was detected
+            if button_box:
+                time.sleep(0.3)
+                self._click_bbox(
+                    button_box, session, screenshot_b64, ref_dir, steps,
+                    'verify button', coords_mod, mouse,
+                    chrome_offset=chrome_offset,
+                )
+            else:
+                # No button: press enter to submit
+                time.sleep(0.2)
+                keyboard.press_key('enter')
+
+            return 'continue'
 
         # Unknown state: try to auto-recover by executing the VLM's suggested actions
         if page_type == 'unknown':
@@ -445,13 +491,15 @@ class PlaybookRecorder:
             return 'continue'
 
         if page_type == 'user_pass' and email_box:
-            # Click email, type, tab, type password, enter
+            # Click email, select-all (clear pre-filled), type, tab, type password, enter
             self._click_bbox(
                 email_box, session, screenshot_b64, ref_dir, steps,
                 'email input', coords_mod, mouse,
                 chrome_offset=chrome_offset,
             )
             time.sleep(0.3)
+            keyboard.hotkey('command', 'a')
+            time.sleep(0.1)
             email_val = self.credentials.get('email', '')
             if email_val:
                 keyboard.type_text(email_val, speed='medium', accuracy='high')
@@ -464,6 +512,8 @@ class PlaybookRecorder:
             print(f'    -> Step {len(steps)-1}: press_key "tab"')
 
             time.sleep(0.2)
+            keyboard.hotkey('command', 'a')
+            time.sleep(0.1)
             pass_val = self.credentials.get('pass', '')
             if pass_val:
                 keyboard.type_text(pass_val, speed='medium', accuracy='high')
@@ -478,13 +528,15 @@ class PlaybookRecorder:
             return 'continue'
 
         if page_type == 'user_only' and email_box:
-            # Click email, type, enter
+            # Click email, select-all (clear pre-filled), type, enter
             self._click_bbox(
                 email_box, session, screenshot_b64, ref_dir, steps,
                 'email input', coords_mod, mouse,
                 chrome_offset=chrome_offset,
             )
             time.sleep(0.3)
+            keyboard.hotkey('command', 'a')
+            time.sleep(0.1)
             email_val = self.credentials.get('email', '')
             if email_val:
                 keyboard.type_text(email_val, speed='medium', accuracy='high')
@@ -499,13 +551,15 @@ class PlaybookRecorder:
             return 'continue'
 
         if page_type == 'pass_only' and password_box:
-            # Click password, type, enter
+            # Click password, select-all (clear pre-filled), type, enter
             self._click_bbox(
                 password_box, session, screenshot_b64, ref_dir, steps,
                 'password input', coords_mod, mouse,
                 chrome_offset=chrome_offset,
             )
             time.sleep(0.3)
+            keyboard.hotkey('command', 'a')
+            time.sleep(0.1)
             pass_val = self.credentials.get('pass', '')
             if pass_val:
                 keyboard.type_text(pass_val, speed='medium', accuracy='high')
@@ -793,6 +847,8 @@ class PlaybookRecorder:
                 auto_type_hint = self._infer_credential_from_target(target_desc)
                 if auto_type_hint:
                     time.sleep(0.3)  # brief pause for field to focus
+                    keyboard.hotkey('command', 'a')  # select-all to clear pre-filled text
+                    time.sleep(0.1)
                     template_var, actual_value, sensitive = _resolve_credential(
                         auto_type_hint, self.credentials,
                     )
