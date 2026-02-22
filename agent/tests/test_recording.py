@@ -453,7 +453,6 @@ class TestVLMClientAnalyze:
 
         text_part = captured_kwargs['json']['messages'][1]['content'][1]
         assert '200x100' in text_part['text']
-        assert 'absolute pixels' in text_part['text']
 
     def test_oversized_image_returns_scale_factor(self, monkeypatch) -> None:
         """Verify that an image wider than MAX_IMAGE_WIDTH returns a scale factor > 1."""

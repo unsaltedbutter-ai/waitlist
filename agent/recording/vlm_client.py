@@ -168,8 +168,6 @@ class VLMClient:
             w, h = sent_size
             user_message = (
                 f'This screenshot is {w}x{h} pixels. '
-                f'All bounding_box coordinates must be in absolute pixels '
-                f'within this {w}x{h} image (origin at top-left corner). '
                 f'Analyze this screenshot and respond with the JSON action.'
             )
 
