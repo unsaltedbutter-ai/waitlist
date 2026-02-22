@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
-"""Playbook CLI: record, test, learn, save, and list playbook files.
+"""Playbook CLI: record, test, learn, and list playbook files.
 
 Commands:
     record  --service <s> --flow <f> [--tier <t>]   Record steps by dwell-detection
     learn   --service <s> --flow <f> --url <u> ...  VLM-guided automated recording
-    save    --service <s> --flow <f>                 Convert recording to page playbooks
     test    --service <s> --flow <f> [--tier <t>]   Interactive dry-run
     list                                             Table of all playbooks
 """
@@ -857,164 +856,6 @@ def cmd_learn(args):
 
 
 # ------------------------------------------------------------------
-# save command (convert recording to page playbooks)
-# ------------------------------------------------------------------
-
-def cmd_save(args):
-    from agent.config import PAGE_HASH_DB, PLAYBOOK_DIR, PLAYBOOK_REF_DIR
-    from agent.page_cache import PageCache
-    from agent.recording.converter import convert_recording
-
-    service = args.service
-    flow = args.flow
-    tier = args.tier or ''
-    pb_name = _playbook_filename(service, flow, tier)
-
-    playbook_path = PLAYBOOK_DIR / f'{pb_name}.json'
-    ref_dir = PLAYBOOK_REF_DIR / pb_name
-    manifest_path = ref_dir / '_manifest.json'
-
-    if not playbook_path.exists():
-        print(f'ERROR: Playbook not found: {playbook_path}')
-        sys.exit(1)
-    if not manifest_path.exists():
-        print(f'ERROR: Manifest not found: {manifest_path}')
-        print('  Re-record with the latest learn command to generate a manifest.')
-        sys.exit(1)
-
-    # Load manifest for summary display
-    with open(manifest_path) as f:
-        manifest = json.load(f)
-
-    # Load flat playbook for step descriptions
-    with open(playbook_path) as f:
-        playbook_data = json.load(f)
-
-    flat_steps = playbook_data['steps']
-    pages = manifest['pages']
-
-    # Interactive page naming (unless --no-prompt)
-    page_names: dict[int, str] = {}
-    if not args.no_prompt:
-        print(f'\nConverting: {pb_name} ({len(pages)} pages)\n')
-        for page_entry in pages:
-            idx = page_entry['page_index']
-            step_start, step_end = page_entry['step_range']
-            screenshot = page_entry.get('screenshot', '')
-            label = page_entry.get('label', '')
-
-            # Summarize actions on this page
-            action_descs = []
-            for i in range(step_start, step_end + 1):
-                if i < len(flat_steps):
-                    step = flat_steps[i]
-                    act = step.get('action', '')
-                    desc = step.get('target_description', '') or step.get('value', '') or step.get('url', '')
-                    if act not in ('navigate', 'wait') or not step.get('checkpoint'):
-                        action_descs.append(f'{act} "{desc}"' if desc else act)
-
-            is_terminal = (idx == len(pages) - 1)
-            term_label = ' [terminal]' if is_terminal else ''
-            default_id = f'{service}_{label}' if label else f'{service}_{flow}_page_{idx:02d}'
-
-            print(f'  Page {idx} (steps {step_start}-{step_end}): {screenshot}{term_label}')
-            for ad in action_descs:
-                print(f'    {ad}')
-            name = input(f'  Name [{default_id}]: ').strip()
-            if name:
-                page_names[idx] = name
-            else:
-                page_names[idx] = default_id
-            print()
-
-    # Build namer callback
-    namer = None
-    if page_names:
-        def namer(page_index, _entry, _steps):
-            return page_names.get(page_index, f'{service}_{flow}_page_{page_index:02d}')
-
-    # Open cache and convert
-    PAGE_HASH_DB.parent.mkdir(parents=True, exist_ok=True)
-    cache = PageCache(PAGE_HASH_DB)
-    try:
-        result = convert_recording(
-            service=service,
-            flow=flow,
-            playbook_path=playbook_path,
-            manifest_path=manifest_path,
-            ref_dir=ref_dir,
-            cache=cache,
-            page_namer=namer,
-        )
-    finally:
-        cache.close()
-
-    # Print summary
-    print(f'\nConversion complete:')
-    print(f'  {result.pages_created} page playbooks written')
-    for p in result.page_paths:
-        print(f'    {p}')
-    print(f'  {result.hashes_inserted} hash entries inserted')
-    print(f'  Flow config: {result.flow_config_path}')
-
-
-def cmd_rebuild_cache(args):
-    from agent.config import PAGE_HASH_DB, PAGES_DIR, REF_SCREENSHOTS_DIR
-    from agent.page_cache import PageCache
-
-    if not REF_SCREENSHOTS_DIR.is_dir():
-        print(f'ERROR: Ref screenshots dir not found: {REF_SCREENSHOTS_DIR}')
-        sys.exit(1)
-
-    # Delete existing DB and rebuild from scratch
-    if PAGE_HASH_DB.exists():
-        PAGE_HASH_DB.unlink()
-        print(f'Deleted existing: {PAGE_HASH_DB}')
-
-    PAGE_HASH_DB.parent.mkdir(parents=True, exist_ok=True)
-    cache = PageCache(PAGE_HASH_DB)
-
-    inserted = 0
-    skipped = 0
-
-    for png_path in sorted(REF_SCREENSHOTS_DIR.glob('*.png')):
-        page_id = png_path.stem
-
-        # Load the page playbook to get service and flows
-        page_json = PAGES_DIR / f'{page_id}.json'
-        if not page_json.exists():
-            print(f'  SKIP {page_id} (no matching page playbook)')
-            skipped += 1
-            continue
-
-        with open(page_json) as f:
-            page_data = json.load(f)
-
-        service = page_data.get('service', '')
-        flows = list(page_data.get('flows', []))
-        source = page_data.get('notes', '')
-        is_dynamic = 'Dynamic' in source
-
-        if not service or not flows:
-            print(f'  SKIP {page_id} (missing service or flows in playbook)')
-            skipped += 1
-            continue
-
-        from PIL import Image
-        img = Image.open(png_path)
-        cache.insert(page_id, service, flows, img,
-                     source='dynamic' if is_dynamic else 'learned')
-        inserted += 1
-        print(f'  {page_id} ({service}, {",".join(flows)})')
-
-    cache.close()
-    print(f'\nRebuilt {PAGE_HASH_DB}:')
-    print(f'  {inserted} entries inserted')
-    if skipped:
-        print(f'  {skipped} skipped (no matching playbook)')
-
-
-# ------------------------------------------------------------------
 # main
 # ------------------------------------------------------------------
 
@@ -1089,15 +930,7 @@ def main():
     p_learn.add_argument('--debug', action='store_true',
                          help='Save debug overlay images (bbox visualization)')
 
-    p_save = sub.add_parser('save', help='Convert recording to page-based playbooks')
-    p_save.add_argument('--service', required=True, help='Service name (e.g. netflix)')
-    p_save.add_argument('--flow', required=True, help='Flow type (cancel or resume)')
-    p_save.add_argument('--tier', default='', help='Plan tier (e.g. premium)')
-    p_save.add_argument('--no-prompt', action='store_true', dest='no_prompt',
-                        help='Skip interactive page naming (auto-generate IDs)')
-
     sub.add_parser('list', help='List all playbooks')
-    sub.add_parser('rebuild-cache', help='Rebuild page_hashes.db from ref screenshots')
 
     args = parser.parse_args()
 
@@ -1108,10 +941,8 @@ def main():
     dispatch = {
         'record': cmd_record,
         'learn': cmd_learn,
-        'save': cmd_save,
         'test': cmd_test,
         'list': cmd_list,
-        'rebuild-cache': cmd_rebuild_cache,
     }
     dispatch[args.command](args)
 

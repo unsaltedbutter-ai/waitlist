@@ -9,6 +9,21 @@ from pathlib import Path
 INFERENCE_URL = os.getenv('STUDIO_URL', 'http://192.168.1.100:8420')
 AGENT_PORT = int(os.getenv('AGENT_PORT', '8421'))
 
+# --- VLM (production executor) ---
+VLM_URL = os.getenv('VLM_URL', '')
+VLM_KEY = os.getenv('VLM_KEY', '')
+VLM_MODEL = os.getenv('VLM_MODEL', 'qwen3-vl-32b')
+
+SERVICE_URLS: dict[str, str] = {
+    'netflix': 'https://www.netflix.com/login',
+    'hulu': 'https://secure.hulu.com/account/login',
+    'disney': 'https://www.disneyplus.com/login',
+    'appletv': 'https://tv.apple.com/sign-in',
+    'paramount': 'https://www.paramountplus.com/account/signin/',
+    'peacock': 'https://www.peacocktv.com/signin',
+    'max': 'https://play.max.com/login',
+}
+
 # --- Paths ---
 
 def _resolve_playbook_dir() -> Path:
@@ -29,64 +44,6 @@ def _resolve_playbook_dir() -> Path:
 PLAYBOOK_DIR = _resolve_playbook_dir()
 PLAYBOOK_REF_DIR = PLAYBOOK_DIR / 'ref'
 SCREENSHOT_DIR = Path('/tmp/ub-screenshots')
-
-# --- Page-based playbook paths ---
-
-def _resolve_pages_dir() -> Path:
-    """Resolve page playbooks directory: env var > private package > local examples."""
-    env = os.environ.get('PAGE_PLAYBOOKS_DIR')
-    if env:
-        p = Path(env)
-        if p.is_dir():
-            return p
-    try:
-        from unsaltedbutter_prompts.playbooks import get_pages_dir  # type: ignore[import-untyped]
-        return get_pages_dir()
-    except (ImportError, AttributeError):
-        pass
-    return Path(__file__).parent / 'playbooks' / 'pages'
-
-
-def _resolve_flows_dir() -> Path:
-    """Resolve flow configs directory: env var > private package > local examples."""
-    env = os.environ.get('FLOWS_DIR')
-    if env:
-        p = Path(env)
-        if p.is_dir():
-            return p
-    try:
-        from unsaltedbutter_prompts.playbooks import get_flows_dir  # type: ignore[import-untyped]
-        return get_flows_dir()
-    except (ImportError, AttributeError):
-        pass
-    return Path(__file__).parent / 'playbooks' / 'flows'
-
-
-PAGES_DIR = _resolve_pages_dir()
-FLOWS_DIR = _resolve_flows_dir()
-PAGE_HASH_DB = Path(os.getenv(
-    'PAGE_HASH_DB',
-    str(Path.home() / '.unsaltedbutter' / 'page_hashes.db'),
-))
-def _resolve_ref_screenshots_dir() -> Path:
-    """Resolve ref screenshots directory: env var > private package > local."""
-    env = os.environ.get('REF_SCREENSHOTS_DIR')
-    if env:
-        p = Path(env)
-        if p.is_dir():
-            return p
-    try:
-        from unsaltedbutter_prompts.playbooks import get_ref_screenshots_dir  # type: ignore[import-untyped]
-        return get_ref_screenshots_dir()
-    except (ImportError, AttributeError):
-        pass
-    return Path(__file__).parent / 'playbooks' / 'ref_screenshots'
-
-REF_SCREENSHOTS_DIR = _resolve_ref_screenshots_dir()
-REVIEW_QUEUE_DIR = Path(os.getenv(
-    'REVIEW_QUEUE_DIR',
-    str(Path.home() / '.unsaltedbutter' / 'review_queue'),
-))
 
 # --- Timeouts (seconds) ---
 STEP_TIMEOUT = 60.0

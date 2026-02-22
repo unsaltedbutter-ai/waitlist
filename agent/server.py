@@ -1,7 +1,7 @@
 """UnsaltedButter Agent: main entry point.
 
 Runs on Mac Mini. Listens for job dispatches from the orchestrator via HTTP,
-executes browser automation playbooks against streaming service websites,
+executes browser automation via VLM-driven screenshot analysis,
 and reports results back to the orchestrator via HTTP callback.
 
 Endpoints (matches what orchestrator's AgentClient sends):
@@ -28,16 +28,11 @@ import httpx
 from aiohttp import web
 from dotenv import load_dotenv
 
-from agent.config import AGENT_PORT
-from agent.executor import PlaybookExecutor
-from agent.inference import (
-    CoordinateInferenceClient,
-    HttpInferenceClient,
-    InferenceClient,
-    MockInferenceClient,
-)
-from agent.playbook import ExecutionResult, JobContext, Playbook
+from agent.config import AGENT_PORT, VLM_KEY, VLM_MODEL, VLM_URL
+from agent.playbook import ExecutionResult
 from agent.profile import NORMAL, PROFILES
+from agent.recording.vlm_client import VLMClient
+from agent.vlm_executor import VLMExecutor
 
 log = logging.getLogger(__name__)
 
@@ -82,13 +77,11 @@ class Agent:
         host: str = "0.0.0.0",
         port: int = AGENT_PORT,
         orchestrator_url: str = "http://192.168.1.101:8422",
-        inference_mode: str = "http",
         profile_name: str = "normal",
     ) -> None:
         self._host = host
         self._port = port
         self._orchestrator_url = orchestrator_url.rstrip("/")
-        self._inference_mode = inference_mode
         self._profile = PROFILES.get(profile_name, NORMAL)
 
         self._app = web.Application()
@@ -100,8 +93,8 @@ class Agent:
         self._shutdown = asyncio.Event()
         self._loop: asyncio.AbstractEventLoop | None = None
 
-        # Inference client (created at startup, closed at shutdown)
-        self._inference: InferenceClient | None = None
+        # VLM client (created at startup, closed at shutdown)
+        self._vlm: VLMClient | None = None
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -112,13 +105,15 @@ class Agent:
         self._loop = asyncio.get_running_loop()
         self._http_client = httpx.AsyncClient(timeout=30.0)
 
-        # Create inference client based on mode
-        self._inference = _create_inference_client(self._inference_mode)
-        log.info(
-            "Inference client: %s (mode=%s)",
-            type(self._inference).__name__,
-            self._inference_mode,
+        # Create VLM client
+        if not VLM_URL:
+            log.warning("VLM_URL not set; jobs will fail until configured")
+        self._vlm = VLMClient(
+            base_url=VLM_URL or "http://localhost:8080",
+            api_key=VLM_KEY,
+            model=VLM_MODEL,
         )
+        log.info("VLM client: model=%s url=%s", VLM_MODEL, VLM_URL or "(not set)")
 
         # Register routes
         self._app.router.add_post("/execute", self._handle_execute)
@@ -155,9 +150,9 @@ class Agent:
                 except (asyncio.CancelledError, Exception):
                     pass
 
-        # Close inference client
-        if self._inference is not None and hasattr(self._inference, "close"):
-            self._inference.close()
+        # Close VLM client
+        if self._vlm is not None:
+            self._vlm.close()
 
         # Close HTTP client
         if self._http_client:
@@ -289,7 +284,7 @@ class Agent:
         status: dict = {
             "ok": True,
             "version": GIT_HASH,
-            "inference_mode": self._inference_mode,
+            "vlm_model": VLM_MODEL,
         }
         if self._active_job:
             status["active_job"] = self._active_job.job_id
@@ -303,9 +298,9 @@ class Agent:
     # ------------------------------------------------------------------
 
     async def _run_job(self, active: ActiveJob, credentials: dict) -> None:
-        """Execute a playbook for the given job, then report result to orchestrator.
+        """Execute a VLM-driven flow for the given job, then report result.
 
-        Runs the synchronous PlaybookExecutor in a thread pool so we don't block
+        Runs the synchronous VLMExecutor in a thread pool so we don't block
         the event loop (Chrome automation, VLM calls, and sleeps are all blocking).
         """
         result: ExecutionResult | None = None
@@ -313,45 +308,33 @@ class Agent:
 
         try:
             # Derive tier from plan_id: "netflix_premium" -> "premium"
-            tier = ''
+            plan_tier = ''
             if active.plan_id:
                 prefix = active.service + '_'
-                tier = active.plan_id.removeprefix(prefix)
-
-            # Load playbook
-            try:
-                playbook = Playbook.load(active.service, active.action, tier=tier)
-            except FileNotFoundError as exc:
-                error_msg = f"Playbook not found: {exc}"
-                log.error(error_msg)
-                return
-
-            # Build job context
-            ctx = JobContext(
-                job_id=active.job_id,
-                user_id="",  # agent does not need user_id
-                service=active.service,
-                flow=active.action,
-                credentials=dict(credentials),  # defensive copy
-            )
+                plan_tier = active.plan_id.removeprefix(prefix)
 
             log.info(
-                "Starting execution: job=%s service=%s action=%s playbook_v%d (%d steps)",
+                "Starting execution: job=%s service=%s action=%s",
                 active.job_id,
                 active.service,
                 active.action,
-                playbook.version,
-                len(playbook.steps),
             )
 
-            # PlaybookExecutor.run() is synchronous (blocking I/O: Chrome, VLM, sleeps).
-            # Run it in the default thread pool executor.
-            executor = PlaybookExecutor(
-                inference=self._inference,
+            executor = VLMExecutor(
+                vlm=self._vlm,
                 profile=self._profile,
+                otp_callback=self.request_otp,
+                loop=self._loop,
             )
+
             result = await asyncio.get_running_loop().run_in_executor(
-                None, executor.run, playbook, ctx
+                None,
+                executor.run,
+                active.service,
+                active.action,
+                dict(credentials),  # defensive copy
+                active.job_id,
+                plan_tier,
             )
 
             if result.success:
@@ -400,7 +383,7 @@ class Agent:
             payload = {
                 "job_id": active.job_id,
                 "success": result.success,
-                "access_end_date": None,  # TODO: extract from confirmation screen
+                "access_end_date": result.billing_date,
                 "error": result.error_message or None,
                 "duration_seconds": int(result.duration_seconds),
             }
@@ -486,28 +469,6 @@ class Agent:
 
 
 # ---------------------------------------------------------------------------
-# Inference client factory
-# ---------------------------------------------------------------------------
-
-def _create_inference_client(mode: str) -> InferenceClient:
-    """Create the appropriate inference client based on mode.
-
-    Modes:
-      http       - real VLM on Mac Studio (production)
-      coordinate - use recorded ref_region from playbooks (no VLM)
-      mock       - random coords for loop testing
-    """
-    if mode == "http":
-        return HttpInferenceClient()
-    elif mode == "coordinate":
-        return CoordinateInferenceClient()
-    elif mode == "mock":
-        return MockInferenceClient()
-    else:
-        raise ValueError(f"Unknown inference mode: {mode}")
-
-
-# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
@@ -516,7 +477,6 @@ async def run() -> None:
     orchestrator_url = os.environ.get(
         "ORCHESTRATOR_URL", "http://192.168.1.101:8422"
     )
-    inference_mode = os.environ.get("INFERENCE_MODE", "http")
     profile_name = os.environ.get("AGENT_PROFILE", "normal")
     host = os.environ.get("AGENT_HOST", "0.0.0.0")
     port = AGENT_PORT
@@ -525,7 +485,6 @@ async def run() -> None:
         host=host,
         port=port,
         orchestrator_url=orchestrator_url,
-        inference_mode=inference_mode,
         profile_name=profile_name,
     )
 
@@ -543,10 +502,10 @@ async def run() -> None:
         loop.add_signal_handler(sig, _signal_handler)
 
     log.info(
-        "Agent %s running (port=%d, inference=%s, profile=%s)",
+        "Agent %s running (port=%d, vlm=%s, profile=%s)",
         GIT_HASH,
         port,
-        inference_mode,
+        VLM_MODEL,
         profile_name,
     )
 

@@ -351,5 +351,6 @@ class ExecutionResult:
     inference_count: int
     playbook_version: int
     error_message: str = ''
+    billing_date: str | None = None
     step_results: list[StepResult] = field(default_factory=list)
     screenshots: list[dict] = field(default_factory=list)  # [{step, timestamp, path}]
