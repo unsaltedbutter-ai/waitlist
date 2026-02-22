@@ -49,7 +49,7 @@ from agent.recording.recorder import (
     _StuckDetector,
     _resolve_credential,
 )
-from agent.recording.vlm_client import VLMClient, _extract_json
+from agent.recording.vlm_client import VLMClient, _denormalize_bboxes, _extract_json
 from agent.screenshot import CHROME_HEIGHT_LOGICAL, crop_browser_chrome
 
 
@@ -569,6 +569,65 @@ class TestVLMClientAnalyze:
             )
 
         assert result['bounding_box'] == [100, 200, 300, 250]
+
+
+# ===========================================================================
+# Qwen bbox denormalization tests
+# ===========================================================================
+
+
+class TestDenormalizeBboxes:
+    """Recursive Qwen 0-1000 bbox denormalization."""
+
+    def test_top_level_bbox(self) -> None:
+        obj = {'bounding_box': [500, 500, 1000, 1000]}
+        _denormalize_bboxes(obj, 1280, 800)
+        assert obj['bounding_box'] == [640.0, 400.0, 1280.0, 800.0]
+
+    def test_nested_dict_bbox(self) -> None:
+        """code_boxes with nested box fields should be denormalized."""
+        obj = {
+            'code_boxes': [
+                {'label': 'code_1', 'box': [322, 355, 367, 444]},
+                {'label': 'code_2', 'box': [380, 355, 425, 444]},
+            ],
+        }
+        _denormalize_bboxes(obj, 1280, 800)
+        assert abs(obj['code_boxes'][0]['box'][0] - 412.16) < 0.1
+        assert abs(obj['code_boxes'][0]['box'][1] - 284.0) < 0.1
+        assert abs(obj['code_boxes'][1]['box'][0] - 486.4) < 0.1
+
+    def test_actions_list_bbox(self) -> None:
+        """actions list with nested box fields should be denormalized."""
+        obj = {
+            'actions': [
+                {'action': 'click', 'target': 'Accept', 'box': [500, 500, 700, 560]},
+            ],
+        }
+        _denormalize_bboxes(obj, 1280, 800)
+        assert obj['actions'][0]['box'] == [640.0, 400.0, 896.0, 448.0]
+
+    def test_non_bbox_lists_untouched(self) -> None:
+        """Lists that aren't 4-element numeric should be left alone."""
+        obj = {
+            'wait_after_sec': [2, 4],
+            'tags': ['a', 'b', 'c', 'd'],
+            'confidence': 0.95,
+        }
+        _denormalize_bboxes(obj, 1280, 800)
+        assert obj['wait_after_sec'] == [2, 4]
+        assert obj['tags'] == ['a', 'b', 'c', 'd']
+        assert obj['confidence'] == 0.95
+
+    def test_mixed_top_and_nested(self) -> None:
+        """Both top-level and nested bboxes in the same response."""
+        obj = {
+            'email_box': [100, 200, 500, 250],
+            'code_boxes': [{'label': 'c1', 'box': [100, 300, 200, 400]}],
+        }
+        _denormalize_bboxes(obj, 1280, 800)
+        assert obj['email_box'] == [128.0, 160.0, 640.0, 200.0]
+        assert obj['code_boxes'][0]['box'] == [128.0, 240.0, 256.0, 320.0]
 
 
 # ===========================================================================

@@ -72,6 +72,32 @@ def _extract_json(raw: str) -> dict:
     raise ValueError(f"Could not extract JSON from VLM output: {text[:200]}")
 
 
+def _denormalize_bboxes(obj: dict | list, w: int, h: int) -> None:
+    """Recursively convert Qwen 0-1000 normalized bboxes to pixels in place.
+
+    Walks the parsed JSON response and converts any 4-element numeric list
+    (assumed to be [x1, y1, x2, y2] in Qwen's 0-1000 space) to absolute
+    pixel coordinates.
+    """
+    if isinstance(obj, dict):
+        for key in obj:
+            val = obj[key]
+            if (isinstance(val, list) and len(val) == 4
+                    and all(isinstance(v, (int, float)) for v in val)):
+                obj[key] = [
+                    val[0] * w / 1000,
+                    val[1] * h / 1000,
+                    val[2] * w / 1000,
+                    val[3] * h / 1000,
+                ]
+            elif isinstance(val, (dict, list)):
+                _denormalize_bboxes(val, w, h)
+    elif isinstance(obj, list):
+        for item in obj:
+            if isinstance(item, (dict, list)):
+                _denormalize_bboxes(item, w, h)
+
+
 class VLMClient:
     """Minimal client for OpenAI-compatible vision APIs.
 
@@ -183,19 +209,11 @@ class VLMClient:
         parsed = _extract_json(raw_text)
 
         # Qwen-VL models return bounding boxes in 0-1000 normalized coords.
-        # Convert ALL bbox-like fields to absolute pixels so callers get
-        # consistent pixel coordinates regardless of model.
+        # Recursively convert ALL bbox-like fields to absolute pixels so
+        # callers get consistent pixel coordinates regardless of model.
         if self._normalized_coords:
             w, h = sent_size
-            for key, val in parsed.items():
-                if (isinstance(val, list) and len(val) == 4
-                        and all(isinstance(v, (int, float)) for v in val)):
-                    parsed[key] = [
-                        val[0] * w / 1000,
-                        val[1] * h / 1000,
-                        val[2] * w / 1000,
-                        val[3] * h / 1000,
-                    ]
+            _denormalize_bboxes(parsed, w, h)
 
         return parsed, scale_factor
 
