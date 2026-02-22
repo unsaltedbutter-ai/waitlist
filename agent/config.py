@@ -13,7 +13,7 @@ VLM_KEY = os.getenv('VLM_KEY', '')
 VLM_MODEL = os.getenv('VLM_MODEL', 'qwen3-vl-32b')
 
 SERVICE_URLS: dict[str, str] = {
-    'netflix': 'https://www.netflix.com/login',
+    'netflix': 'https://www.netflix.com/',
     'hulu': 'https://secure.hulu.com/account/login',
     'disney': 'https://www.disneyplus.com/login',
     'appletv': 'https://tv.apple.com/sign-in',
