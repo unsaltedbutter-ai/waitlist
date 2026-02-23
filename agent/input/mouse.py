@@ -21,6 +21,23 @@ pyautogui.PAUSE = 0
 pyautogui.FAILSAFE = True
 
 
+def _execute_path(
+    points: list[tuple[float, float]],
+    duration: float,
+    event_type: int = Quartz.kCGEventMouseMoved,
+) -> None:
+    """Execute a mouse path via Quartz CGEvents with velocity-profiled timing."""
+    delays = humanize.velocity_profile(len(points), base_delay=duration / max(len(points), 1))
+    for i, (px, py) in enumerate(points):
+        event = Quartz.CGEventCreateMouseEvent(
+            None, event_type,
+            (px, py), Quartz.kCGMouseButtonLeft,
+        )
+        Quartz.CGEventPost(Quartz.kCGHIDEventTap, event)
+        if i < len(delays):
+            time.sleep(delays[i])
+
+
 def move_to(x: int, y: int, fast: bool = False) -> None:
     """
     Move mouse to absolute screen coordinates with a human-like Bezier path.
@@ -37,6 +54,13 @@ def move_to(x: int, y: int, fast: bool = False) -> None:
         pyautogui.moveTo(x, y)
         return
 
+    # Pre-move jerk: hand re-engages (~50% of non-fast moves with enough distance)
+    if not fast and distance > 30 and random.random() < 0.50:
+        jerk_dist = random.uniform(20, 80)
+        jerk_points = humanize.jerk_offset((sx, sy), distance=jerk_dist)
+        _execute_path(jerk_points, duration=random.uniform(0.06, 0.12))
+        sx, sy = jerk_points[-1]
+
     n_points = humanize.num_waypoints(distance)
     duration = humanize.movement_duration(distance)
     if fast:
@@ -50,19 +74,7 @@ def move_to(x: int, y: int, fast: bool = False) -> None:
     if not fast:
         points = humanize.apply_overshoot(points, target, probability=0.12)
 
-    # Generate timing
-    delays = humanize.velocity_profile(len(points), base_delay=duration / len(points))
-
-    # Execute using Quartz CGEvents directly (pyautogui.moveTo has ~18ms
-    # Python/PyObjC overhead per call, which makes 200-point paths take 3-4s)
-    for i, (px, py) in enumerate(points):
-        event = Quartz.CGEventCreateMouseEvent(
-            None, Quartz.kCGEventMouseMoved,
-            (px, py), Quartz.kCGMouseButtonLeft,
-        )
-        Quartz.CGEventPost(Quartz.kCGHIDEventTap, event)
-        if i < len(delays):
-            time.sleep(delays[i])
+    _execute_path(points, duration)
 
 
 def move_by(dx: int, dy: int, fast: bool = False) -> None:
@@ -92,6 +104,22 @@ def click(
     pyautogui.mouseDown(button=button, _pause=False)
     time.sleep(press_duration)
     pyautogui.mouseUp(button=button, _pause=False)
+
+    # Post-click drift: hand relaxes (~40% of non-fast clicks)
+    if not fast and random.random() < 0.40:
+        _post_click_drift()
+
+
+def _post_click_drift() -> None:
+    """Gentle drift after a click as the hand relaxes."""
+    cx, cy = pyautogui.position()
+    dist = random.uniform(50, 200)
+    angle = random.uniform(20, 70)
+    points = humanize.drift_curve(
+        (cx, cy), distance=dist, angle_deg=angle,
+        num_points=random.randint(10, 15),
+    )
+    _execute_path(points, duration=random.uniform(0.4, 0.8))
 
 
 def double_click(x: int | None = None, y: int | None = None) -> None:
@@ -159,7 +187,6 @@ def drag(
     )
     if not fast:
         points = humanize.apply_jitter(points, magnitude=0.8)
-    delays = humanize.velocity_profile(len(points), base_delay=duration / len(points))
 
     # Use Quartz kCGEventLeftMouseDragged so the window follows the cursor.
     # pyautogui.moveTo sends kCGEventMouseMoved which macOS ignores during drag.
@@ -167,13 +194,7 @@ def drag(
     if button == 'right':
         drag_type = Quartz.kCGEventRightMouseDragged
 
-    for i, (px, py) in enumerate(points):
-        drag_event = Quartz.CGEventCreateMouseEvent(
-            None, drag_type, (px, py), Quartz.kCGMouseButtonLeft,
-        )
-        Quartz.CGEventPost(Quartz.kCGHIDEventTap, drag_event)
-        if i < len(delays):
-            time.sleep(delays[i])
+    _execute_path(points, duration, event_type=drag_type)
 
     time.sleep(0.02 if fast else random.uniform(0.05, 0.15))
     pyautogui.mouseUp(button=button, _pause=False)
