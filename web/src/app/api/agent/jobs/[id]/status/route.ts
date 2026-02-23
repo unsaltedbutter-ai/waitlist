@@ -9,8 +9,8 @@ import { recordStatusChange } from "@/lib/job-history";
 // Valid status transitions: from -> [allowed targets]
 const VALID_TRANSITIONS: Record<string, string[]> = {
   dispatched: ["outreach_sent", "active", "implied_skip", "failed"],
-  outreach_sent: ["snoozed", "active", "user_skip"],
-  snoozed: ["dispatched"],
+  outreach_sent: ["snoozed", "active", "user_skip", "failed"],
+  snoozed: ["dispatched", "failed"],
   active: ["awaiting_otp", "completed_paid", "completed_eventual", "completed_reneged", "failed"],
   awaiting_otp: ["active", "user_abandon", "completed_paid", "completed_eventual", "completed_reneged", "failed"],
 };

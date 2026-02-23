@@ -83,6 +83,7 @@ class Session:
         # Update VPS and local job status to failed
         # CLI-dispatched jobs don't exist on the VPS, skip remote update
         if not job_id.startswith("cli-"):
+            log.info("_fail_job: updating VPS status -> failed for %s", job_id[:8])
             try:
                 await self._api.update_job_status(job_id, "failed")
             except Exception:
@@ -124,6 +125,7 @@ class Session:
 
     async def handle_yes(self, user_npub: str, job_id: str) -> None:
         """User says yes to outreach. Go straight to EXECUTING (OTP warning is in outreach)."""
+        log.info("handle_yes: user=%s job=%s", user_npub[:16], job_id[:8])
         job = await self._db.get_job(job_id)
         if job is None:
             log.error("handle_yes: job %s not found in local DB", job_id)
@@ -132,6 +134,7 @@ class Session:
 
         service_id = job["service_id"]
         action = job["action"]
+        log.info("handle_yes: %s %s, local status=%s", action, service_id, job.get("status"))
 
         # Fetch credentials from VPS API
         creds = await self._api.get_credentials(user_npub, service_id)
@@ -155,6 +158,7 @@ class Session:
         # Update VPS job status to active
         try:
             await self._api.update_job_status(job_id, "active")
+            log.info("handle_yes: VPS status -> active for %s", job_id[:8])
         except Exception:
             log.exception("Failed to update VPS job status for %s", job_id)
 
@@ -163,6 +167,7 @@ class Session:
 
         # Dispatch to agent
         plan_id = job.get("plan_id")
+        log.info("handle_yes: dispatching to agent, job=%s plan=%s", job_id[:8], plan_id)
         accepted = await self._agent.execute(
             job_id, service_id, action, creds, plan_id=plan_id
         )
@@ -170,6 +175,7 @@ class Session:
             await self._fail_job(user_npub, job, "Agent rejected the job")
             return
 
+        log.info("handle_yes: agent accepted job %s", job_id[:8])
         # Schedule OTP timeout timer
         await self._timers.schedule_delay(
             OTP_TIMEOUT, job_id, self._config.otp_timeout_seconds
@@ -369,12 +375,17 @@ class Session:
         duration_seconds: int,
     ) -> None:
         """Agent callback: job finished. EXECUTING/AWAITING_OTP/AWAITING_CREDENTIAL -> INVOICE_SENT or IDLE."""
+        log.info(
+            "handle_result: job=%s success=%s duration=%ds error=%s",
+            job_id[:8], success, duration_seconds, error,
+        )
         session = await self._get_session_by_job_id(job_id)
         if session is None:
             log.warning("handle_result: no session for job %s", job_id)
             return
 
         user_npub = session["user_npub"]
+        log.info("handle_result: user=%s state=%s", user_npub[:16], session["state"])
 
         # Cancel OTP timeout timer (may or may not exist)
         await self._timers.cancel(OTP_TIMEOUT, job_id)

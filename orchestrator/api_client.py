@@ -157,6 +157,11 @@ class ApiClient:
         payload: dict = {"status": status, **kwargs}
         body = json.dumps(payload)
         resp = await self._request("PATCH", path, body=body)
+        if resp.status_code != 200:
+            log.error(
+                "VPS job status update failed: %s -> %s, HTTP %d: %s",
+                job_id, status, resp.status_code, resp.text,
+            )
         resp.raise_for_status()
         return resp.json()
 
