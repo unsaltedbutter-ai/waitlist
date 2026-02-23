@@ -6,6 +6,10 @@ echo "======================================"
 echo "               git pull"
 echo "======================================"
 git pull;
+cd ../unsaltedbutter-prompts;
+git pull;
+cd ../unsaltedbutter;
+
 echo ="======================================"
 echo "=============   $(git rev-parse --short HEAD)   ============="
 echo "======================================="
