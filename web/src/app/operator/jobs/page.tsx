@@ -37,11 +37,29 @@ interface LookupJob {
   created_at: string;
 }
 
+interface PendingJob {
+  id: string;
+  service_id: string;
+  action: string;
+  trigger: string;
+  status: string;
+  status_updated_at: string;
+  created_at: string;
+  nostr_npub: string;
+}
+
 export default function JobsPage() {
   const [metrics, setMetrics] = useState<Metrics | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [perfWindow, setPerfWindow] = useState<"7d" | "30d">("7d");
+
+  // Pending jobs state
+  const [pendingJobs, setPendingJobs] = useState<PendingJob[]>([]);
+  const [pendingLoading, setPendingLoading] = useState(true);
+  const [pendingError, setPendingError] = useState("");
+  const [copiedNpub, setCopiedNpub] = useState<string | null>(null);
+  const [pendingCancellingId, setPendingCancellingId] = useState<string | null>(null);
 
   // Npub lookup state
   const [npubInput, setNpubInput] = useState("");
@@ -50,6 +68,25 @@ export default function JobsPage() {
   const [lookupLoading, setLookupLoading] = useState(false);
   const [lookupError, setLookupError] = useState("");
   const [cancellingId, setCancellingId] = useState<string | null>(null);
+
+  const fetchPendingJobs = useCallback(async () => {
+    setPendingLoading(true);
+    setPendingError("");
+    try {
+      const res = await authFetch("/api/operator/jobs/pending-list");
+      if (res.status === 403) return;
+      if (!res.ok) {
+        setPendingError("Failed to load pending jobs.");
+        return;
+      }
+      const data = await res.json();
+      setPendingJobs(data.jobs);
+    } catch {
+      setPendingError("Failed to load pending jobs.");
+    } finally {
+      setPendingLoading(false);
+    }
+  }, []);
 
   const fetchData = useCallback(async () => {
     setLoading(true);
@@ -74,7 +111,8 @@ export default function JobsPage() {
 
   useEffect(() => {
     fetchData();
-  }, [fetchData]);
+    fetchPendingJobs();
+  }, [fetchData, fetchPendingJobs]);
 
   const searchNpub = async () => {
     const trimmed = npubInput.trim();
@@ -112,6 +150,28 @@ export default function JobsPage() {
     }
   };
 
+  const copyNpub = (npub: string) => {
+    navigator.clipboard.writeText(npub);
+    setCopiedNpub(npub);
+    setTimeout(() => setCopiedNpub(null), 2000);
+  };
+
+  const cancelPendingJob = async (jobId: string) => {
+    setPendingCancellingId(jobId);
+    try {
+      const res = await authFetch(`/api/operator/jobs/${jobId}/force-status`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status: "user_skip", reason: "Operator cancelled" }),
+      });
+      if (res.ok) {
+        await fetchPendingJobs();
+      }
+    } finally {
+      setPendingCancellingId(null);
+    }
+  };
+
   const cancelJob = async (jobId: string) => {
     setCancellingId(jobId);
     try {
@@ -142,6 +202,91 @@ export default function JobsPage() {
 
   return (
     <div className="space-y-8">
+      {/* Pending Jobs */}
+      <section>
+        <div className="flex items-center gap-3 mb-3">
+          <SectionHeader>Pending Jobs</SectionHeader>
+          <button
+            type="button"
+            onClick={fetchPendingJobs}
+            disabled={pendingLoading}
+            className="text-xs px-2 py-1 rounded border border-border text-muted hover:text-foreground disabled:opacity-50 mb-3"
+          >
+            {pendingLoading ? "Loading..." : "Refresh"}
+          </button>
+        </div>
+
+        {pendingError && (
+          <p className="text-red-400 text-sm mb-4">{pendingError}</p>
+        )}
+
+        {!pendingLoading && pendingJobs.length === 0 && !pendingError && (
+          <p className="text-muted text-sm">No pending jobs in queue.</p>
+        )}
+
+        {pendingJobs.length > 0 && (
+          <div className="overflow-x-auto">
+            <table className="w-full">
+              <thead>
+                <tr className="border-b border-border">
+                  <th className={thClass}>Npub</th>
+                  <th className={thClass}>Service</th>
+                  <th className={thClass}>Action</th>
+                  <th className={thClass}>Status</th>
+                  <th className={thClass}>Created</th>
+                  <th className={thClass}>Action</th>
+                </tr>
+              </thead>
+              <tbody>
+                {pendingJobs.map((j) => {
+                  const cfg = getJobStatusConfig(j.status);
+                  return (
+                    <tr key={j.id} className="border-b border-border/50">
+                      <td className="px-3 py-2">
+                        <button
+                          type="button"
+                          onClick={() => copyNpub(j.nostr_npub)}
+                          className="font-mono text-xs text-foreground hover:text-accent cursor-pointer"
+                          title="Click to copy full npub"
+                        >
+                          {copiedNpub === j.nostr_npub
+                            ? "Copied!"
+                            : `${j.nostr_npub.slice(0, 12)}...`}
+                        </button>
+                      </td>
+                      <td className={tdClass}>{j.service_id}</td>
+                      <td className={tdMuted}>{j.action}</td>
+                      <td className="px-3 py-2">
+                        <span
+                          className={`inline-block text-xs px-2 py-0.5 rounded ${cfg.badgeClass}`}
+                        >
+                          {cfg.label}
+                        </span>
+                      </td>
+                      <td className={tdMuted}>{formatDate(j.created_at)}</td>
+                      <td className="px-3 py-2">
+                        {CANCELLABLE.has(j.status) ? (
+                          <button
+                            type="button"
+                            onClick={() => cancelPendingJob(j.id)}
+                            disabled={pendingCancellingId === j.id}
+                            className="text-xs px-2 py-1 rounded border border-red-700/50 bg-red-900/20 text-red-400 hover:bg-red-900/40 disabled:opacity-50"
+                          >
+                            {pendingCancellingId === j.id ? "..." : "Cancel"}
+                          </button>
+                        ) : INFLIGHT.has(j.status) ? (
+                          <span className="text-xs text-amber-400">inflight</span>
+                        ) : null}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
+
       {/* Npub Job Lookup */}
       <section>
         <SectionHeader>Job Lookup by Npub</SectionHeader>
