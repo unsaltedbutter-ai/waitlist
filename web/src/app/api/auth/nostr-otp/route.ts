@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { query } from "@/lib/db";
 import { createRateLimiter, getClientIp } from "@/lib/rate-limit";
+import crypto from "crypto";
 import {
   loginExistingUser,
   createUserWithInvite,
@@ -38,16 +39,17 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  // Strip hyphen for DB lookup
+  // Strip hyphen, hash for DB lookup
   const rawCode = code.replace("-", "");
+  const codeHash = crypto.createHash("sha256").update(rawCode).digest("hex");
 
   // Cleanup expired OTPs
   await query("DELETE FROM nostr_otp WHERE expires_at < NOW()");
 
   // Atomic lookup + consume
   const otpResult = await query<{ npub_hex: string }>(
-    "DELETE FROM nostr_otp WHERE code = $1 AND expires_at > NOW() RETURNING npub_hex",
-    [rawCode]
+    "DELETE FROM nostr_otp WHERE code_hash = $1 AND expires_at > NOW() RETURNING npub_hex",
+    [codeHash]
   );
 
   if (otpResult.rows.length === 0) {

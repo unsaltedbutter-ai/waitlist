@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { mockQueryResult } from "@/__test-utils__/fixtures";
+import crypto from "crypto";
 
 vi.mock("@/lib/db", () => ({
   query: vi.fn(),
@@ -180,9 +181,10 @@ describe("POST /api/auth/nostr-otp", () => {
     );
     expect(res.status).toBe(200);
 
-    // Verify the raw code (no hyphen) was passed to the DB
+    // Verify the SHA-256 hash of the raw code was passed to the DB
+    const expectedHash = crypto.createHash("sha256").update("123456789012").digest("hex");
     const deleteCall = vi.mocked(query).mock.calls[1];
-    expect(deleteCall[1]).toEqual(["123456789012"]);
+    expect(deleteCall[1]).toEqual([expectedHash]);
   });
 
   it("existing user, onboarding incomplete: returns needsOnboarding", async () => {

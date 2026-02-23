@@ -34,9 +34,9 @@ beforeEach(() => {
 });
 
 describe("POST /api/agent/otp", () => {
-  it("creates OTP and returns code", async () => {
+  it("creates OTP and returns plaintext code (stores hash)", async () => {
     vi.mocked(query).mockResolvedValueOnce(
-      mockQueryResult([{ code: "123456789012" }])
+      mockQueryResult([{ npub_hex: VALID_HEX }])
     );
 
     const req = makeRequest({ npub_hex: VALID_HEX });
@@ -44,12 +44,16 @@ describe("POST /api/agent/otp", () => {
 
     expect(res.status).toBe(200);
     const data = await res.json();
-    expect(data.code).toBe("123456789012");
+    // Code is 12 digits
+    expect(data.code).toMatch(/^\d{12}$/);
 
     expect(vi.mocked(query)).toHaveBeenCalledOnce();
     const [sql, params] = vi.mocked(query).mock.calls[0];
     expect(sql).toContain("INSERT INTO nostr_otp");
+    expect(sql).toContain("code_hash");
     expect(params![0]).toBe(VALID_HEX);
+    // Second param is a SHA-256 hex digest (64 chars)
+    expect(params![1]).toMatch(/^[a-f0-9]{64}$/);
   });
 
   it("returns 400 for missing npub_hex", async () => {

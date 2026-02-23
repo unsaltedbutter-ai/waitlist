@@ -25,23 +25,24 @@ export const POST = withAgentAuth(async (_req: NextRequest, { body }) => {
   }
 
   try {
-    // Retry up to 5 times in case of rare code collision
+    // Retry up to 5 times in case of rare hash collision
     for (let attempt = 0; attempt < 5; attempt++) {
       const code = crypto.randomInt(0, 1_000_000_000_000).toString().padStart(12, "0");
+      const codeHash = crypto.createHash("sha256").update(code).digest("hex");
 
       const result = await query(
-        `INSERT INTO nostr_otp (npub_hex, code, expires_at)
+        `INSERT INTO nostr_otp (npub_hex, code_hash, expires_at)
          VALUES ($1, $2, NOW() + INTERVAL '5 minutes')
          ON CONFLICT (npub_hex) DO UPDATE
-           SET code = EXCLUDED.code,
+           SET code_hash = EXCLUDED.code_hash,
                expires_at = EXCLUDED.expires_at,
                created_at = NOW()
-         RETURNING code`,
-        [npub_hex, code]
+         RETURNING npub_hex`,
+        [npub_hex, codeHash]
       );
 
       if (result.rows.length > 0) {
-        return NextResponse.json({ code: result.rows[0].code });
+        return NextResponse.json({ code });
       }
     }
 
