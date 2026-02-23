@@ -303,23 +303,21 @@ class VLMExecutor:
             stuck = _StuckDetector()
 
             for iteration in range(self.max_steps):
-                # Idle fidget while page settles (replaces dead-still sleep)
-                mouse.idle_fidget(self.settle_delay)
+                time.sleep(self.settle_delay)
 
                 # Capture and crop browser chrome
                 browser.get_session_window(session)
                 raw_b64 = ss.capture_to_base64(session.window_id)
                 screenshot_b64, chrome_height_px = crop_browser_chrome(raw_b64)
 
-                # Ask VLM (fidget mouse while waiting for inference)
+                # Ask VLM
                 current_prompt = prompts[prompt_idx]
                 current_label = labels[prompt_idx]
 
                 try:
-                    with mouse.fidget_while():
-                        response, scale_factor = self.vlm.analyze(
-                            screenshot_b64, current_prompt,
-                        )
+                    response, scale_factor = self.vlm.analyze(
+                        screenshot_b64, current_prompt,
+                    )
                     inference_count += 1
                 except Exception as exc:
                     log.warning('VLM error on iteration %d: %s', iteration, exc)
