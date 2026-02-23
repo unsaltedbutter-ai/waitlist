@@ -21,6 +21,7 @@ from typing import Callable
 from agent import browser
 from agent import screenshot as ss
 from agent.config import SERVICE_URLS
+from agent.debug_trace import DebugTrace
 from agent.input import coords, keyboard, mouse, scroll as scroll_mod
 from agent.input.window import focus_window_by_pid
 from agent.playbook import ExecutionResult
@@ -218,6 +219,7 @@ class VLMExecutor:
         loop: asyncio.AbstractEventLoop | None = None,
         settle_delay: float = 2.5,
         max_steps: int = 60,
+        debug: bool = True,
     ) -> None:
         self.vlm = vlm
         self.profile = profile or NORMAL
@@ -226,6 +228,7 @@ class VLMExecutor:
         self._loop = loop
         self.settle_delay = settle_delay
         self.max_steps = max_steps
+        self._debug = debug
 
     def run(
         self,
@@ -260,6 +263,8 @@ class VLMExecutor:
                 error_message=f'Unknown service: {service}',
             )
 
+        DebugTrace.prune_old()
+
         start_url = SERVICE_URLS[service]
         t0 = time.monotonic()
         session = None
@@ -267,6 +272,7 @@ class VLMExecutor:
         step_count = 0
         billing_date = None
         error_message = ''
+        trace = DebugTrace(job_id, enabled=self._debug and bool(job_id))
 
         try:
             # Launch Chrome
@@ -321,7 +327,12 @@ class VLMExecutor:
                     inference_count += 1
                 except Exception as exc:
                     log.warning('VLM error on iteration %d: %s', iteration, exc)
+                    trace.save_step(iteration, screenshot_b64, None,
+                                    phase=current_label)
                     continue
+
+                trace.save_step(iteration, screenshot_b64, response,
+                                phase=current_label)
 
                 # --- Sign-in phase ---
                 if current_label == 'sign-in':
@@ -402,6 +413,7 @@ class VLMExecutor:
                     billing_date = response.get('billing_end_date')
                     log.info('Job %s: flow complete (billing_date=%s)',
                              job_id, billing_date)
+                    trace.cleanup_success()
                     return ExecutionResult(
                         job_id=job_id,
                         service=service,
