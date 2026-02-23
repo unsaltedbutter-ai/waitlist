@@ -188,15 +188,13 @@ def action_failed_resume(service_id: str) -> str:
 
 def invoice(amount_sats: int, bolt11: str) -> str:
     """Invoice message after work completes."""
-    return f"{amount_sats:,} sats please. Pay this invoice:\n{bolt11}"
+    return f"{amount_sats:,} sats please.\n{bolt11}"
 
 
 def payment_received(amount_sats: int) -> str:
     """Payment confirmation."""
-    return (
-        f"Payment received ({amount_sats:,} sats). "
-        "It's been a pleasure doing business with you."
-    )
+    return "It's been a pleasure doing business with you."
+    
 
 
 def payment_expired(service_id: str, debt_sats: int) -> str:
