@@ -237,7 +237,7 @@ class TestPayment:
     def test_payment_received(self) -> None:
         msg = payment_received(3000)
         assert "3,000 sats" in msg
-        assert "Thanks" in msg
+        assert "pleasure" in msg
 
     def test_payment_expired(self) -> None:
         msg = payment_expired("netflix", 3000)

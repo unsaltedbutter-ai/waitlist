@@ -173,7 +173,8 @@ export async function pushJobsReady(jobIds: string[]): Promise<void> {
 export async function pushPaymentReceived(
   npubHex: string,
   serviceName: string,
-  amountSats: number
+  amountSats: number,
+  jobId: string
 ): Promise<void> {
   await sendPushDM({
     type: "payment_received",
@@ -181,6 +182,7 @@ export async function pushPaymentReceived(
       npub_hex: npubHex,
       service_name: serviceName,
       amount_sats: amountSats,
+      job_id: jobId,
     },
     timestamp: Date.now(),
   });
@@ -189,7 +191,8 @@ export async function pushPaymentReceived(
 export async function pushPaymentExpired(
   npubHex: string,
   serviceName: string,
-  debtSats: number
+  debtSats: number,
+  jobId: string
 ): Promise<void> {
   await sendPushDM({
     type: "payment_expired",
@@ -197,6 +200,7 @@ export async function pushPaymentExpired(
       npub_hex: npubHex,
       service_name: serviceName,
       debt_sats: debtSats,
+      job_id: jobId,
     },
     timestamp: Date.now(),
   });

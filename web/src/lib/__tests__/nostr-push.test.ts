@@ -127,7 +127,7 @@ describe("nostr-push", () => {
 
   describe("pushPaymentReceived", () => {
     it("sends nested payload with npub_hex, service_name, and amount_sats", async () => {
-      await pushPaymentReceived("aabb".repeat(16), "Netflix", 4400);
+      await pushPaymentReceived("aabb".repeat(16), "Netflix", 4400, "job-123");
 
       const message = mockWrapEvent.mock.calls[0][2];
       const parsed = JSON.parse(message);
@@ -135,13 +135,14 @@ describe("nostr-push", () => {
       expect(parsed.data.npub_hex).toBe("aabb".repeat(16));
       expect(parsed.data.service_name).toBe("Netflix");
       expect(parsed.data.amount_sats).toBe(4400);
+      expect(parsed.data.job_id).toBe("job-123");
       expect(typeof parsed.timestamp).toBe("number");
     });
   });
 
   describe("pushPaymentExpired", () => {
     it("sends nested payload with npub_hex, service_name, and debt_sats", async () => {
-      await pushPaymentExpired("ccdd".repeat(16), "Hulu", 3000);
+      await pushPaymentExpired("ccdd".repeat(16), "Hulu", 3000, "job-456");
 
       const message = mockWrapEvent.mock.calls[0][2];
       const parsed = JSON.parse(message);
@@ -149,6 +150,7 @@ describe("nostr-push", () => {
       expect(parsed.data.npub_hex).toBe("ccdd".repeat(16));
       expect(parsed.data.service_name).toBe("Hulu");
       expect(parsed.data.debt_sats).toBe(3000);
+      expect(parsed.data.job_id).toBe("job-456");
       expect(typeof parsed.timestamp).toBe("number");
     });
   });

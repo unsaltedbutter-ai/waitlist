@@ -193,7 +193,10 @@ def invoice(amount_sats: int, bolt11: str) -> str:
 
 def payment_received(amount_sats: int) -> str:
     """Payment confirmation."""
-    return f"Payment received ({amount_sats:,} sats). Thanks."
+    return (
+        f"Payment received ({amount_sats:,} sats). "
+        "It's been a pleasure doing business with you."
+    )
 
 
 def payment_expired(service_id: str, debt_sats: int) -> str:

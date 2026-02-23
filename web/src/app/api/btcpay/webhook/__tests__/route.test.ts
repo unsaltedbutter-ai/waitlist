@@ -100,7 +100,7 @@ describe("POST /api/btcpay/webhook", () => {
 
     expect(verifyInvoicePaid).toHaveBeenCalledWith("inv-abc");
     expect(confirmJobPayment).toHaveBeenCalledWith("job-1");
-    expect(pushPaymentReceived).toHaveBeenCalledWith("deadbeef", "Netflix", 3000);
+    expect(pushPaymentReceived).toHaveBeenCalledWith("deadbeef", "Netflix", 3000, "job-1");
   });
 
   it("rejects request with invalid signature (401)", async () => {
@@ -215,6 +215,6 @@ describe("POST /api/btcpay/webhook", () => {
       makeWebhookRequest({ type: "InvoiceSettled", invoiceId: "inv-hulu" }) as any
     );
 
-    expect(pushPaymentReceived).toHaveBeenCalledWith("aabbcc", "hulu", 3000);
+    expect(pushPaymentReceived).toHaveBeenCalledWith("aabbcc", "hulu", 3000, "job-1");
   });
 });

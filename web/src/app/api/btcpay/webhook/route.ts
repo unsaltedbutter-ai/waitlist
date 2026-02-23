@@ -90,7 +90,8 @@ export async function POST(req: NextRequest) {
       await pushPaymentReceived(
         userResult.rows[0].nostr_pubkey,
         serviceName,
-        job.amount_sats ?? 0
+        job.amount_sats ?? 0,
+        job.id
       ).catch((err: unknown) => {
         console.error("[btcpay-webhook] Failed to push payment notification:", err);
       });
