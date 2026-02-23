@@ -333,8 +333,8 @@ async def test_otp_confirm_yes_agent_rejects(deps):
 
     # User was DM'd about failure (cancel action)
     assert send_dm.await_count >= 2  # executing msg + failure msg
-    # Operator was notified
-    send_op.assert_awaited_once()
+    # Operator was notified (error msg + npub in separate bubble)
+    assert send_op.await_count == 2
 
 
 @pytest.mark.asyncio
@@ -675,10 +675,11 @@ async def test_result_failure_cancel(deps):
     assert "Failed" in msg or "failed" in msg
     assert "notified" in msg.lower()
 
-    # Operator notified
-    send_op.assert_awaited_once()
-    op_msg = send_op.call_args[0][0]
+    # Operator notified (error msg + npub in separate bubbles)
+    assert send_op.await_count == 2
+    op_msg = send_op.call_args_list[0][0][0]
     assert "failed" in op_msg.lower() or "Failed" in op_msg
+    assert send_op.call_args_list[1][0][0] == "npub1alice"
 
 
 @pytest.mark.asyncio
@@ -710,8 +711,11 @@ async def test_result_failure_resume(deps):
     assert "failed" in msg.lower()
     assert "notified" in msg.lower()
 
-    # Operator still notified
-    send_op.assert_awaited_once()
+    # Operator still notified (error msg + npub in separate bubbles)
+    assert send_op.await_count == 2
+    op_msg = send_op.call_args_list[0][0][0]
+    assert "failed" in op_msg.lower() or "Failed" in op_msg
+    assert send_op.call_args_list[1][0][0] == "npub1alice"
 
 
 @pytest.mark.asyncio

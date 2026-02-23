@@ -100,6 +100,8 @@ class Session:
             await self._send_operator_dm(
                 messages.operator_job_failed(job_id, service_id, error)
             )
+            # Send npub in a separate bubble for easy copy
+            await self._send_operator_dm(user_npub)
 
         # Clean up session
         await self._db.delete_session(user_npub)
