@@ -80,7 +80,7 @@ describe("POST /api/btcpay/webhook", () => {
         mockQueryResult([{ nostr_npub: "deadbeef" }])
       )
       .mockResolvedValueOnce(
-        mockQueryResult([{ name: "Netflix" }])
+        mockQueryResult([{ display_name: "Netflix" }])
       );
 
     vi.mocked(verifyInvoicePaid).mockResolvedValue(true);
@@ -187,7 +187,7 @@ describe("POST /api/btcpay/webhook", () => {
     expect(pushPaymentReceived).not.toHaveBeenCalled();
   });
 
-  it("falls back to service_id when services table has no row", async () => {
+  it("falls back to service_id when streaming_services table has no row", async () => {
     vi.mocked(query)
       .mockResolvedValueOnce(
         mockQueryResult([{

@@ -81,11 +81,11 @@ export async function POST(req: NextRequest) {
     );
 
     if (userResult.rows.length > 0) {
-      const serviceResult = await query<{ name: string }>(
-        "SELECT name FROM services WHERE id = $1",
+      const serviceResult = await query<{ display_name: string }>(
+        "SELECT display_name FROM streaming_services WHERE id = $1",
         [job.service_id]
       );
-      const serviceName = serviceResult.rows[0]?.name ?? job.service_id;
+      const serviceName = serviceResult.rows[0]?.display_name ?? job.service_id;
 
       await pushPaymentReceived(
         userResult.rows[0].nostr_npub,
