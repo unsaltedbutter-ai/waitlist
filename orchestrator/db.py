@@ -205,9 +205,10 @@ class Database:
         return [dict(r) for r in await cursor.fetchall()]
 
     async def get_jobs_for_user(self, user_npub: str) -> list[dict]:
-        """Return all jobs for a given user."""
+        """Return all jobs for a given user, newest first."""
         cursor = await self._db.execute(
-            "SELECT * FROM jobs WHERE user_npub = ?", (user_npub,)
+            "SELECT * FROM jobs WHERE user_npub = ? ORDER BY created_at DESC",
+            (user_npub,),
         )
         return [dict(r) for r in await cursor.fetchall()]
 
