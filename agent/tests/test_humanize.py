@@ -261,22 +261,22 @@ class TestNumWaypoints:
     """Waypoint count selection based on distance."""
 
     def test_tiny_distance(self) -> None:
-        assert num_waypoints(5) == 10
+        assert num_waypoints(5) == 5
 
     def test_short_distance(self) -> None:
-        assert num_waypoints(50) == 50
+        assert num_waypoints(50) == 15
 
     def test_medium_distance(self) -> None:
-        assert num_waypoints(300) == 120
+        assert num_waypoints(300) == 30
 
     def test_long_distance(self) -> None:
-        assert num_waypoints(600) == 200
+        assert num_waypoints(600) == 50
 
     def test_exact_boundaries(self) -> None:
         """Test the exact threshold values."""
-        assert num_waypoints(10) == 50    # 10 is >= 10, < 100
-        assert num_waypoints(100) == 120  # 100 is >= 100, < 500
-        assert num_waypoints(500) == 200  # 500 is >= 500
+        assert num_waypoints(10) == 15    # 10 is >= 10, < 100
+        assert num_waypoints(100) == 30   # 100 is >= 100, < 500
+        assert num_waypoints(500) == 50   # 500 is >= 500
 
     def test_monotonically_increasing(self) -> None:
         """Longer distance should give equal or more waypoints."""

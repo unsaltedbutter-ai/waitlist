@@ -200,19 +200,23 @@ class TestResult:
     def test_action_failed_cancel(self) -> None:
         msg = action_failed_cancel("netflix")
         assert "Failed to cancel Netflix" in msg
-        assert "manually" in msg
-        assert "operator has been notified" in msg
+        assert "notified" in msg
 
     def test_action_failed_cancel_no_internal_details(self) -> None:
         """Cancel failure message must never contain internal error details."""
         msg = action_failed_cancel("netflix")
-        # Should not have a raw "Error:" line with internal info
         assert "Error:" not in msg
 
     def test_action_failed_resume(self) -> None:
         msg = action_failed_resume("disney_plus")
         assert "Disney+" in msg
-        assert "retry" in msg
+        assert "resume" in msg
+
+    def test_action_failed_unified(self) -> None:
+        from messages import action_failed
+        msg = action_failed("netflix", "cancel")
+        assert "Failed to cancel Netflix" in msg
+        assert "\U0001f916" in msg
 
 
 # ---------------------------------------------------------------------------

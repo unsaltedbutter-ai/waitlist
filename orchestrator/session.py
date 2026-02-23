@@ -89,21 +89,14 @@ class Session:
                 log.exception("Failed to update VPS job status for %s", job_id)
         await self._db.update_job_status(job_id, "failed")
 
-        # CLI jobs: no DMs, CLI is polling for result
-        if not job_id.startswith("cli-"):
-            # Cancel: DM user immediately (constraint #11). Resume: silent.
-            if action == "cancel":
-                await self._send_dm(
-                    user_npub,
-                    messages.action_failed_cancel(service_id),
-                )
-            else:
-                await self._send_dm(
-                    user_npub,
-                    messages.action_failed_resume(service_id),
-                )
+        # Always DM the user (they're waiting for a result)
+        await self._send_dm(
+            user_npub,
+            messages.action_failed(service_id, action),
+        )
 
-            # Always notify operator
+        # Notify operator (skip for CLI jobs, operator sees the error directly)
+        if not job_id.startswith("cli-"):
             await self._send_operator_dm(
                 messages.operator_job_failed(job_id, service_id, error)
             )
@@ -359,60 +352,54 @@ class Session:
         action = job["action"]
 
         if success:
-            if job_id.startswith("cli-"):
-                # CLI jobs: no DM, no invoice, just clean up session
-                log.info("CLI job %s succeeded", job_id)
-                await self._db.update_job_status(job_id, "completed")
-                await self._db.delete_session(user_npub)
-            else:
-                # Send success DM (different per action type)
-                if action == "cancel":
-                    await self._send_dm(
-                        user_npub,
-                        messages.action_success_cancel(service_id, access_end_date),
-                    )
-                else:
-                    await self._send_dm(
-                        user_npub,
-                        messages.action_success_resume(service_id),
-                    )
-
-                # Update local job with access_end_date if present
-                update_kwargs = {}
-                if access_end_date:
-                    update_kwargs["access_end_date"] = access_end_date
-
-                # Create invoice via VPS API
-                invoice_data = await self._api.create_invoice(
-                    job_id, self._config.action_price_sats, user_npub
-                )
-
-                # Update local job with invoice_id and amount
-                await self._db.update_job_status(
-                    job_id,
-                    "active",
-                    invoice_id=invoice_data["invoice_id"],
-                    amount_sats=self._config.action_price_sats,
-                    **update_kwargs,
-                )
-
-                # Send invoice DM
+            # Send success DM (different per action type)
+            if action == "cancel":
                 await self._send_dm(
                     user_npub,
-                    messages.invoice(
-                        invoice_data["amount_sats"], invoice_data["bolt11"]
-                    ),
+                    messages.action_success_cancel(service_id, access_end_date),
+                )
+            else:
+                await self._send_dm(
+                    user_npub,
+                    messages.action_success_resume(service_id),
                 )
 
-                # Transition session to INVOICE_SENT
-                await self._db.upsert_session(
-                    user_npub, INVOICE_SENT, job_id=job_id
-                )
+            # Update local job with access_end_date if present
+            update_kwargs = {}
+            if access_end_date:
+                update_kwargs["access_end_date"] = access_end_date
 
-                # Schedule payment expiry timer (24h)
-                await self._timers.schedule_delay(
-                    PAYMENT_EXPIRY, job_id, self._config.payment_expiry_seconds
-                )
+            # Create invoice via VPS API
+            invoice_data = await self._api.create_invoice(
+                job_id, self._config.action_price_sats, user_npub
+            )
+
+            # Update local job with invoice_id and amount
+            await self._db.update_job_status(
+                job_id,
+                "active",
+                invoice_id=invoice_data["invoice_id"],
+                amount_sats=self._config.action_price_sats,
+                **update_kwargs,
+            )
+
+            # Send invoice DM
+            await self._send_dm(
+                user_npub,
+                messages.invoice(
+                    invoice_data["amount_sats"], invoice_data["bolt11"]
+                ),
+            )
+
+            # Transition session to INVOICE_SENT
+            await self._db.upsert_session(
+                user_npub, INVOICE_SENT, job_id=job_id
+            )
+
+            # Schedule payment expiry timer (24h)
+            await self._timers.schedule_delay(
+                PAYMENT_EXPIRY, job_id, self._config.payment_expiry_seconds
+            )
         else:
             await self._fail_job(user_npub, job, error)
 

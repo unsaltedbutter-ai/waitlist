@@ -641,11 +641,11 @@ async def test_result_failure_cancel(deps):
     job = await db.get_job("job-1")
     assert job["status"] == "failed"
 
-    # User gets failure DM with error detail (cancel)
+    # User gets failure DM
     send_dm.assert_awaited_once()
     msg = send_dm.call_args[0][1]
     assert "Failed" in msg or "failed" in msg
-    assert "manually" in msg.lower()
+    assert "notified" in msg.lower()
 
     # Operator notified
     send_op.assert_awaited_once()
@@ -676,10 +676,11 @@ async def test_result_failure_resume(deps):
     # Session deleted
     assert await db.get_session("npub1alice") is None
 
-    # User DM uses resume failure message (less urgent tone)
+    # User DM uses failure message
     send_dm.assert_awaited_once()
     msg = send_dm.call_args[0][1]
-    assert "trouble" in msg.lower() or "retry" in msg.lower()
+    assert "failed" in msg.lower()
+    assert "notified" in msg.lower()
 
     # Operator still notified
     send_op.assert_awaited_once()

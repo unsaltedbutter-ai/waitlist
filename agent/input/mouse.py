@@ -53,9 +53,14 @@ def move_to(x: int, y: int, fast: bool = False) -> None:
     # Generate timing
     delays = humanize.velocity_profile(len(points), base_delay=duration / len(points))
 
-    # Execute
+    # Execute using Quartz CGEvents directly (pyautogui.moveTo has ~18ms
+    # Python/PyObjC overhead per call, which makes 200-point paths take 3-4s)
     for i, (px, py) in enumerate(points):
-        pyautogui.moveTo(int(round(px)), int(round(py)), _pause=False)
+        event = Quartz.CGEventCreateMouseEvent(
+            None, Quartz.kCGEventMouseMoved,
+            (px, py), Quartz.kCGMouseButtonLeft,
+        )
+        Quartz.CGEventPost(Quartz.kCGHIDEventTap, event)
         if i < len(delays):
             time.sleep(delays[i])
 

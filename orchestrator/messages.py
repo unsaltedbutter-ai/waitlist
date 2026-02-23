@@ -154,26 +154,21 @@ def action_success_resume(service_id: str) -> str:
     return f"{name} reactivated. Your account should be live."
 
 
-def action_failed_cancel(service_id: str) -> str:
-    """Cancel failed. User needs to know so they can cancel manually.
-
-    Never include internal error details in user-facing messages.
-    The operator gets the full error via operator_job_failed().
-    """
+def action_failed(service_id: str, action: str) -> str:
+    """Action failed. Brief, honest, no internal details."""
     name = display_name(service_id)
-    return (
-        f"Failed to cancel {name}. Please cancel it manually to avoid being charged.\n\n"
-        f"Something went wrong. Our operator has been notified."
-    )
+    verb = "cancel" if action == "cancel" else "resume"
+    return f"Failed to {verb} {name}. We've notified our human. \U0001f916"
+
+
+def action_failed_cancel(service_id: str) -> str:
+    """Cancel failed (legacy wrapper)."""
+    return action_failed(service_id, "cancel")
 
 
 def action_failed_resume(service_id: str) -> str:
-    """Resume failed. Less urgent (no money at risk)."""
-    name = display_name(service_id)
-    return (
-        f"Had trouble resuming {name}. We'll retry. "
-        f"If it's still not working, try logging in yourself."
-    )
+    """Resume failed (legacy wrapper)."""
+    return action_failed(service_id, "resume")
 
 
 # ---------------------------------------------------------------------------

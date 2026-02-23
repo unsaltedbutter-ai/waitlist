@@ -208,15 +208,15 @@ def movement_duration(distance: float) -> float:
 def num_waypoints(distance: float) -> int:
     """
     Choose number of Bezier waypoints based on distance.
-    Target ~3-5px between consecutive points for smooth rendering.
+    Enough points for smooth visual rendering without excessive overhead.
     """
     if distance < 10:
-        return 10
+        return 5
     if distance < 100:
-        return 50
+        return 15
     if distance < 500:
-        return 120
-    return 200
+        return 30
+    return 50
 
 
 def typing_delay(
