@@ -7,8 +7,11 @@ Coordinate translation from VLM image-pixels is handled by coords.py.
 
 from __future__ import annotations
 
+import math
 import random
+import threading
 import time
+from contextlib import contextmanager
 
 import pyautogui
 import Quartz
@@ -120,6 +123,78 @@ def _post_click_drift() -> None:
         num_points=random.randint(10, 15),
     )
     _execute_path(points, duration=random.uniform(0.4, 0.8))
+
+
+def _micro_move() -> None:
+    """Single small idle mouse movement (10-40px, random direction)."""
+    cx, cy = pyautogui.position()
+    dist = random.uniform(10, 40)
+    angle = random.uniform(0, 2 * math.pi)
+    end_x = cx + dist * math.cos(angle)
+    end_y = cy + dist * math.sin(angle)
+    points = humanize.bezier_curve(
+        (cx, cy), (end_x, end_y),
+        num_points=8, curvature=0.08,
+    )
+    _execute_path(points, duration=random.uniform(0.15, 0.4))
+
+
+def idle_fidget(duration: float) -> None:
+    """Fill idle time with small random mouse wanders.
+
+    Drop-in replacement for time.sleep() during page settle delays.
+    Makes 2-4 micro-movements spread across the duration, with pauses
+    between them, then sleeps any remaining time to hit the exact duration.
+    """
+    if duration <= 0:
+        return
+    deadline = time.monotonic() + duration
+    n_moves = random.randint(2, 4)
+
+    for _ in range(n_moves):
+        remaining = deadline - time.monotonic()
+        if remaining < 0.3:
+            break
+        # Pause before next movement
+        pause = random.uniform(0.3, min(1.5, remaining * 0.6))
+        time.sleep(pause)
+
+        remaining = deadline - time.monotonic()
+        if remaining < 0.2:
+            break
+        _micro_move()
+
+    # Sleep any remaining time to hit the total duration
+    remaining = deadline - time.monotonic()
+    if remaining > 0:
+        time.sleep(remaining)
+
+
+@contextmanager
+def fidget_while():
+    """Context manager: fidget the mouse in a background thread until the block exits.
+
+    Use around blocking calls (e.g. VLM inference) so the cursor
+    doesn't sit perfectly still for seconds.
+    """
+    stop = threading.Event()
+
+    def _loop():
+        # Initial pause before first movement (0.5-1.5s)
+        if stop.wait(random.uniform(0.5, 1.5)):
+            return
+        while not stop.is_set():
+            _micro_move()
+            if stop.wait(random.uniform(1.0, 3.0)):
+                return
+
+    thread = threading.Thread(target=_loop, daemon=True)
+    thread.start()
+    try:
+        yield
+    finally:
+        stop.set()
+        thread.join(timeout=1.0)
 
 
 def double_click(x: int | None = None, y: int | None = None) -> None:
