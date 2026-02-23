@@ -364,42 +364,48 @@ class Session:
                     messages.action_success_resume(service_id),
                 )
 
-            # Update local job with access_end_date if present
-            update_kwargs = {}
-            if access_end_date:
-                update_kwargs["access_end_date"] = access_end_date
+            # CLI jobs: no VPS job exists, skip invoice and clean up
+            if job_id.startswith("cli-"):
+                log.info("CLI job %s succeeded", job_id)
+                await self._db.update_job_status(job_id, "completed")
+                await self._db.delete_session(user_npub)
+            else:
+                # Update local job with access_end_date if present
+                update_kwargs = {}
+                if access_end_date:
+                    update_kwargs["access_end_date"] = access_end_date
 
-            # Create invoice via VPS API
-            invoice_data = await self._api.create_invoice(
-                job_id, self._config.action_price_sats, user_npub
-            )
+                # Create invoice via VPS API
+                invoice_data = await self._api.create_invoice(
+                    job_id, self._config.action_price_sats, user_npub
+                )
 
-            # Update local job with invoice_id and amount
-            await self._db.update_job_status(
-                job_id,
-                "active",
-                invoice_id=invoice_data["invoice_id"],
-                amount_sats=self._config.action_price_sats,
-                **update_kwargs,
-            )
+                # Update local job with invoice_id and amount
+                await self._db.update_job_status(
+                    job_id,
+                    "active",
+                    invoice_id=invoice_data["invoice_id"],
+                    amount_sats=self._config.action_price_sats,
+                    **update_kwargs,
+                )
 
-            # Send invoice DM
-            await self._send_dm(
-                user_npub,
-                messages.invoice(
-                    invoice_data["amount_sats"], invoice_data["bolt11"]
-                ),
-            )
+                # Send invoice DM
+                await self._send_dm(
+                    user_npub,
+                    messages.invoice(
+                        invoice_data["amount_sats"], invoice_data["bolt11"]
+                    ),
+                )
 
-            # Transition session to INVOICE_SENT
-            await self._db.upsert_session(
-                user_npub, INVOICE_SENT, job_id=job_id
-            )
+                # Transition session to INVOICE_SENT
+                await self._db.upsert_session(
+                    user_npub, INVOICE_SENT, job_id=job_id
+                )
 
-            # Schedule payment expiry timer (24h)
-            await self._timers.schedule_delay(
-                PAYMENT_EXPIRY, job_id, self._config.payment_expiry_seconds
-            )
+                # Schedule payment expiry timer (24h)
+                await self._timers.schedule_delay(
+                    PAYMENT_EXPIRY, job_id, self._config.payment_expiry_seconds
+                )
         else:
             await self._fail_job(user_npub, job, error)
 
