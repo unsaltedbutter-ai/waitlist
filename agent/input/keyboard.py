@@ -51,16 +51,14 @@ _kCGEventFlagShift = 0x20000
 def _key_down(keycode: int, flags: int = 0) -> None:
     """Post a key-down CGEvent."""
     event = Quartz.CGEventCreateKeyboardEvent(None, keycode, True)
-    if flags:
-        Quartz.CGEventSetFlags(event, flags)
+    Quartz.CGEventSetFlags(event, flags)
     Quartz.CGEventPost(Quartz.kCGHIDEventTap, event)
 
 
 def _key_up(keycode: int, flags: int = 0) -> None:
     """Post a key-up CGEvent."""
     event = Quartz.CGEventCreateKeyboardEvent(None, keycode, False)
-    if flags:
-        Quartz.CGEventSetFlags(event, flags)
+    Quartz.CGEventSetFlags(event, flags)
     Quartz.CGEventPost(Quartz.kCGHIDEventTap, event)
 
 
