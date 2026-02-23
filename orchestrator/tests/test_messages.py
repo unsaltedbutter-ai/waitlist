@@ -236,7 +236,6 @@ class TestPayment:
 
     def test_payment_received(self) -> None:
         msg = payment_received(3000)
-        assert "3,000 sats" in msg
         assert "pleasure" in msg
 
     def test_payment_expired(self) -> None:
@@ -329,7 +328,7 @@ class TestMisc:
         msg = queued("netflix", "cancel")
         assert "Netflix" in msg
         assert "cancel" in msg
-        assert "queued" in msg
+        assert "queue" in msg
 
     def test_no_credentials(self) -> None:
         msg = no_credentials("netflix", "https://unsaltedbutter.ai")

@@ -5,6 +5,7 @@ import { VALID_ACTIONS } from "@/lib/constants";
 interface OnDemandSuccess {
   ok: true;
   job_id: string;
+  queue_position: number;
 }
 
 interface OnDemandError {
@@ -109,5 +110,12 @@ export async function createOnDemandJob(
     };
   }
 
-  return { ok: true, job_id: jobResult.rows[0].id };
+  // 8. Count pending jobs ahead in the queue (including this one)
+  const queueResult = await query<{ count: string }>(
+    "SELECT count(*) FROM jobs WHERE status = 'pending'",
+    []
+  );
+  const queuePosition = parseInt(queueResult.rows[0].count, 10);
+
+  return { ok: true, job_id: jobResult.rows[0].id, queue_position: queuePosition };
 }

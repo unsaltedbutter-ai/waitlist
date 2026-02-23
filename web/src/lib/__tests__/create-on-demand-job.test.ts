@@ -56,16 +56,23 @@ function mockJobCreated(jobId: string = "new-job-1") {
   );
 }
 
+function mockQueueCount(count: number = 1) {
+  vi.mocked(query).mockResolvedValueOnce(
+    mockQueryResult([{ count: String(count) }])
+  );
+}
+
 function mockJobConflict() {
   vi.mocked(query).mockResolvedValueOnce(mockQueryResult([]));
 }
 
 /** Set up all mocks for a successful job creation. */
-function mockHappyPath(jobId: string = "new-job-1") {
+function mockHappyPath(jobId: string = "new-job-1", queueCount: number = 1) {
   mockUserDebt(0);
   mockServiceExists();
   mockCredentials();
   mockJobCreated(jobId);
+  mockQueueCount(queueCount);
 }
 
 describe("createOnDemandJob", () => {
@@ -74,7 +81,7 @@ describe("createOnDemandJob", () => {
 
     const result = await createOnDemandJob(USER_ID, "netflix", "cancel");
 
-    expect(result).toEqual({ ok: true, job_id: "cancel-job-1" });
+    expect(result).toEqual({ ok: true, job_id: "cancel-job-1", queue_position: 1 });
 
     // Verify INSERT query
     const insertCall = vi.mocked(query).mock.calls[3];
@@ -88,7 +95,7 @@ describe("createOnDemandJob", () => {
 
     const result = await createOnDemandJob(USER_ID, "netflix", "resume");
 
-    expect(result).toEqual({ ok: true, job_id: "resume-job-1" });
+    expect(result).toEqual({ ok: true, job_id: "resume-job-1", queue_position: 1 });
 
     const insertCall = vi.mocked(query).mock.calls[3];
     expect(insertCall[1]).toEqual([USER_ID, "netflix", "resume"]);
@@ -263,6 +270,6 @@ describe("createOnDemandJob", () => {
 
     const result = await createOnDemandJob(USER_ID, "netflix", "cancel");
 
-    expect(result).toEqual({ ok: true, job_id: "clean-job-1" });
+    expect(result).toEqual({ ok: true, job_id: "clean-job-1", queue_position: 1 });
   });
 });

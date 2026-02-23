@@ -31,7 +31,11 @@ export const POST = withAgentAuth(async (_req: NextRequest, { body: rawBody, par
       return NextResponse.json(response, { status: result.status });
     }
 
-    return NextResponse.json({ job_id: result.job_id, status: "pending" });
+    return NextResponse.json({
+      job_id: result.job_id,
+      status: "pending",
+      queue_position: result.queue_position,
+    });
   } catch (err) {
     console.error("Agent on-demand job create error:", err);
     return NextResponse.json(

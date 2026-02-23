@@ -305,7 +305,7 @@ def unknown_service(service_input: str) -> str:
 
 def queued(service_id: str, action: str) -> str:
     name = display_name(service_id)
-    return f"{name} {action} is queued. I'll let you know when it's done."
+    return f"Your {action} {name} job is in the queue. I'll ask when it's your turn."
 
 
 def no_credentials(service_id: str, base_url: str) -> str:

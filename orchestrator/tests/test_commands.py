@@ -442,13 +442,13 @@ async def test_idle_snooze_without_active_job():
 
 
 @pytest.mark.asyncio
-async def test_cancel_known_service():
-    """'cancel netflix' should create an on-demand cancel job."""
+async def test_cancel_known_service_queued():
+    """'cancel netflix' with queue > 1 should send queued message."""
     router, deps = _make_router()
     deps["api"].get_user.return_value = {"debt_sats": 0}
     deps["api"].create_on_demand_job.return_value = {
         "status_code": 200,
-        "data": {"id": "job-2"},
+        "data": {"id": "job-2", "queue_position": 3},
     }
 
     await router.handle_dm(ALICE, "cancel netflix")
@@ -459,7 +459,28 @@ async def test_cancel_known_service():
     deps["send_dm"].assert_awaited_once()
     msg = deps["send_dm"].call_args[0][1]
     assert "Netflix" in msg
-    assert "queued" in msg.lower()
+    assert "queue" in msg.lower()
+    deps["job_manager"].poll_and_claim.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_cancel_known_service_no_queue():
+    """'cancel netflix' with queue_position=1 should skip queued message."""
+    router, deps = _make_router()
+    deps["api"].get_user.return_value = {"debt_sats": 0}
+    deps["api"].create_on_demand_job.return_value = {
+        "status_code": 200,
+        "data": {"id": "job-2", "queue_position": 1},
+    }
+
+    await router.handle_dm(ALICE, "cancel netflix")
+
+    deps["api"].create_on_demand_job.assert_awaited_once_with(
+        ALICE, "netflix", "cancel"
+    )
+    # No queued DM sent, only poll_and_claim triggers outreach
+    deps["send_dm"].assert_not_awaited()
+    deps["job_manager"].poll_and_claim.assert_awaited_once()
 
 
 @pytest.mark.asyncio

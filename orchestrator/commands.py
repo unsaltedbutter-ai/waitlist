@@ -216,9 +216,14 @@ class CommandRouter:
         data = result["data"]
 
         if status_code == 200:
-            await self._send_dm(
-                sender_npub, messages.queued(service_id, action)
-            )
+            queue_pos = data.get("queue_position", 1)
+            if queue_pos > 1:
+                await self._send_dm(
+                    sender_npub, messages.queued(service_id, action)
+                )
+            # Immediately try to claim so the user doesn't wait for the
+            # next VPS push or heartbeat cycle.
+            await self._job_manager.poll_and_claim()
         elif status_code == 403:
             debt = data.get("debt_sats", 0)
             await self._send_dm(sender_npub, messages.debt_block(debt))
