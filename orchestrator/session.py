@@ -169,11 +169,17 @@ class Session:
         # Update local job status to active
         await self._db.update_job_status(job_id, "active")
 
+        # Remap VPS credential keys to agent convention
+        agent_creds = {
+            'email': creds.get('email', ''),
+            'pass': creds.get('password', ''),
+        }
+
         # Dispatch to agent
         plan_id = job.get("plan_id")
         log.info("handle_yes: dispatching to agent, job=%s plan=%s", job_id[:8], plan_id)
         accepted = await self._agent.execute(
-            job_id, service_id, action, creds, plan_id=plan_id
+            job_id, service_id, action, agent_creds, plan_id=plan_id
         )
         if not accepted:
             await self._fail_job(user_npub, job, "Agent rejected the job")
@@ -237,10 +243,16 @@ class Session:
         # Update local job status to active
         await self._db.update_job_status(job_id, "active")
 
+        # Remap VPS credential keys to agent convention
+        agent_creds = {
+            'email': creds.get('email', ''),
+            'pass': creds.get('password', ''),
+        }
+
         # Dispatch to agent
         plan_id = job.get("plan_id")
         accepted = await self._agent.execute(
-            job_id, service_id, action, creds, plan_id=plan_id
+            job_id, service_id, action, agent_creds, plan_id=plan_id
         )
         if not accepted:
             await self._fail_job(user_npub, job, "Agent rejected the job")

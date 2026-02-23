@@ -250,7 +250,7 @@ async def test_otp_confirm_yes_happy_path(deps):
 
     # Agent dispatched with credentials
     agent.execute.assert_awaited_once_with(
-        "job-1", "netflix", "cancel", {"email": "a@b.com", "password": "pw"},
+        "job-1", "netflix", "cancel", {"email": "a@b.com", "pass": "pw"},
         plan_id=None,
     )
 
@@ -277,7 +277,7 @@ async def test_otp_confirm_yes_resume_passes_plan_id(deps):
     await s.handle_otp_confirm_yes("npub1alice")
 
     agent.execute.assert_awaited_once_with(
-        "job-1", "netflix", "resume", {"email": "a@b.com", "password": "pw"},
+        "job-1", "netflix", "resume", {"email": "a@b.com", "pass": "pw"},
         plan_id="netflix_premium",
     )
 
