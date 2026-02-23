@@ -121,21 +121,56 @@ class Session:
         return state != IDLE
 
     async def handle_yes(self, user_npub: str, job_id: str) -> None:
-        """User says yes to outreach. Transition from IDLE to OTP_CONFIRM."""
-        # Create session in DB
-        await self._db.upsert_session(user_npub, OTP_CONFIRM, job_id=job_id)
-
-        # Look up job to get service_id and action
+        """User says yes to outreach. Go straight to EXECUTING (OTP warning is in outreach)."""
         job = await self._db.get_job(job_id)
         if job is None:
             log.error("handle_yes: job %s not found in local DB", job_id)
             await self._send_dm(user_npub, messages.error_generic())
-            await self._db.delete_session(user_npub)
             return
 
+        service_id = job["service_id"]
+        action = job["action"]
+
+        # Fetch credentials from VPS API
+        creds = await self._api.get_credentials(user_npub, service_id)
+        if creds is None:
+            await self._send_dm(
+                user_npub,
+                messages.no_credentials(service_id, self._config.base_url),
+            )
+            return
+
+        # Create session in EXECUTING state
+        await self._db.upsert_session(
+            user_npub, EXECUTING, job_id=job_id, otp_attempts=0
+        )
+
+        # DM user
         await self._send_dm(
-            user_npub,
-            messages.otp_confirm(job["service_id"], job["action"]),
+            user_npub, messages.executing(service_id, action)
+        )
+
+        # Update VPS job status to active
+        try:
+            await self._api.update_job_status(job_id, "active")
+        except Exception:
+            log.exception("Failed to update VPS job status for %s", job_id)
+
+        # Update local job status to active
+        await self._db.update_job_status(job_id, "active")
+
+        # Dispatch to agent
+        plan_id = job.get("plan_id")
+        accepted = await self._agent.execute(
+            job_id, service_id, action, creds, plan_id=plan_id
+        )
+        if not accepted:
+            await self._fail_job(user_npub, job, "Agent rejected the job")
+            return
+
+        # Schedule OTP timeout timer
+        await self._timers.schedule_delay(
+            OTP_TIMEOUT, job_id, self._config.otp_timeout_seconds
         )
 
     async def handle_otp_confirm_yes(self, user_npub: str) -> None:

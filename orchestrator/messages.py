@@ -28,12 +28,16 @@ def display_name(service_id: str) -> str:
 # ---------------------------------------------------------------------------
 
 
+_OTP_NOTE = "You may need to send me a verification code if one pops up."
+
+
 def outreach_cancel(service_id: str, access_end_date: str) -> str:
     """First outreach for a cancel job. Tells user their access end date."""
     name = display_name(service_id)
     return (
-        f"If you cancel {name} today, you can watch until {access_end_date}.\n"
-        f"Want to cancel now? [yes | snooze | skip]"
+        f"Ready to cancel {name}? You can watch until {access_end_date}.\n"
+        f"{_OTP_NOTE}\n"
+        f"[yes | snooze | skip]"
     )
 
 
@@ -42,6 +46,7 @@ def outreach_cancel_no_date(service_id: str) -> str:
     name = display_name(service_id)
     return (
         f"Ready to cancel {name}?\n"
+        f"{_OTP_NOTE}\n"
         f"[yes | snooze | skip]"
     )
 
@@ -53,9 +58,14 @@ def outreach_resume(service_id: str, ending_service: str | None = None) -> str:
         ending_name = display_name(ending_service)
         return (
             f"With {ending_name} ending soon, want to resume {name}?\n"
+            f"{_OTP_NOTE}\n"
             f"[yes | snooze | skip]"
         )
-    return f"Want to resume {name}? [yes | snooze | skip]"
+    return (
+        f"Want to resume {name}?\n"
+        f"{_OTP_NOTE}\n"
+        f"[yes | snooze | skip]"
+    )
 
 
 def last_chance(service_id: str, days_left: int) -> str:

@@ -148,7 +148,7 @@ async def test_is_busy_true_when_executing(deps):
 
 
 # ------------------------------------------------------------------
-# handle_yes: IDLE -> OTP_CONFIRM
+# handle_yes: IDLE -> EXECUTING (skips OTP_CONFIRM)
 # ------------------------------------------------------------------
 
 
@@ -156,32 +156,60 @@ async def test_is_busy_true_when_executing(deps):
 async def test_handle_yes(deps):
     s = deps["session"]
     db = deps["db"]
+    api = deps["api"]
+    agent = deps["agent"]
     send_dm = deps["send_dm"]
 
     await db.upsert_job(_make_job())
+    api.get_credentials.return_value = {"email": "a@b.com", "password": "pw"}
+    agent.execute.return_value = True
+
     await s.handle_yes("npub1alice", "job-1")
 
+    # Session should go straight to EXECUTING
     session = await db.get_session("npub1alice")
     assert session is not None
-    assert session["state"] == OTP_CONFIRM
+    assert session["state"] == EXECUTING
     assert session["job_id"] == "job-1"
 
+    # Agent dispatched
+    agent.execute.assert_awaited_once()
+
+    # DM sent (executing message)
     send_dm.assert_awaited_once()
-    # Message should be the OTP confirm prompt
     msg = send_dm.call_args[0][1]
-    assert "OTP" in msg or "count on you" in msg
+    assert "Cancelling" in msg or "Netflix" in msg
+
+
+@pytest.mark.asyncio
+async def test_handle_yes_no_credentials(deps):
+    """If no creds on file, send no_credentials DM."""
+    s = deps["session"]
+    db = deps["db"]
+    api = deps["api"]
+    send_dm = deps["send_dm"]
+
+    await db.upsert_job(_make_job())
+    api.get_credentials.return_value = None
+
+    await s.handle_yes("npub1alice", "job-1")
+
+    # No session created
+    assert await db.get_session("npub1alice") is None
+    send_dm.assert_awaited_once()
+    msg = send_dm.call_args[0][1]
+    assert "credentials" in msg.lower() or "login" in msg.lower()
 
 
 @pytest.mark.asyncio
 async def test_handle_yes_job_not_found(deps):
-    """If the job doesn't exist locally, send error and clean up."""
+    """If the job doesn't exist locally, send error."""
     s = deps["session"]
     db = deps["db"]
     send_dm = deps["send_dm"]
 
     await s.handle_yes("npub1alice", "nonexistent-job")
 
-    # Session should be cleaned up
     assert await db.get_session("npub1alice") is None
     send_dm.assert_awaited_once()
     msg = send_dm.call_args[0][1]

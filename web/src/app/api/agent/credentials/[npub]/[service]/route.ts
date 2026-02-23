@@ -30,7 +30,7 @@ export const GET = withAgentAuth(async (_req: NextRequest, { params }) => {
     // Verify a dispatched, active, or awaiting_otp job exists for this user+service
     const jobResult = await query<{ id: string }>(
       `SELECT id FROM jobs
-       WHERE user_id = $1 AND service_id = $2 AND status IN ('dispatched', 'active', 'awaiting_otp')
+       WHERE user_id = $1 AND service_id = $2 AND status IN ('dispatched', 'active', 'awaiting_otp', 'outreach_sent')
        LIMIT 1`,
       [userId, service]
     );
