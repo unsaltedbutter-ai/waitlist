@@ -326,7 +326,7 @@ crontab -l 2>/dev/null | grep -vF "api/cron/daily" | crontab - 2>/dev/null || tr
 
 install_cron "cron-daily.sh" \
     "0 10 * * * ${REMOTE_DIR}/scripts/cron-daily.sh >> \$HOME/logs/daily-cron.log 2>&1" \
-    "Daily job scheduling: create pending cancel/resume jobs (10:00 UTC)"
+    "Daily cron: job scheduling + 180-day data pruning (10:00 UTC)"
 
 # -- Remove old systemd timer (migrated to crontab) ------------
 if systemctl is-active unsaltedbutter-daily-cron.timer &>/dev/null; then
@@ -352,7 +352,7 @@ echo "  lnd-balance.sh       daily 06:00 UTC"
 echo "  backup-daily.sh      daily 03:00 UTC"
 echo "  backup-offsite.sh    daily 04:00 UTC"
 echo "  lightning-backup.sh  every 6 hours"
-echo "  daily-cron           daily 10:00 UTC (job scheduling)"
+echo "  daily-cron           daily 10:00 UTC (job scheduling + 180-day data pruning)"
 echo ""
 echo "  Test nostr-alert:"
 echo "    ${UC_VENV}/bin/python ${REMOTE_DIR}/scripts/nostr-alert.py --dry-run --key test 'Test alert'"

@@ -4,11 +4,19 @@ import { TERMINAL_STATUSES } from "@/lib/constants";
 import { recordStatusChange } from "@/lib/job-history";
 import { generateAlerts } from "@/lib/alert-generator";
 
+export interface PruneResult {
+  action_logs: number;
+  job_status_history: number;
+  operator_alerts: number;
+  operator_audit_log: number;
+}
+
 export interface CronResult {
   jobs_created: number;
   nudged: number;
   skipped_debt: number;
   alerts_created: number;
+  pruned: PruneResult;
 }
 
 /**
@@ -167,6 +175,40 @@ async function createJob(
   return jobId;
 }
 
+const RETENTION_DAYS = 180;
+
+/**
+ * Delete rows older than 180 days from audit/log tables.
+ * Runs as part of the daily cron to prevent unbounded table growth.
+ *
+ * Tables pruned:
+ *   - action_logs (agent execution audit trail)
+ *   - job_status_history (status transition log)
+ *   - operator_alerts (all alerts older than 180 days, regardless of ack status)
+ *   - operator_audit_log (manual operator actions)
+ *
+ * Not pruned:
+ *   - system_heartbeats (upsert, one row per component)
+ *   - revenue_ledger (append-only financial record, never deleted)
+ */
+async function pruneOldRecords(): Promise<PruneResult> {
+  const interval = `${RETENTION_DAYS} days`;
+
+  const [actionLogs, jobHistory, alerts, auditLog] = await Promise.all([
+    query(`DELETE FROM action_logs WHERE created_at < NOW() - $1::interval`, [interval]),
+    query(`DELETE FROM job_status_history WHERE created_at < NOW() - $1::interval`, [interval]),
+    query(`DELETE FROM operator_alerts WHERE created_at < NOW() - $1::interval`, [interval]),
+    query(`DELETE FROM operator_audit_log WHERE created_at < NOW() - $1::interval`, [interval]),
+  ]);
+
+  return {
+    action_logs: actionLogs.rowCount ?? 0,
+    job_status_history: jobHistory.rowCount ?? 0,
+    operator_alerts: alerts.rowCount ?? 0,
+    operator_audit_log: auditLog.rowCount ?? 0,
+  };
+}
+
 /**
  * Run the daily cron job.
  *
@@ -175,6 +217,8 @@ async function createJob(
  * 3. Push notification for new jobs
  * 4. Nudge stale pending jobs (> 1 hour old)
  * 5. Skip users with debt
+ * 6. Generate operator alerts
+ * 7. Prune audit/log tables older than 180 days
  */
 export async function runDailyCron(): Promise<CronResult> {
   const createdJobIds: string[] = [];
@@ -221,10 +265,18 @@ export async function runDailyCron(): Promise<CronResult> {
   // 6. Generate operator alerts (stuck jobs, capacity, debt)
   const alertsResult = await generateAlerts();
 
+  // 7. Prune old audit/log rows (180-day retention)
+  const pruned = await pruneOldRecords();
+  const totalPruned = pruned.action_logs + pruned.job_status_history + pruned.operator_alerts + pruned.operator_audit_log;
+  if (totalPruned > 0) {
+    console.log(`[cron-daily] Pruned ${totalPruned} old rows: action_logs=${pruned.action_logs}, job_status_history=${pruned.job_status_history}, operator_alerts=${pruned.operator_alerts}, operator_audit_log=${pruned.operator_audit_log}`);
+  }
+
   return {
     jobs_created: createdJobIds.length,
     nudged: staleJobIds.length,
     skipped_debt: skippedDebt,
     alerts_created: alertsResult.created,
+    pruned,
   };
 }

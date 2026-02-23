@@ -40,6 +40,7 @@ beforeEach(() => {
  *   4. createJob for each resume candidate (one query per candidate)
  *   5. findStaleJobs
  *   6. countDebtUsers
+ *   7. pruneOldRecords (4 parallel DELETEs via Promise.all)
  *
  * Mock helpers must be called in this exact order to match.
  */
@@ -91,6 +92,11 @@ function setupMocks(opts: {
 
   // 6. countDebtUsers
   mockQueryOnce([{ count: String(debtCount) }]);
+
+  // 7. pruneOldRecords (4 parallel DELETEs)
+  for (let i = 0; i < 4; i++) {
+    mockQuery.mockResolvedValueOnce({ rows: [], rowCount: 0, command: "DELETE", oid: 0, fields: [] } as any);
+  }
 }
 
 describe("runDailyCron", () => {
@@ -104,6 +110,7 @@ describe("runDailyCron", () => {
       nudged: 0,
       skipped_debt: 0,
       alerts_created: 0,
+      pruned: { action_logs: 0, job_status_history: 0, operator_alerts: 0, operator_audit_log: 0 },
     });
   });
 
@@ -364,5 +371,61 @@ describe("runDailyCron", () => {
 
     const resumeQuery = mockQuery.mock.calls[1][0] as string;
     expect(resumeQuery).toContain("position = 1");
+  });
+
+  it("prunes old records from all four audit tables", async () => {
+    setupMocks({});
+
+    await runDailyCron();
+
+    // After the 6 standard queries (cancels, resumes, stale, debt),
+    // the next 4 are the prune DELETEs (parallel via Promise.all)
+    const pruneStartIndex = 4; // 1 cancel + 1 resume + 1 stale + 1 debt = 4
+    const pruneCalls = mockQuery.mock.calls.slice(pruneStartIndex, pruneStartIndex + 4);
+
+    const pruneQueries = pruneCalls.map((c) => c[0] as string);
+    expect(pruneQueries).toContainEqual(expect.stringContaining("DELETE FROM action_logs"));
+    expect(pruneQueries).toContainEqual(expect.stringContaining("DELETE FROM job_status_history"));
+    expect(pruneQueries).toContainEqual(expect.stringContaining("DELETE FROM operator_alerts"));
+    expect(pruneQueries).toContainEqual(expect.stringContaining("DELETE FROM operator_audit_log"));
+  });
+
+  it("prune queries use 180-day retention interval", async () => {
+    setupMocks({});
+
+    await runDailyCron();
+
+    const pruneStartIndex = 4;
+    const pruneCalls = mockQuery.mock.calls.slice(pruneStartIndex, pruneStartIndex + 4);
+
+    for (const call of pruneCalls) {
+      expect(call[1]).toEqual(["180 days"]);
+    }
+  });
+
+  it("returns prune counts in the result", async () => {
+    // Override the prune mocks to return non-zero rowCounts
+    mockQuery.mockReset();
+    mockPushJobsReady.mockResolvedValue(undefined);
+
+    // Standard queries (no candidates)
+    mockQueryOnce([]); // findUpcomingCancels
+    mockQueryOnce([]); // findUpcomingResumes
+    mockQueryOnce([]); // findStaleJobs
+    mockQueryOnce([{ count: "0" }]); // countDebtUsers
+
+    // Prune queries with non-zero rowCounts
+    mockQuery.mockResolvedValueOnce({ rows: [], rowCount: 5, command: "DELETE", oid: 0, fields: [] } as any);
+    mockQuery.mockResolvedValueOnce({ rows: [], rowCount: 12, command: "DELETE", oid: 0, fields: [] } as any);
+    mockQuery.mockResolvedValueOnce({ rows: [], rowCount: 3, command: "DELETE", oid: 0, fields: [] } as any);
+    mockQuery.mockResolvedValueOnce({ rows: [], rowCount: 1, command: "DELETE", oid: 0, fields: [] } as any);
+
+    const result = await runDailyCron();
+
+    // Promise.all ordering matches the source order in pruneOldRecords
+    expect(result.pruned.action_logs).toBe(5);
+    expect(result.pruned.job_status_history).toBe(12);
+    expect(result.pruned.operator_alerts).toBe(3);
+    expect(result.pruned.operator_audit_log).toBe(1);
   });
 });
