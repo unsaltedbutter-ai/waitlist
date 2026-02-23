@@ -155,12 +155,16 @@ class Session:
             user_npub, messages.executing(service_id, action)
         )
 
-        # Update VPS job status to active
+        # Update VPS job status to active (abort if VPS rejects the transition,
+        # e.g. job was already skipped/failed on the website)
         try:
             await self._api.update_job_status(job_id, "active")
             log.info("handle_yes: VPS status -> active for %s", job_id[:8])
         except Exception:
-            log.exception("Failed to update VPS job status for %s", job_id)
+            log.exception("VPS rejected status -> active for %s, aborting", job_id)
+            await self._send_dm(user_npub, messages.error_generic())
+            await self._db.delete_session(user_npub)
+            return
 
         # Update local job status to active
         await self._db.update_job_status(job_id, "active")
@@ -221,11 +225,14 @@ class Session:
             user_npub, messages.executing(service_id, action)
         )
 
-        # Update VPS job status to active
+        # Update VPS job status to active (abort if VPS rejects)
         try:
             await self._api.update_job_status(job_id, "active")
         except Exception:
-            log.exception("Failed to update VPS job status for %s", job_id)
+            log.exception("VPS rejected status -> active for %s, aborting", job_id)
+            await self._send_dm(user_npub, messages.error_generic())
+            await self._db.delete_session(user_npub)
+            return
 
         # Update local job status to active
         await self._db.update_job_status(job_id, "active")
