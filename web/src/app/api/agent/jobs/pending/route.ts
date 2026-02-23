@@ -6,7 +6,7 @@ export const GET = withAgentAuth(async (_req: NextRequest) => {
   try {
     const result = await query<{
       id: string;
-      user_id: string;
+      user_npub: string;
       service_id: string;
       action: string;
       trigger: string;
@@ -15,7 +15,9 @@ export const GET = withAgentAuth(async (_req: NextRequest) => {
       plan_id: string | null;
       plan_display_name: string | null;
     }>(
-      `SELECT j.id, j.user_id, j.service_id, j.action, j.trigger,
+      `SELECT j.id,
+              (SELECT nostr_npub FROM users WHERE users.id = j.user_id) AS user_npub,
+              j.service_id, j.action, j.trigger,
               j.billing_date, j.created_at,
               rq.plan_id, sp.display_name AS plan_display_name
        FROM jobs j

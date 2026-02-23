@@ -34,7 +34,7 @@ describe("GET /api/agent/jobs/pending", () => {
       mockQueryResult([
         {
           id: "job-1",
-          user_id: "user-1",
+          user_npub: "abc123",
           service_id: "netflix",
           action: "cancel",
           trigger: "scheduled",
@@ -43,7 +43,7 @@ describe("GET /api/agent/jobs/pending", () => {
         },
         {
           id: "job-2",
-          user_id: "user-2",
+          user_npub: "def456",
           service_id: "hulu",
           action: "resume",
           trigger: "on_demand",
@@ -58,6 +58,7 @@ describe("GET /api/agent/jobs/pending", () => {
     const data = await res.json();
     expect(data.jobs).toHaveLength(2);
     expect(data.jobs[0].id).toBe("job-1");
+    expect(data.jobs[0].user_npub).toBe("abc123");
     expect(data.jobs[0].service_id).toBe("netflix");
     expect(data.jobs[1].id).toBe("job-2");
     expect(data.jobs[1].billing_date).toBeNull();
