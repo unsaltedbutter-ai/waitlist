@@ -167,7 +167,9 @@ def navigate(session: BrowserSession, url: str, fast: bool = False) -> None:
     keyboard.hotkey('command', 'a')
     time.sleep(0.03 if fast else 0.1)
 
-    keyboard.type_text(url, speed='instant' if fast else 'fast', accuracy='high')
+    # Paste URL from clipboard (no reason to type navigation URLs)
+    subprocess.run(['pbcopy'], input=url.encode(), check=True)
+    keyboard.hotkey('command', 'v')
     time.sleep(0.03 if fast else 0.1)
 
     keyboard.press_key('enter')
