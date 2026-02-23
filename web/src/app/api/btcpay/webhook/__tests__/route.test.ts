@@ -77,7 +77,7 @@ describe("POST /api/btcpay/webhook", () => {
         }])
       )
       .mockResolvedValueOnce(
-        mockQueryResult([{ nostr_pubkey: "deadbeef" }])
+        mockQueryResult([{ nostr_npub: "deadbeef" }])
       )
       .mockResolvedValueOnce(
         mockQueryResult([{ name: "Netflix" }])
@@ -198,7 +198,7 @@ describe("POST /api/btcpay/webhook", () => {
         }])
       )
       .mockResolvedValueOnce(
-        mockQueryResult([{ nostr_pubkey: "aabbcc" }])
+        mockQueryResult([{ nostr_npub: "aabbcc" }])
       )
       .mockResolvedValueOnce(
         mockQueryResult([])

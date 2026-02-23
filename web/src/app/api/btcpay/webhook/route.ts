@@ -75,8 +75,8 @@ export async function POST(req: NextRequest) {
   const result = await confirmJobPayment(job.id);
 
   if (result.success) {
-    const userResult = await query<{ nostr_pubkey: string }>(
-      "SELECT nostr_pubkey FROM users WHERE id = $1",
+    const userResult = await query<{ nostr_npub: string }>(
+      "SELECT nostr_npub FROM users WHERE id = $1",
       [job.user_id]
     );
 
@@ -88,7 +88,7 @@ export async function POST(req: NextRequest) {
       const serviceName = serviceResult.rows[0]?.name ?? job.service_id;
 
       await pushPaymentReceived(
-        userResult.rows[0].nostr_pubkey,
+        userResult.rows[0].nostr_npub,
         serviceName,
         job.amount_sats ?? 0,
         job.id
