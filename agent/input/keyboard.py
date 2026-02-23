@@ -166,9 +166,12 @@ def hotkey(*keys: str) -> None:
 
     time.sleep(random.uniform(0.05, 0.12))
 
-    # Release in reverse
+    # Release in reverse, removing modifier flags before each modifier release
+    remaining = flags
     for keycode, lower in reversed(keycodes):
-        _key_up(keycode, flags=flags)
+        if lower in modifier_flag_map:
+            remaining &= ~modifier_flag_map[lower]
+        _key_up(keycode, flags=remaining)
         time.sleep(random.uniform(0.02, 0.06))
 
 
