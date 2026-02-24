@@ -141,21 +141,8 @@ export default function LoginPage() {
             <p>for your login code.</p>
           </div>
 
-          <p className="text-center text-xs text-muted">
-            Have a Nostr extension?{" "}
-            <button
-              type="button"
-              onClick={handleNostrLogin}
-              disabled={loading}
-              className="text-accent hover:underline"
-            >
-              Sign in with NIP-07
-            </button>
-          </p>
-
           {BOT_NPUB && (
             <p className="text-center text-xs text-muted">
-              {BOT_NAME}:{" "}
               <button
                 type="button"
                 onClick={() => {
@@ -169,6 +156,18 @@ export default function LoginPage() {
               </button>
             </p>
           )}
+
+          <p className="text-center text-xs text-muted">
+            Have a Nostr extension?{" "}
+            <button
+              type="button"
+              onClick={handleNostrLogin}
+              disabled={loading}
+              className="text-accent hover:underline"
+            >
+              Sign in with NIP-07
+            </button>
+          </p>
         </div>
 
         <p className="text-center text-xs text-muted">

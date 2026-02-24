@@ -530,17 +530,19 @@ async def test_action_with_debt():
 
 @pytest.mark.asyncio
 async def test_action_unregistered_user():
-    """Cancel from unregistered user should auto-waitlist."""
+    """Cancel from unregistered user should auto-invite and send login code."""
     router, deps = _make_router()
     deps["api"].get_user.return_value = None
-    deps["api"].add_to_waitlist.return_value = {"status": "added"}
+    deps["api"].auto_invite.return_value = {"status": "invited", "invite_code": "ABC123"}
+    deps["api"].create_otp.return_value = "123456789012"
 
     await router.handle_dm(ALICE, "cancel netflix")
 
-    deps["api"].add_to_waitlist.assert_awaited_once_with(ALICE)
-    deps["send_dm"].assert_awaited_once()
-    msg = deps["send_dm"].call_args[0][1]
-    assert "waitlist" in msg.lower()
+    deps["api"].auto_invite.assert_awaited_once_with(ALICE)
+    # Two DMs: formatted code + instructions
+    assert deps["send_dm"].await_count == 2
+    code_msg = deps["send_dm"].call_args_list[0][0][1]
+    assert "123456-789012" in code_msg
 
 
 @pytest.mark.asyncio
@@ -744,14 +746,15 @@ async def test_status_with_debt():
 
 @pytest.mark.asyncio
 async def test_status_unregistered_user():
-    """Status for unregistered user should auto-waitlist."""
+    """Status for unregistered user should auto-invite."""
     router, deps = _make_router()
     deps["api"].get_user.return_value = None
-    deps["api"].add_to_waitlist.return_value = {"status": "added"}
+    deps["api"].auto_invite.return_value = {"status": "invited", "invite_code": "XYZ"}
+    deps["api"].create_otp.return_value = "111122223333"
 
     await router.handle_dm(ALICE, "status")
 
-    deps["api"].add_to_waitlist.assert_awaited_once()
+    deps["api"].auto_invite.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -806,14 +809,15 @@ async def test_queue_empty():
 
 @pytest.mark.asyncio
 async def test_queue_unregistered():
-    """Queue for unregistered user should auto-waitlist."""
+    """Queue for unregistered user should auto-invite."""
     router, deps = _make_router()
     deps["api"].get_user.return_value = None
-    deps["api"].add_to_waitlist.return_value = {"status": "added"}
+    deps["api"].auto_invite.return_value = {"status": "invited", "invite_code": "XYZ"}
+    deps["api"].create_otp.return_value = "111122223333"
 
     await router.handle_dm(ALICE, "queue")
 
-    deps["api"].add_to_waitlist.assert_awaited_once()
+    deps["api"].auto_invite.assert_awaited_once()
 
 
 # ==================================================================
@@ -864,32 +868,34 @@ async def test_login_registered_user():
 
 
 @pytest.mark.asyncio
-async def test_login_unregistered_auto_waitlists():
-    """Login for unregistered user should add to waitlist."""
+async def test_login_unregistered_auto_invites():
+    """Login for unregistered user should auto-invite and send login code."""
     router, deps = _make_router()
     deps["api"].get_user.return_value = None
-    deps["api"].add_to_waitlist.return_value = {"status": "added"}
+    deps["api"].auto_invite.return_value = {"status": "invited", "invite_code": "ABC123"}
+    deps["api"].create_otp.return_value = "123456789012"
 
     await router.handle_dm(ALICE, "login")
 
-    deps["api"].add_to_waitlist.assert_awaited_once_with(ALICE)
-    deps["send_dm"].assert_awaited_once()
-    msg = deps["send_dm"].call_args[0][1]
-    assert "waitlist" in msg.lower()
+    deps["api"].auto_invite.assert_awaited_once_with(ALICE)
+    # Two DMs: formatted code + instructions
+    assert deps["send_dm"].await_count == 2
+    code_msg = deps["send_dm"].call_args_list[0][0][1]
+    assert "123456-789012" in code_msg
 
 
 @pytest.mark.asyncio
-async def test_login_already_invited_not_registered():
-    """Login for invited-but-not-registered user should tell them to complete setup."""
+async def test_login_unregistered_at_capacity():
+    """Login for unregistered user at capacity should get waitlist message."""
     router, deps = _make_router()
     deps["api"].get_user.return_value = None
-    deps["api"].add_to_waitlist.return_value = {"status": "already_invited"}
+    deps["api"].auto_invite.return_value = {"status": "at_capacity", "invite_code": None}
 
     await router.handle_dm(ALICE, "login")
 
     deps["send_dm"].assert_awaited_once()
     msg = deps["send_dm"].call_args[0][1]
-    assert "setup" in msg.lower() or "login" in msg.lower()
+    assert "waitlist" in msg.lower()
 
 
 @pytest.mark.asyncio
@@ -1025,37 +1031,55 @@ async def test_invites_non_operator():
 
 
 @pytest.mark.asyncio
-async def test_auto_waitlist_on_cancel():
-    """Unregistered user sending 'cancel netflix' should be auto-waitlisted."""
+async def test_auto_invite_on_cancel():
+    """Unregistered user sending 'cancel netflix' should be auto-invited."""
     router, deps = _make_router()
     deps["api"].get_user.return_value = None
-    deps["api"].add_to_waitlist.return_value = {"status": "added"}
+    deps["api"].auto_invite.return_value = {"status": "invited", "invite_code": "ABC"}
+    deps["api"].create_otp.return_value = "123456789012"
 
     await router.handle_dm(ALICE, "cancel netflix")
 
-    deps["api"].add_to_waitlist.assert_awaited_once_with(ALICE)
+    deps["api"].auto_invite.assert_awaited_once_with(ALICE)
+    deps["api"].create_otp.assert_awaited_once_with(ALICE)
 
 
 @pytest.mark.asyncio
-async def test_auto_waitlist_already_invited():
-    """Auto-waitlist for already-invited user should show invited message."""
+async def test_auto_invite_already_invited():
+    """Auto-invite for already-invited user should send login code."""
     router, deps = _make_router()
     deps["api"].get_user.return_value = None
-    deps["api"].add_to_waitlist.return_value = {"status": "already_invited"}
+    deps["api"].auto_invite.return_value = {"status": "already_invited", "invite_code": "XYZ"}
+    deps["api"].create_otp.return_value = "999888777666"
 
     await router.handle_dm(ALICE, "resume hulu")
 
-    deps["send_dm"].assert_awaited_once()
-    msg = deps["send_dm"].call_args[0][1]
-    assert "invited" in msg.lower() or "login" in msg.lower()
+    # Two DMs: code + instructions
+    assert deps["send_dm"].await_count == 2
+    code_msg = deps["send_dm"].call_args_list[0][0][1]
+    assert "999888-777666" in code_msg
 
 
 @pytest.mark.asyncio
-async def test_auto_waitlist_api_failure():
-    """Auto-waitlist API failure should send not_registered message."""
+async def test_auto_invite_at_capacity():
+    """Auto-invite at capacity should send waitlist message."""
     router, deps = _make_router()
     deps["api"].get_user.return_value = None
-    deps["api"].add_to_waitlist.side_effect = Exception("network")
+    deps["api"].auto_invite.return_value = {"status": "at_capacity", "invite_code": None}
+
+    await router.handle_dm(ALICE, "cancel netflix")
+
+    deps["send_dm"].assert_awaited_once()
+    msg = deps["send_dm"].call_args[0][1]
+    assert "waitlist" in msg.lower()
+
+
+@pytest.mark.asyncio
+async def test_auto_invite_api_failure():
+    """Auto-invite API failure should send not_registered message."""
+    router, deps = _make_router()
+    deps["api"].get_user.return_value = None
+    deps["api"].auto_invite.side_effect = Exception("network")
 
     await router.handle_dm(ALICE, "cancel netflix")
 

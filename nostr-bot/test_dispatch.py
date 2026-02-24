@@ -53,6 +53,7 @@ def mock_api():
         m.get_user = AsyncMock()
         m.create_otp = AsyncMock()
         m.add_to_waitlist = AsyncMock()
+        m.auto_invite = AsyncMock()
         m.get_pending_invite_dms = AsyncMock(return_value=[])
         m.mark_invite_dm_sent = AsyncMock()
         yield m
@@ -78,28 +79,29 @@ async def test_login_registered_user(handler, mock_api):
     assert isinstance(result, list)
     assert len(result) == 2
     assert result[0] == "123456-789012"
-    assert "5 minutes" in result[1]
+    assert "15 minutes" in result[1]
     assert "/login" in result[1]
     mock_api.create_otp.assert_awaited_once_with(REGISTERED_NPUB_HEX)
 
 
 @pytest.mark.asyncio
-async def test_login_unregistered_user_gets_waitlisted(handler, mock_api):
+async def test_login_unregistered_user_at_capacity(handler, mock_api):
+    """Unregistered user at capacity should get waitlist message."""
     mock_api.get_user.return_value = None
-    mock_api.add_to_waitlist.return_value = {"status": "added", "invite_code": None}
+    mock_api.auto_invite.return_value = {"status": "at_capacity", "invite_code": None}
 
     result = await handler._dispatch_command(UNREGISTERED_NPUB_HEX, "login")
 
     assert "waitlist" in result.lower()
-    mock_api.add_to_waitlist.assert_awaited_once_with(UNREGISTERED_NPUB_HEX)
+    mock_api.auto_invite.assert_awaited_once_with(UNREGISTERED_NPUB_HEX)
     mock_api.create_otp.assert_not_awaited()
 
 
 @pytest.mark.asyncio
-async def test_login_invited_but_no_account_sends_otp(handler, mock_api):
-    """Returning user (deleted account): invited, no user row. Should get OTP + login link."""
+async def test_login_unregistered_user_auto_invited(handler, mock_api):
+    """Unregistered user should be auto-invited and get OTP + login link."""
     mock_api.get_user.return_value = None
-    mock_api.add_to_waitlist.return_value = {"status": "already_invited", "invite_code": "ABC123XYZ"}
+    mock_api.auto_invite.return_value = {"status": "invited", "invite_code": "ABC123XYZ"}
     mock_api.create_otp.return_value = "999888777666"
 
     result = await handler._dispatch_command(UNREGISTERED_NPUB_HEX, "login")
@@ -126,36 +128,42 @@ async def test_login_case_insensitive(handler, mock_api):
 
 
 @pytest.mark.asyncio
-async def test_waitlist_unregistered_new(handler, mock_api):
+async def test_waitlist_unregistered_auto_invited(handler, mock_api):
+    """Unregistered user DM-ing 'waitlist' should be auto-invited and get login code."""
     mock_api.get_user.return_value = None
-    mock_api.add_to_waitlist.return_value = {"status": "added", "invite_code": None}
+    mock_api.auto_invite.return_value = {"status": "invited", "invite_code": "ABC123"}
+    mock_api.create_otp.return_value = "123456789012"
 
     result = await handler._dispatch_command(UNREGISTERED_NPUB_HEX, "waitlist")
 
-    assert "on the waitlist" in result.lower()
-    mock_api.add_to_waitlist.assert_awaited_once_with(UNREGISTERED_NPUB_HEX)
+    assert isinstance(result, list)
+    assert result[0] == "123456-789012"
+    mock_api.auto_invite.assert_awaited_once_with(UNREGISTERED_NPUB_HEX)
 
 
 @pytest.mark.asyncio
-async def test_waitlist_unregistered_already_waitlisted(handler, mock_api):
+async def test_waitlist_unregistered_at_capacity(handler, mock_api):
+    """Unregistered user DM-ing 'waitlist' at capacity should get waitlist message."""
     mock_api.get_user.return_value = None
-    mock_api.add_to_waitlist.return_value = {"status": "already_waitlisted", "invite_code": None}
+    mock_api.auto_invite.return_value = {"status": "at_capacity", "invite_code": None}
 
     result = await handler._dispatch_command(UNREGISTERED_NPUB_HEX, "waitlist")
 
-    assert "already on the waitlist" in result.lower()
+    assert "waitlist" in result.lower()
 
 
 @pytest.mark.asyncio
 async def test_waitlist_unregistered_already_invited(handler, mock_api):
+    """Already-invited user DM-ing 'waitlist' should get login code."""
     mock_api.get_user.return_value = None
-    mock_api.add_to_waitlist.return_value = {"status": "already_invited", "invite_code": "ABC123XYZ"}
+    mock_api.auto_invite.return_value = {"status": "already_invited", "invite_code": "ABC123XYZ"}
+    mock_api.create_otp.return_value = "999888777666"
 
     result = await handler._dispatch_command(UNREGISTERED_NPUB_HEX, "waitlist")
 
-    assert "already been invited" in result.lower()
-    assert "/login" in result
-    assert "?code=" not in result
+    assert isinstance(result, list)
+    assert result[0] == "999888-777666"
+    assert "/login" in result[1]
 
 
 @pytest.mark.asyncio
@@ -165,7 +173,7 @@ async def test_waitlist_registered_user(handler, mock_api):
     result = await handler._dispatch_command(REGISTERED_NPUB_HEX, "waitlist")
 
     assert "already have an account" in result.lower()
-    mock_api.add_to_waitlist.assert_not_awaited()
+    mock_api.auto_invite.assert_not_awaited()
 
 
 # -- invites (operator) ---------------------------------------------------
@@ -189,12 +197,15 @@ async def test_invites_operator(handler, mock_api):
 @pytest.mark.asyncio
 async def test_invites_non_operator_unregistered(handler, mock_api):
     mock_api.get_user.return_value = None
-    mock_api.add_to_waitlist.return_value = {"status": "added", "invite_code": None}
+    mock_api.auto_invite.return_value = {"status": "invited", "invite_code": "XYZ"}
+    mock_api.create_otp.return_value = "111122223333"
 
     result = await handler._dispatch_command(UNREGISTERED_NPUB_HEX, "invites")
 
-    assert "on the waitlist" in result.lower()
-    mock_api.add_to_waitlist.assert_awaited_once_with(UNREGISTERED_NPUB_HEX)
+    # Auto-invited: gets login code
+    assert isinstance(result, list)
+    assert result[0] == "111122-223333"
+    mock_api.auto_invite.assert_awaited_once_with(UNREGISTERED_NPUB_HEX)
 
 
 @pytest.mark.asyncio
@@ -213,12 +224,15 @@ async def test_invites_non_operator_registered(handler, mock_api, mock_commands)
 @pytest.mark.asyncio
 async def test_unknown_command_unregistered(handler, mock_api):
     mock_api.get_user.return_value = None
-    mock_api.add_to_waitlist.return_value = {"status": "added", "invite_code": None}
+    mock_api.auto_invite.return_value = {"status": "invited", "invite_code": "XYZ"}
+    mock_api.create_otp.return_value = "444455556666"
 
     result = await handler._dispatch_command(UNREGISTERED_NPUB_HEX, "gibberish")
 
-    assert "on the waitlist" in result.lower()
-    mock_api.add_to_waitlist.assert_awaited_once_with(UNREGISTERED_NPUB_HEX)
+    # Auto-invited: gets login code
+    assert isinstance(result, list)
+    assert result[0] == "444455-556666"
+    mock_api.auto_invite.assert_awaited_once_with(UNREGISTERED_NPUB_HEX)
 
 
 @pytest.mark.asyncio

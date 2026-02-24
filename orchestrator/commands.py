@@ -325,28 +325,8 @@ class CommandRouter:
         user_data = await self._api.get_user(sender_npub)
 
         if user_data is None:
-            # Check waitlist status
-            try:
-                wl_result = await self._api.add_to_waitlist(sender_npub)
-            except Exception:
-                log.exception("Waitlist API failed for login (user %s)", sender_npub)
-                await self._send_dm(sender_npub, messages.error_generic())
-                return
-
-            status = wl_result.get("status", "")
-            if status == "already_invited":
-                # They've been invited but haven't completed signup
-                await self._send_dm(
-                    sender_npub,
-                    messages.not_registered(self._config.base_url),
-                )
-            elif status in ("added", "already_waitlisted"):
-                await self._send_dm(sender_npub, messages.waitlist_added())
-            else:
-                await self._send_dm(
-                    sender_npub,
-                    messages.not_registered(self._config.base_url),
-                )
+            # Auto-invite and send login code
+            await self._auto_waitlist(sender_npub)
             return
 
         try:
@@ -427,12 +407,12 @@ class CommandRouter:
     # ------------------------------------------------------------------
 
     async def _auto_waitlist(self, sender_npub: str) -> None:
-        """Auto-add unregistered user to waitlist and notify them."""
+        """Auto-invite unregistered user and send login code."""
         try:
-            result = await self._api.add_to_waitlist(sender_npub)
+            result = await self._api.auto_invite(sender_npub)
         except Exception:
             log.exception(
-                "Auto-waitlist failed for user %s", sender_npub
+                "Auto-invite failed for user %s", sender_npub
             )
             await self._send_dm(
                 sender_npub,
@@ -441,12 +421,20 @@ class CommandRouter:
             return
 
         status = result.get("status", "")
-        if status == "already_invited":
-            await self._send_dm(
-                sender_npub,
-                messages.waitlist_invited(self._config.base_url),
-            )
-        elif status in ("added", "already_waitlisted"):
+        if status in ("invited", "already_invited"):
+            # Send login code
+            try:
+                code = await self._api.create_otp(sender_npub)
+                parts = messages.login_code(code, self._config.base_url)
+                for part in parts:
+                    await self._send_dm(sender_npub, part)
+            except Exception:
+                log.exception("OTP creation failed for auto-invited user %s", sender_npub)
+                await self._send_dm(
+                    sender_npub,
+                    messages.invite_dm(self._config.base_url),
+                )
+        elif status == "at_capacity":
             await self._send_dm(sender_npub, messages.waitlist_added())
         else:
             await self._send_dm(

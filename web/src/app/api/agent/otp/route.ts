@@ -32,7 +32,7 @@ export const POST = withAgentAuth(async (_req: NextRequest, { body }) => {
 
       const result = await query(
         `INSERT INTO nostr_otp (npub_hex, code_hash, expires_at)
-         VALUES ($1, $2, NOW() + INTERVAL '5 minutes')
+         VALUES ($1, $2, NOW() + INTERVAL '15 minutes')
          ON CONFLICT (npub_hex) DO UPDATE
            SET code_hash = EXCLUDED.code_hash,
                expires_at = EXCLUDED.expires_at,

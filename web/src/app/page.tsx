@@ -113,14 +113,9 @@ export default function WaitlistPage() {
             <p>to your friendly <span className="text-foreground font-medium">{BOT_NAME}</span></p>
             <p>to get in the line.</p>
           </div>
-        </form>
 
-        {/* Footer */}
-        <div className="text-center text-xs mt-12 space-y-2">
-          <p className="text-muted/60">Invite only. Bitcoin only.</p>
           {BOT_NPUB && (
-            <p className="text-muted">
-              {BOT_NAME}:{" "}
+            <p className="text-center text-xs text-muted">
               <button
                 type="button"
                 onClick={() => {
@@ -134,6 +129,11 @@ export default function WaitlistPage() {
               </button>
             </p>
           )}
+        </form>
+
+        {/* Footer */}
+        <div className="text-center text-xs mt-12 space-y-2">
+          <p className="text-muted/60">Invite only. Bitcoin only.</p>
         </div>
       </div>
     </main>

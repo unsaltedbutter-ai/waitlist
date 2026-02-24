@@ -293,7 +293,7 @@ class TestMisc:
         # First message is the formatted code
         assert result[0] == "123456-789012"
         # Second message has instructions
-        assert "5 minutes" in result[1]
+        assert "15 minutes" in result[1]
         assert "https://unsaltedbutter.ai/login" in result[1]
 
     def test_not_registered(self) -> None:

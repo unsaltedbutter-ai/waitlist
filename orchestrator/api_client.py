@@ -117,6 +117,18 @@ class ApiClient:
         resp.raise_for_status()
         return resp.json()
 
+    async def auto_invite(self, npub_hex: str) -> dict:
+        """POST /api/agent/waitlist/auto-invite.
+
+        Auto-grants an invite (or returns existing one).
+        Returns {"status": "invited"|"already_invited"|"at_capacity", "invite_code": str|None}.
+        """
+        path = "/api/agent/waitlist/auto-invite"
+        body = json.dumps({"npub_hex": npub_hex})
+        resp = await self._request("POST", path, body=body)
+        resp.raise_for_status()
+        return resp.json()
+
     async def get_pending_invite_dms(self) -> list[dict]:
         """GET /api/agent/waitlist/pending-invites. Returns list."""
         path = "/api/agent/waitlist/pending-invites"

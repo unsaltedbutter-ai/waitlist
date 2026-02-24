@@ -88,6 +88,19 @@ async def add_to_waitlist(npub_hex: str) -> dict:
     return resp.json()
 
 
+async def auto_invite(npub_hex: str) -> dict:
+    """POST /api/agent/waitlist/auto-invite.
+
+    Auto-grants an invite (or returns existing one).
+    Returns {"status": "invited"|"already_invited"|"at_capacity", "invite_code": str|None}.
+    """
+    path = "/api/agent/waitlist/auto-invite"
+    body = json.dumps({"npub_hex": npub_hex})
+    resp = await _request("POST", path, body=body)
+    resp.raise_for_status()
+    return resp.json()
+
+
 async def get_pending_invite_dms() -> list[dict]:
     """GET /api/agent/waitlist/pending-invites. Returns list of pending entries."""
     path = "/api/agent/waitlist/pending-invites"

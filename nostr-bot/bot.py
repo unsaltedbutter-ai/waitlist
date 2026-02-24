@@ -195,7 +195,7 @@ class BotNotificationHandler(HandleNotification):
 
     # -- Command dispatch ------------------------------------------------------
 
-    async def _dispatch_command(self, sender_hex: str, message: str) -> str:
+    async def _dispatch_command(self, sender_hex: str, message: str) -> str | list[str]:
         cmd = message.strip().lower()
         data = await api_client.get_user(sender_hex)
         user = data["user"] if data else None
@@ -203,24 +203,14 @@ class BotNotificationHandler(HandleNotification):
         # "login" requires an account or an invite
         if cmd == "login":
             if user is None:
-                # Check if they're already invited (e.g. returning after account deletion)
-                result = await api_client.add_to_waitlist(sender_hex)
-                if result["status"] == "already_invited":
-                    code = await api_client.create_otp(sender_hex)
-                    formatted = f"{code[:6]}-{code[6:]}"
-                    base_url = os.getenv("BASE_URL", "https://unsaltedbutter.ai")
-                    return [
-                        formatted,
-                        f"That's your login code. Enter it within 5 minutes.\n\n{base_url}/login",
-                    ]
-                # Not invited yet: waitlist message
-                return self._waitlist_message(result)
+                # Auto-invite and send login code
+                return await self._auto_waitlist(sender_hex)
             code = await api_client.create_otp(sender_hex)
             formatted = f"{code[:6]}-{code[6:]}"
             base_url = os.getenv("BASE_URL", "https://unsaltedbutter.ai")
             return [
                 formatted,
-                f"That's your login code. Enter it within 5 minutes.\n\n{base_url}/login",
+                f"That's your login code. Enter it within 15 minutes.\n\n{base_url}/login",
             ]
 
         # "waitlist" only for unregistered users
@@ -247,23 +237,29 @@ class BotNotificationHandler(HandleNotification):
 
         return await commands.handle_dm(sender_hex, message)
 
-    # -- Auto-waitlist for unregistered users ----------------------------------
+    # -- Auto-invite for unregistered users ------------------------------------
 
-    async def _auto_waitlist(self, sender_hex: str) -> str:
-        """Add unregistered user to waitlist automatically and return a message."""
-        result = await api_client.add_to_waitlist(sender_hex)
-        return self._waitlist_message(result)
+    async def _auto_waitlist(self, sender_hex: str) -> str | list[str]:
+        """Auto-invite unregistered user and send login code."""
+        result = await api_client.auto_invite(sender_hex)
+        status = result["status"]
+        base_url = os.getenv("BASE_URL", "https://unsaltedbutter.ai")
 
-    @staticmethod
-    def _waitlist_message(result: dict) -> str:
-        """Format a human-readable message from a waitlist API result."""
-        if result["status"] == "added":
-            return "You're on the waitlist. We'll DM you when a spot opens."
-        elif result["status"] == "already_invited":
-            base_url = os.getenv("BASE_URL", "https://unsaltedbutter.ai")
-            return f"You've already been invited. DM me 'login' to get your code.\n\n{base_url}/login"
-        else:
-            return "You're already on the waitlist. We'll DM you when a spot opens."
+        if status in ("invited", "already_invited"):
+            # Invited: create OTP and send login code
+            try:
+                code = await api_client.create_otp(sender_hex)
+                formatted = f"{code[:6]}-{code[6:]}"
+                return [
+                    formatted,
+                    f"That's your login code. Enter it within 15 minutes.\n\n{base_url}/login",
+                ]
+            except Exception:
+                log.exception("OTP creation failed for auto-invited user %s", sender_hex[:16])
+                return f"You're in. DM me 'login' to get your code.\n\n{base_url}/login"
+
+        # at_capacity: waitlist only
+        return "You're on the waitlist. We'll DM you when a spot opens."
 
     # -- Invite DM sending -----------------------------------------------------
 
