@@ -356,7 +356,7 @@ class VLMExecutor:
             browser.navigate(session, start_url, fast=True)
             # Zoom after navigation so Chrome applies it to the real origin
             # (about:blank zoom gets reset on navigate).
-            browser.zoom_out(session, steps=2)  # 100% -> 80%
+            browser.zoom_out(session, steps=1)  # 100% -> 90%
             step_count += 1
 
             # Build prompt chain
@@ -535,6 +535,26 @@ class VLMExecutor:
                             stuck.reset()
                             log.info('Job %s: sign-in complete, moving to %s',
                                      job_id, labels[prompt_idx])
+
+                            # On cancel flows, scroll down once before the
+                            # first cancel-phase screenshot. Account pages
+                            # always bury "Cancel" at the bottom, and lazy-
+                            # loaded elements above it can shift the layout
+                            # between screenshot and click. Scrolling first
+                            # triggers those loads and brings the target into
+                            # a stable position.
+                            if action == 'cancel':
+                                with gui_lock:
+                                    focus_window_by_pid(session.pid)
+                                    px_per_click = 30
+                                    window_h = session.bounds.get('height', 900)
+                                    clicks = max(5, int(window_h * 0.6 / px_per_click))
+                                    scroll_mod.scroll('down', clicks)
+                                time.sleep(self.settle_delay)
+                                step_count += 1
+                                log.info('Job %s: scrolled down on account page',
+                                         job_id)
+
                             continue
                         else:
                             # Sign-in was the only phase (shouldn't happen)
