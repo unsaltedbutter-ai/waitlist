@@ -46,7 +46,7 @@ class BrowserSession:
 
 
 def _write_chrome_prefs(profile_dir: str) -> None:
-    """Write Chrome preferences to disable password prompts, autofill, and translation."""
+    """Write Chrome preferences to disable password prompts, autofill, translation, and location."""
     default_dir = Path(profile_dir) / 'Default'
     default_dir.mkdir(parents=True, exist_ok=True)
 
@@ -56,6 +56,10 @@ def _write_chrome_prefs(profile_dir: str) -> None:
         'profile': {
             'password_manager_enabled': False,
             'password_manager_leak_detection': False,
+            'default_content_setting_values': {
+                'geolocation': 2,  # 1=allow, 2=block (same as user setting)
+                'notifications': 2,
+            },
         },
         'autofill': {
             'profile_enabled': False,
