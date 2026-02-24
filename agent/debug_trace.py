@@ -174,8 +174,16 @@ class DebugTrace:
                 overlay_path.write_bytes(overlay_bytes)
 
     def cleanup_success(self) -> None:
-        """Delete the trace folder (job succeeded, no forensics needed)."""
+        """Delete the trace folder (job succeeded, no forensics needed).
+
+        When AGENT_DEBUG_KEEP_ALL=1 is set, successful traces are preserved
+        so operators can periodically audit why some jobs take too many steps.
+        """
         if not self._dir or not self._dir.exists():
+            return
+        if os.environ.get('AGENT_DEBUG_KEEP_ALL', '') == '1':
+            log.info('Keeping debug trace for successful job %s (AGENT_DEBUG_KEEP_ALL)',
+                     self.job_id)
             return
         try:
             shutil.rmtree(self._dir)

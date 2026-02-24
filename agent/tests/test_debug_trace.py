@@ -123,6 +123,21 @@ class TestDebugTrace:
         trace = DebugTrace('', base_dir=str(tmp_path))
         trace.cleanup_success()  # should not raise
 
+    def test_cleanup_success_keeps_trace_when_keep_all(self, tmp_path, monkeypatch):
+        monkeypatch.setenv('AGENT_DEBUG_KEEP_ALL', '1')
+        trace = DebugTrace('job-keep', base_dir=str(tmp_path))
+        trace.save_step(0, _TINY_PNG, _SAMPLE_RESPONSE)
+        trace.cleanup_success()
+        assert trace.trace_dir.exists()
+        assert (trace.trace_dir / 'step_000.json').exists()
+
+    def test_cleanup_success_deletes_when_keep_all_not_set(self, tmp_path, monkeypatch):
+        monkeypatch.delenv('AGENT_DEBUG_KEEP_ALL', raising=False)
+        trace = DebugTrace('job-del', base_dir=str(tmp_path))
+        trace.save_step(0, _TINY_PNG, _SAMPLE_RESPONSE)
+        trace.cleanup_success()
+        assert not trace.trace_dir.exists()
+
 
 # ---------------------------------------------------------------------------
 # Prune old traces
@@ -280,6 +295,54 @@ class TestDebugTraceVLMIntegration:
         assert result.success
         # No job_id means no trace folder at all
         assert len(list(self.tmp_path.iterdir())) == 0
+
+    def test_cancel_zooms_to_80_after_signin(self, monkeypatch):
+        """Cancel flows get an extra Cmd+minus (90% -> 80%) after sign-in."""
+        from agent.vlm_executor import VLMExecutor
+
+        hotkey_calls = []
+        monkeypatch.setattr('agent.vlm_executor.keyboard.hotkey',
+                            lambda *args: hotkey_calls.append(args))
+
+        signed_in = {'page_type': 'signed_in'}
+        cancel_done = {
+            'state': 'confirmation', 'action': 'done',
+            'billing_end_date': '2026-03-15',
+        }
+        vlm = MagicMock()
+        vlm.analyze = MagicMock(side_effect=[
+            (signed_in, 1.0), (cancel_done, 1.0),
+        ])
+
+        executor = VLMExecutor(vlm, settle_delay=0, debug=True)
+        result = executor.run('netflix', 'cancel', {'email': 'a', 'pass': 'b'},
+                              job_id='job-zoom')
+        assert result.success
+        assert ('command', '-') in hotkey_calls
+
+    def test_resume_does_not_extra_zoom(self, monkeypatch):
+        """Resume flows stay at 90% (no extra zoom-out)."""
+        from agent.vlm_executor import VLMExecutor
+
+        hotkey_calls = []
+        monkeypatch.setattr('agent.vlm_executor.keyboard.hotkey',
+                            lambda *args: hotkey_calls.append(args))
+
+        signed_in = {'page_type': 'signed_in'}
+        resume_done = {
+            'state': 'confirmation', 'action': 'done',
+            'billing_end_date': None,
+        }
+        vlm = MagicMock()
+        vlm.analyze = MagicMock(side_effect=[
+            (signed_in, 1.0), (resume_done, 1.0),
+        ])
+
+        executor = VLMExecutor(vlm, settle_delay=0, debug=True)
+        result = executor.run('netflix', 'resume', {'email': 'a', 'pass': 'b'},
+                              job_id='job-nozoom')
+        assert result.success
+        assert ('command', '-') not in hotkey_calls
 
     def test_vlm_error_still_saves_step(self):
         from agent.vlm_executor import VLMExecutor
