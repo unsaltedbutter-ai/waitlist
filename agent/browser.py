@@ -119,6 +119,11 @@ def create_session(width: int = 1280, height: int = 900) -> BrowserSession:
         window.resize_window_by_drag('Google Chrome', width, height, fast=True)
         time.sleep(0.2)
 
+        # Zoom out to 90% so more content is visible above the fold.
+        # Cmd+minus once = 90%, common among real laptop users.
+        keyboard.hotkey('command', '-')
+        time.sleep(0.1)
+
     # Refresh bounds after resize
     get_session_window(session)
 
