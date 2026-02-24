@@ -201,9 +201,9 @@ export default function OnboardingPage() {
   async function saveCredentials() {
     setError("");
 
-    // "Later" mode: skip credentials entirely, go straight to consent
+    // "Later" mode: skip credentials entirely, go to queue step
     if (credentialMode === "later") {
-      setStep(3);
+      setStep(2);
       return;
     }
 
@@ -249,49 +249,18 @@ export default function OnboardingPage() {
         }
       }
 
-      if (selectedIds.length === 0) {
-        // No services selected: skip queue ordering, go straight to consent
-        setSubmitting(false);
-        setStep(3);
-        return;
-      }
-
       // Build queue from selected services
-      const savedQueue: QueueItem[] = selectedIds.map((sid) => {
-        const svc = services.find((s) => s.service_id === sid)!;
-        const plan = getSelectedPlanForService(sid);
-        return {
-          serviceId: sid,
-          serviceName: svc.service_name,
-          planName: plan?.display_name,
-        };
-      });
-      setQueue(savedQueue);
-
-      if (selectedIds.length === 1) {
-        // Only 1 service: save queue order and skip to consent
-        const plansPayload: Record<string, string> = {};
-        for (const sid of selectedIds) {
-          if (selectedPlans[sid]) {
-            plansPayload[sid] = selectedPlans[sid];
-          }
-        }
-        const qRes = await authFetch("/api/queue", {
-          method: "PUT",
-          body: JSON.stringify({
-            order: selectedIds,
-            plans: Object.keys(plansPayload).length > 0 ? plansPayload : undefined,
-          }),
+      if (selectedIds.length > 0) {
+        const savedQueue: QueueItem[] = selectedIds.map((sid) => {
+          const svc = services.find((s) => s.service_id === sid)!;
+          const plan = getSelectedPlanForService(sid);
+          return {
+            serviceId: sid,
+            serviceName: svc.service_name,
+            planName: plan?.display_name,
+          };
         });
-        if (!qRes.ok) {
-          const qData = await qRes.json();
-          setError(qData.error || "Failed to save queue order.");
-          setSubmitting(false);
-          return;
-        }
-        setSubmitting(false);
-        setStep(3);
-        return;
+        setQueue(savedQueue);
       }
 
       setSubmitting(false);
@@ -569,25 +538,28 @@ export default function OnboardingPage() {
     setSubmitting(true);
 
     try {
-      const plansPayload: Record<string, string> = {};
-      for (const q of queue) {
-        if (selectedPlans[q.serviceId]) {
-          plansPayload[q.serviceId] = selectedPlans[q.serviceId];
+      // Save queue order if any services were selected
+      if (queue.length > 0) {
+        const plansPayload: Record<string, string> = {};
+        for (const q of queue) {
+          if (selectedPlans[q.serviceId]) {
+            plansPayload[q.serviceId] = selectedPlans[q.serviceId];
+          }
         }
-      }
-      const res = await authFetch("/api/queue", {
-        method: "PUT",
-        body: JSON.stringify({
-          order: queue.map((q) => q.serviceId),
-          plans: Object.keys(plansPayload).length > 0 ? plansPayload : undefined,
-        }),
-      });
+        const res = await authFetch("/api/queue", {
+          method: "PUT",
+          body: JSON.stringify({
+            order: queue.map((q) => q.serviceId),
+            plans: Object.keys(plansPayload).length > 0 ? plansPayload : undefined,
+          }),
+        });
 
-      if (!res.ok) {
-        const data = await res.json();
-        setError(data.error || "Failed to save queue order.");
-        setSubmitting(false);
-        return;
+        if (!res.ok) {
+          const data = await res.json();
+          setError(data.error || "Failed to save queue order.");
+          setSubmitting(false);
+          return;
+        }
       }
 
       setSubmitting(false);
@@ -599,6 +571,8 @@ export default function OnboardingPage() {
   }
 
   function renderStep2() {
+    const hasQueue = queue.length > 1;
+
     return (
       <div className="space-y-8">
         <button
@@ -610,47 +584,64 @@ export default function OnboardingPage() {
         </button>
         <div>
           <h1 className="text-4xl font-bold tracking-tight text-foreground mb-4">
-            Arrange your queue
+            {hasQueue ? "Arrange your queue" : "Your queue"}
           </h1>
-          <p className="text-muted leading-relaxed">
-            When you ask us to cancel one service and resume the next, we follow this order. Drag to reorder.
+          <p className="text-muted leading-relaxed text-sm">
+            {hasQueue
+              ? "When you cancel one service, we suggest resuming the next one in line. Drag to set the order."
+              : "When you cancel a service, we suggest resuming the next one in your queue. Add services from your dashboard and arrange them in the order you want us to follow."}
           </p>
         </div>
 
-        <DndContext
-          sensors={sensors}
-          collisionDetection={closestCenter}
-          onDragEnd={handleDragEnd}
-        >
-          <SortableContext
-            items={queue.map((q) => q.serviceId)}
-            strategy={verticalListSortingStrategy}
-          >
-            <div className="space-y-2">
-              {queue.map((item, index) => (
-                <SortableItem
-                  key={item.serviceId}
-                  item={item}
-                  position={index + 1}
-                  isFirst={index === 0}
-                  isLast={index === queue.length - 1}
-                  onMoveUp={() => {
-                    if (index === 0) return;
-                    setQueue((prev) => arrayMove(prev, index, index - 1));
-                  }}
-                  onMoveDown={() => {
-                    if (index === queue.length - 1) return;
-                    setQueue((prev) => arrayMove(prev, index, index + 1));
-                  }}
-                />
-              ))}
-            </div>
-          </SortableContext>
-        </DndContext>
+        {hasQueue ? (
+          <>
+            <DndContext
+              sensors={sensors}
+              collisionDetection={closestCenter}
+              onDragEnd={handleDragEnd}
+            >
+              <SortableContext
+                items={queue.map((q) => q.serviceId)}
+                strategy={verticalListSortingStrategy}
+              >
+                <div className="space-y-2">
+                  {queue.map((item, index) => (
+                    <SortableItem
+                      key={item.serviceId}
+                      item={item}
+                      position={index + 1}
+                      isFirst={index === 0}
+                      isLast={index === queue.length - 1}
+                      onMoveUp={() => {
+                        if (index === 0) return;
+                        setQueue((prev) => arrayMove(prev, index, index - 1));
+                      }}
+                      onMoveDown={() => {
+                        if (index === queue.length - 1) return;
+                        setQueue((prev) => arrayMove(prev, index, index + 1));
+                      }}
+                    />
+                  ))}
+                </div>
+              </SortableContext>
+            </DndContext>
 
-        <p className="text-xs text-muted/60">
-          You can reorder this anytime from the dashboard.
-        </p>
+            <p className="text-xs text-muted/60">
+              You can reorder this anytime from the dashboard.
+            </p>
+          </>
+        ) : queue.length === 1 ? (
+          <div className="border border-border rounded-lg px-4 py-3 bg-surface">
+            <span className="text-sm text-foreground font-medium">{queue[0].serviceName}</span>
+            {queue[0].planName && (
+              <span className="text-xs text-muted ml-2">{queue[0].planName}</span>
+            )}
+          </div>
+        ) : (
+          <div className="border border-dashed border-border rounded-lg px-4 py-6 text-center">
+            <p className="text-sm text-muted">No services added yet.</p>
+          </div>
+        )}
 
         {error && <p className="text-red-400 text-sm">{error}</p>}
 
