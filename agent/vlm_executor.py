@@ -7,10 +7,19 @@ The VLM classifies each screenshot and returns one action. For sign-in pages,
 the VLM classifies the page type and the executor dispatches multi-step
 sequences locally (click, type, tab, enter) without additional VLM calls.
 
+Main loop structure (per iteration) for concurrent cursor safety:
+
+  1. [lock]    Restore cursor + execute pending action    [unlock]
+  2. [no lock] Settle delay (page reacts to action)
+  3. [lock]    Restore cursor + take screenshot           [unlock]
+  4. [no lock] VLM inference
+  5. [no lock] Parse result, resolve credentials, set pending action
+  6. Back to 1
+
 GUI actions (click, type, paste, scroll) are serialized via gui_lock so
-multiple concurrent jobs don't interleave physical input. Everything else
-(settle delay, screenshot capture, VLM inference, OTP waits) runs in
-parallel across jobs.
+multiple concurrent jobs don't interleave physical input. Cursor restore
+and screenshot capture are grouped under one lock acquisition so another
+job cannot displace the cursor between restore and capture.
 """
 
 from __future__ import annotations
@@ -218,12 +227,14 @@ def _restore_cursor(screen_bbox, session) -> bool:
     """Move cursor back into the last-clicked bbox if another job displaced it.
 
     Each concurrent job tracks where it last clicked (in screen coordinates).
-    Before each screenshot, we check whether the cursor is still inside that
-    box. If another job moved it away, we re-enter the box at a random point
-    (center-biased Gaussian, matching _click_bbox distribution) so hover
-    menus reappear.
+    Before screenshots and action execution, we check whether the cursor is
+    still inside that box. If another job moved it away, we re-enter the box
+    at a random point (center-biased Gaussian, matching _click_bbox
+    distribution) so hover menus reappear.
 
-    Acquires gui_lock only when a move is needed.
+    MUST be called while holding gui_lock. The caller is responsible for
+    acquiring the lock before calling this function.
+
     Returns True if the cursor was restored.
     """
     x1, y1, x2, y2 = screen_bbox
@@ -231,21 +242,20 @@ def _restore_cursor(screen_bbox, session) -> bool:
     if x1 <= cx <= x2 and y1 <= cy <= y2:
         return False
 
-    with gui_lock:
-        focus_window_by_pid(session.pid)
-        bw = x2 - x1
-        bh = y2 - y1
-        inset_x = bw * 0.10
-        inset_y = bh * 0.10
-        safe_x1 = x1 + inset_x
-        safe_y1 = y1 + inset_y
-        safe_x2 = x2 - inset_x
-        safe_y2 = y2 - inset_y
-        rx = (safe_x1 + safe_x2) / 2 + random.gauss(0, bw * 0.10)
-        ry = (safe_y1 + safe_y2) / 2 + random.gauss(0, bh * 0.10)
-        rx = max(safe_x1, min(rx, safe_x2))
-        ry = max(safe_y1, min(ry, safe_y2))
-        mouse.move_to(int(rx), int(ry), fast=True)
+    focus_window_by_pid(session.pid)
+    bw = x2 - x1
+    bh = y2 - y1
+    inset_x = bw * 0.10
+    inset_y = bh * 0.10
+    safe_x1 = x1 + inset_x
+    safe_y1 = y1 + inset_y
+    safe_x2 = x2 - inset_x
+    safe_y2 = y2 - inset_y
+    rx = (safe_x1 + safe_x2) / 2 + random.gauss(0, bw * 0.10)
+    ry = (safe_y1 + safe_y2) / 2 + random.gauss(0, bh * 0.10)
+    rx = max(safe_x1, min(rx, safe_x2))
+    ry = max(safe_y1, min(ry, safe_y2))
+    mouse.move_to(int(rx), int(ry), fast=True)
     return True
 
 
@@ -367,25 +377,79 @@ class VLMExecutor:
             prompt_idx = 0
             stuck = _StuckDetector()
             last_click_screen_bbox = None
+            pending_action = None
 
             for iteration in range(self.max_steps):
-                # Restore cursor if another concurrent job displaced it.
-                # Re-triggers hover menus that were lost when the other
-                # job moved the mouse to its own Chrome window.
-                if last_click_screen_bbox is not None:
-                    if _restore_cursor(last_click_screen_bbox, session):
-                        log.debug('Job %s: cursor restored to last click bbox',
-                                  job_id)
+                # -------------------------------------------------------
+                # Phase 1 [lock]: Execute pending action from previous
+                # iteration. Restore cursor first so hover menus survive.
+                # -------------------------------------------------------
+                if pending_action is not None:
+                    pa_type = pending_action['type']
+                    if pa_type != 'wait':
+                        with gui_lock:
+                            if last_click_screen_bbox is not None:
+                                if _restore_cursor(last_click_screen_bbox, session):
+                                    time.sleep(0.2)
+                            focus_window_by_pid(session.pid)
 
-                # Settle delay: no GUI, runs in parallel
-                time.sleep(self.settle_delay)
+                            if pa_type == 'click':
+                                _click_bbox(
+                                    pending_action['bbox'], session,
+                                    chrome_offset=pending_action['chrome_offset'],
+                                )
+                                last_click_screen_bbox = _bbox_to_screen(
+                                    pending_action['bbox'], session,
+                                    chrome_offset=pending_action['chrome_offset'],
+                                )
+                            elif pa_type == 'type_text':
+                                _enter_credential(pending_action['text'])
+                            elif pa_type in ('scroll_down', 'scroll_up'):
+                                scroll_mod.scroll(
+                                    pending_action['direction'],
+                                    pending_action['scroll_clicks'],
+                                )
+                                last_click_screen_bbox = None
+                            elif pa_type == 'press_key':
+                                keyboard.press_key(pending_action['key'])
 
-                # Screenshot: no GUI (screencapture -l uses window server buffer)
-                browser.get_session_window(session)
-                raw_b64 = ss.capture_to_base64(session.window_id)
+                        step_count += 1
+
+                        # Auto-type after click (separate lock acquisition)
+                        if pa_type == 'click' and pending_action.get('auto_value'):
+                            time.sleep(0.3)
+                            with gui_lock:
+                                focus_window_by_pid(session.pid)
+                                keyboard.hotkey('command', 'a')
+                                time.sleep(0.1)
+                                _enter_credential(pending_action['auto_value'])
+                            step_count += 1
+
+                        # Phase 2 [no lock]: Settle delay
+                        time.sleep(self.settle_delay)
+
+                    pending_action = None
+
+                # -------------------------------------------------------
+                # Phase 3 [lock]: Restore cursor + take screenshot.
+                # Grouping these under one lock acquisition prevents
+                # another job from displacing the cursor between restore
+                # and capture.
+                # -------------------------------------------------------
+                with gui_lock:
+                    if last_click_screen_bbox is not None:
+                        if _restore_cursor(last_click_screen_bbox, session):
+                            log.debug('Job %s: cursor restored before screenshot',
+                                      job_id)
+                            time.sleep(0.3)
+                    browser.get_session_window(session)
+                    raw_b64 = ss.capture_to_base64(session.window_id)
+
                 screenshot_b64, chrome_height_px = crop_browser_chrome(raw_b64)
 
-                # VLM inference: no GUI, runs in parallel
+                # -------------------------------------------------------
+                # Phase 4 [no lock]: VLM inference
+                # -------------------------------------------------------
                 current_prompt = prompts[prompt_idx]
                 current_label = labels[prompt_idx]
 
@@ -402,6 +466,11 @@ class VLMExecutor:
 
                 trace.save_step(iteration, screenshot_b64, response,
                                 phase=current_label)
+
+                # -------------------------------------------------------
+                # Phase 5 [no lock]: Parse result, resolve credentials,
+                # build pending_action for next iteration.
+                # -------------------------------------------------------
 
                 # --- Sign-in phase ---
                 if current_label == 'sign-in':
@@ -541,20 +610,12 @@ class VLMExecutor:
                         error_message=error_message,
                     )
 
-                # Execute action (GUI actions acquire the lock)
+                # Build pending_action (credentials resolved NOW, outside lock)
                 if vlm_action == 'click' and bbox:
                     scaled_bbox = [int(c * scale_factor) for c in bbox]
-                    with gui_lock:
-                        focus_window_by_pid(session.pid)
-                        _click_bbox(scaled_bbox, session, chrome_offset=chrome_height_px)
-                    last_click_screen_bbox = _bbox_to_screen(
-                        scaled_bbox, session, chrome_offset=chrome_height_px)
-                    step_count += 1
-
-                    # Auto-type after clicking input fields
+                    auto_value = None
                     auto_hint = _infer_credential_from_target(target_desc)
                     if auto_hint:
-                        time.sleep(0.3)
                         template, actual_value, _ = _resolve_credential(
                             auto_hint, credentials,
                         )
@@ -564,13 +625,13 @@ class VLMExecutor:
                             if value:
                                 credentials[cred_key] = value
                                 actual_value = value
-                        if actual_value:
-                            with gui_lock:
-                                focus_window_by_pid(session.pid)
-                                keyboard.hotkey('command', 'a')
-                                time.sleep(0.1)
-                                _enter_credential(actual_value)
-                        step_count += 1
+                        auto_value = actual_value or None
+                    pending_action = {
+                        'type': 'click',
+                        'bbox': scaled_bbox,
+                        'chrome_offset': chrome_height_px,
+                        'auto_value': auto_value,
+                    }
 
                 elif vlm_action == 'type_text':
                     template, actual_value, _ = _resolve_credential(
@@ -583,33 +644,36 @@ class VLMExecutor:
                             credentials[cred_key] = value
                             actual_value = value
                     if actual_value:
-                        with gui_lock:
-                            focus_window_by_pid(session.pid)
-                            _enter_credential(actual_value)
-                    step_count += 1
+                        pending_action = {
+                            'type': 'type_text',
+                            'text': actual_value,
+                        }
+                    else:
+                        pending_action = {'type': 'wait'}
 
                 elif vlm_action in ('scroll_down', 'scroll_up'):
                     direction = 'down' if vlm_action == 'scroll_down' else 'up'
                     px_per_click = 30
                     window_h = session.bounds.get('height', 900)
                     scroll_clicks = max(5, int(window_h * 0.75 / px_per_click))
-                    with gui_lock:
-                        focus_window_by_pid(session.pid)
-                        scroll_mod.scroll(direction, scroll_clicks)
-                    last_click_screen_bbox = None  # page shifted, bbox invalid
-                    step_count += 1
+                    pending_action = {
+                        'type': vlm_action,
+                        'direction': direction,
+                        'scroll_clicks': scroll_clicks,
+                    }
 
                 elif vlm_action == 'press_key' and key_to_press:
-                    with gui_lock:
-                        focus_window_by_pid(session.pid)
-                        keyboard.press_key(key_to_press)
-                    step_count += 1
+                    pending_action = {
+                        'type': 'press_key',
+                        'key': key_to_press,
+                    }
 
                 elif vlm_action == 'wait':
-                    pass  # just loop and take another screenshot
+                    pending_action = {'type': 'wait'}
 
                 else:
                     log.warning('Job %s: unknown VLM action: %s', job_id, vlm_action)
+                    pending_action = {'type': 'wait'}
 
             else:
                 # Max steps reached

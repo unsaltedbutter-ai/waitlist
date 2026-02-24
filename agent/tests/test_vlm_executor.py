@@ -925,12 +925,17 @@ class TestCursorRestore:
         assert len(move_calls) == 0
 
     def test_restore_moves_when_outside(self, monkeypatch):
-        """Cursor outside bbox triggers a fast move into the safe area."""
+        """Cursor outside bbox triggers a fast move into the safe area.
+
+        _restore_cursor requires the caller to hold gui_lock.
+        """
         monkeypatch.setattr('agent.vlm_executor.mouse.position', lambda: (500, 500))
         move_calls = []
         monkeypatch.setattr('agent.vlm_executor.mouse.move_to',
                             lambda x, y, fast=False: move_calls.append((x, y, fast)))
-        assert _restore_cursor((100, 200, 300, 250), _make_session())
+        from agent.gui_lock import gui_lock
+        with gui_lock:
+            assert _restore_cursor((100, 200, 300, 250), _make_session())
         assert len(move_calls) == 1
         x, y, fast = move_calls[0]
         # With random.gauss patched to return mu, lands at center of safe area
@@ -974,13 +979,15 @@ class TestCursorRestore:
             'confidence': 0.8,
             'reasoning': 'scrolling',
         }
-        # click saves bbox -> restore fires before scroll -> scroll clears bbox -> done (no restore)
+        # click saves bbox -> restore fires in screenshot phase (after click) AND
+        # in execution phase (before scroll) -> scroll clears bbox -> done (no restore)
         vlm = _make_vlm([SIGNED_IN, CANCEL_CLICK, scroll_action, CANCEL_DONE])
         executor = VLMExecutor(vlm, settle_delay=0)
         result = executor.run('netflix', 'cancel', {'email': 'a', 'pass': 'b'})
         assert result.success
-        # Only 1 restore (before scroll). No restore before done (scroll cleared bbox).
-        assert len(restore_moves) == 1
+        # 2 restores: once before screenshot (after click), once before scroll execution.
+        # No restore before done (scroll cleared bbox).
+        assert len(restore_moves) == 2
 
     def test_no_restore_during_signin_phase(self, monkeypatch):
         """Cursor restore only fires in cancel/resume phase, not sign-in."""
