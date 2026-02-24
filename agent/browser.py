@@ -124,6 +124,13 @@ def create_session(width: int = 1280, height: int = 900) -> BrowserSession:
         window.resize_window_by_drag('Google Chrome', width, height, fast=True)
         time.sleep(0.2)
 
+        # Zoom out to 80% so more content (including Cancel buttons)
+        # is visible above the fold. Cmd+minus twice = 80%.
+        keyboard.hotkey('command', '-')
+        time.sleep(0.05)
+        keyboard.hotkey('command', '-')
+        time.sleep(0.1)
+
         # Park cursor at a random spot inside the window so every session
         # doesn't start from the lower-left resize corner.
         rx = session.bounds['x'] + random.randint(200, max(width - 200, 300))

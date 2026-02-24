@@ -354,9 +354,6 @@ class VLMExecutor:
 
             # Navigate to login page (navigate handles its own gui_lock internally)
             browser.navigate(session, start_url, fast=True)
-            # Zoom after navigation so Chrome applies it to the real origin
-            # (about:blank zoom gets reset on navigate).
-            browser.zoom_out(session, steps=1)  # 100% -> 90%
             step_count += 1
 
             # Build prompt chain
