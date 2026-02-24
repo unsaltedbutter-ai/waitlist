@@ -138,6 +138,12 @@ export default function DashboardPage() {
               logout={logout}
               setError={setError}
             />
+
+            <p className="text-center text-xs text-muted pt-4">
+              <a href="/faq" className="hover:text-foreground transition-colors">
+                FAQ
+              </a>
+            </p>
           </>
         )}
       </div>

@@ -19,7 +19,7 @@ export default function FaqPage() {
 
         <div className="text-center mt-10">
           <Link
-            href="/"
+            href="/dashboard"
             className="text-sm text-muted hover:text-foreground transition-colors"
           >
             &larr; Back

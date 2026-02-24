@@ -1,7 +1,6 @@
 "use client";
 
 import { useState } from "react";
-import Link from "next/link";
 
 const BOT_NPUB = process.env.NEXT_PUBLIC_NOSTR_BOT_NPUB ?? "";
 const BOT_NAME = process.env.NEXT_PUBLIC_NOSTR_BOT_NAME ?? "UnsaltedButter Bot";
@@ -119,14 +118,6 @@ export default function WaitlistPage() {
         {/* Footer */}
         <div className="text-center text-xs mt-12 space-y-2">
           <p className="text-muted/60">Invite only. Bitcoin only.</p>
-          <p>
-            <Link
-              href="/faq"
-              className="text-muted hover:text-foreground transition-colors"
-            >
-              FAQ
-            </Link>
-          </p>
           {BOT_NPUB && (
             <p className="text-muted">
               {BOT_NAME}:{" "}
