@@ -12,17 +12,47 @@
   {
     "id": "which-services",
     "question": "Which streaming services are supported?",
-    "answer": "Netflix, Apple TV+, Hulu, Disney+, Paramount+, Peacock, and Max."
+    "answer": "Netflix, Disney+, Paramount+, Peacock, and Max."
+  },
+  {
+    "id": "why-no-apple",
+    "question": "Why don't you support Apple TV+?",
+    "answer": "We figure your Apple TV+ account is combined with your iCloud account. We don't want your Apple ID credentials."
+  },
+  {
+    "id": "why-no-prime",
+    "question": "Why don't you support Amazon Prime Video?",
+    "answer": "We figure your Prime Video account is combined with your Amazon Prime Shipping account. We don't want your Amazon credentials."
+  },
+  {
+    "id": "why-no-email",
+    "question": "Why don't you support accounts with email?",
+    "answer": "Nostr only is a great normie filter."
   },
   {
     "id": "how-pay",
     "question": "How do I pay?",
-    "answer": "Bitcoin only, via Lightning Network. After a cancel or resume completes, you receive a Lightning invoice. No fiat, no credit cards."
+    "answer": "Lightning. We're Bitcoin only. After a cancel or resume completes, you receive a Lightning invoice via nostr DM."
+  },
+  {
+    "id": "when-pay",
+    "question": "When do I pay?",
+    "answer": "After we succeed in cancelling/resuming your subscription, we'll send you a nostr DM with a Lightning invoice."
+  },
+  {
+    "id": "what-if-fail",
+    "question": "What happens if a cancel or resume fails?",
+    "answer": "You get a DM explaining what happened. If we fail, no charge to you."
+  },
+  {
+    "id": "why-no-fiat",
+    "question": "Why don't you take credit cards?",
+    "answer": "Bitcoin only."
   },
   {
     "id": "how-communicate",
     "question": "How do I talk to the bot?",
-    "answer": "Everything happens over Nostr DMs. Send a message to the UnsaltedButter bot from any Nostr client. No app to install, no account to create beyond your Nostr identity."
+    "answer": "Everything happens over Nostr DMs. Send a message to the UnsaltedButter bot from any Nostr client. No new app to install, no new account to create. Just Nostr."
   },
   {
     "id": "credentials-safe",
@@ -30,14 +60,9 @@
     "answer": "Credentials are encrypted with AES-256-GCM before storage. The encryption key lives on a separate machine from the database, never in environment variables or source code. A fresh browser profile is created for each action and destroyed immediately after."
   },
   {
-    "id": "what-if-fail",
-    "question": "What happens if a cancel or resume fails?",
-    "answer": "You get a DM immediately explaining what happened. You are never charged for failed actions. If a resume fails, the system retries automatically before alerting you."
-  },
-  {
     "id": "how-join",
     "question": "How do I join?",
-    "answer": "Submit your Nostr npub on the waitlist, or DM \"waitlist\" to the bot. We invite people in order. There is a hard cap of 5,000 users."
+    "answer": "Submit your Nostr npub on the waitlist, or DM \"waitlist\" to the bot. We invite people in order."
   },
   {
     "id": "billing-dates",
@@ -46,7 +71,7 @@
   },
   {
     "id": "delete-account",
-    "question": "What happens if I delete my account?",
+    "question": "What happens if I delete my UnsaltedButter account?",
     "answer": "All your data is permanently destroyed, including stored credentials. Nothing is soft-deleted. Once it is gone, it is gone."
   }
 ]
