@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import os
+import random
 import shutil
 import signal
 import subprocess
@@ -23,7 +24,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from agent.gui_lock import gui_lock
-from agent.input import keyboard, window
+from agent.input import keyboard, mouse, window
 
 CHROME_PATH = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
 
@@ -129,6 +130,12 @@ def create_session(width: int = 1280, height: int = 900) -> BrowserSession:
         time.sleep(0.05)
         keyboard.hotkey('command', '-')
         time.sleep(0.1)
+
+        # Park cursor at a random spot inside the window so every session
+        # doesn't start from the lower-left resize corner.
+        rx = session.bounds['x'] + random.randint(200, max(width - 200, 300))
+        ry = session.bounds['y'] + random.randint(150, max(height - 200, 250))
+        mouse.move_to(rx, ry, fast=True)
 
     # Refresh bounds after resize
     get_session_window(session)
