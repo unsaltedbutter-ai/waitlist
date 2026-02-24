@@ -892,3 +892,184 @@ class TestExecutionResultStructure:
         result = executor.run('netflix', 'cancel', {'email': 'a', 'pass': 'b'},
                               job_id='job-42')
         assert result.job_id == 'job-42'
+
+
+# ---------------------------------------------------------------------------
+# GUI lock serialization tests
+# ---------------------------------------------------------------------------
+
+import threading
+import time as _time
+
+from agent import gui_lock as _gl_mod
+
+
+class TestGUILockSerialization:
+    """Verify that concurrent executors serialize GUI actions via gui_lock."""
+
+    def test_gui_actions_acquire_lock(self, monkeypatch):
+        """GUI actions (click, type, scroll) should acquire gui_lock.
+
+        We verify by checking that focus_window_by_pid is called before
+        each GUI action sequence during the cancel phase.
+        """
+        focus_calls = []
+
+        def tracking_focus(pid):
+            focus_calls.append(('focus', pid))
+
+        monkeypatch.setattr('agent.vlm_executor.focus_window_by_pid', tracking_focus)
+
+        vlm = _make_vlm([SIGNED_IN, CANCEL_CLICK, CANCEL_DONE])
+        executor = VLMExecutor(vlm, settle_delay=0)
+        result = executor.run('netflix', 'cancel', {'email': 'a', 'pass': 'b'},
+                              job_id='job-focus')
+        assert result.success
+        # focus_window_by_pid called at least once for the click action
+        assert len(focus_calls) >= 1
+        assert focus_calls[0][1] == 12345  # mock session PID
+
+    def test_two_executors_serialize_gui(self, monkeypatch):
+        """Two executors in threads: GUI actions never overlap.
+
+        We track lock acquire/release times and verify no overlap.
+        """
+        gui_events = []
+
+        class TrackingLock:
+            def __init__(self):
+                self._lock = threading.Lock()
+
+            def __enter__(self):
+                self._lock.acquire()
+                gui_events.append(('acquire', _time.monotonic()))
+                return self
+
+            def __exit__(self, *args):
+                gui_events.append(('release', _time.monotonic()))
+                self._lock.release()
+
+        tracking = TrackingLock()
+        monkeypatch.setattr('agent.vlm_executor.gui_lock', tracking)
+
+        def run_job(job_id):
+            vlm = _make_vlm([SIGNED_IN, CANCEL_CLICK, CANCEL_DONE])
+            executor = VLMExecutor(vlm, settle_delay=0)
+            return executor.run('netflix', 'cancel',
+                               {'email': 'a', 'pass': 'b'},
+                               job_id=job_id)
+
+        results = [None, None]
+        threads = []
+        for i in range(2):
+            t = threading.Thread(
+                target=lambda idx=i: results.__setitem__(
+                    idx, run_job(f'job-{idx}')
+                ),
+            )
+            threads.append(t)
+
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=10)
+
+        assert results[0] is not None and results[0].success
+        assert results[1] is not None and results[1].success
+
+        # Verify no overlapping lock holds
+        held = 0
+        for event_type, ts in gui_events:
+            if event_type == 'acquire':
+                held += 1
+                assert held <= 1, f'Lock held by {held} threads simultaneously'
+            elif event_type == 'release':
+                held -= 1
+                assert held >= 0
+
+    def test_otp_wait_does_not_hold_gui_lock(self):
+        """OTP wait blocks on future.result(), NOT inside gui_lock.
+
+        Verify that another thread can acquire gui_lock while one
+        executor is waiting for OTP.
+        """
+        otp_waiting = threading.Event()
+        otp_code = threading.Event()
+        lock_acquired_during_otp = threading.Event()
+
+        loop = asyncio.new_event_loop()
+
+        async def slow_otp_callback(job_id, service, prompt=None):
+            otp_waiting.set()
+            otp_code.wait(timeout=5)
+            return '999999'
+
+        def try_lock_during_otp():
+            otp_waiting.wait(timeout=5)
+            # gui_lock should be free (OTP wait doesn't hold it)
+            acquired = _gl_mod.gui_lock.acquire(timeout=2)
+            if acquired:
+                lock_acquired_during_otp.set()
+                _gl_mod.gui_lock.release()
+
+        vlm = _make_vlm([EMAIL_CODE_PAGE, SIGNED_IN, CANCEL_DONE])
+        executor = VLMExecutor(
+            vlm, settle_delay=0,
+            otp_callback=slow_otp_callback,
+            loop=loop,
+        )
+
+        loop_thread = threading.Thread(target=loop.run_forever, daemon=True)
+        loop_thread.start()
+
+        lock_thread = threading.Thread(target=try_lock_during_otp, daemon=True)
+        lock_thread.start()
+
+        try:
+            def run_executor():
+                return executor.run('netflix', 'cancel',
+                                   {'email': 'a', 'pass': 'b'},
+                                   job_id='job-otp')
+
+            exec_thread = threading.Thread(target=run_executor, daemon=True)
+            exec_thread.start()
+
+            assert otp_waiting.wait(timeout=5), 'Executor never reached OTP wait'
+
+            _time.sleep(0.1)
+            otp_code.set()
+
+            exec_thread.join(timeout=10)
+            lock_thread.join(timeout=5)
+
+            assert lock_acquired_during_otp.is_set(), \
+                'gui_lock was NOT acquirable during OTP wait (held by executor)'
+        finally:
+            loop.call_soon_threadsafe(loop.stop)
+            loop_thread.join(timeout=2)
+            loop.close()
+
+    def test_signin_page_types_acquire_lock(self, monkeypatch):
+        """Sign-in page types (user_pass, user_only, etc.) acquire gui_lock."""
+        lock_acquired = []
+
+        class CountingLock:
+            def __init__(self):
+                self._lock = threading.Lock()
+
+            def __enter__(self):
+                self._lock.acquire()
+                lock_acquired.append(True)
+                return self
+
+            def __exit__(self, *args):
+                self._lock.release()
+
+        counting = CountingLock()
+        monkeypatch.setattr('agent.vlm_executor.gui_lock', counting)
+
+        vlm = _make_vlm([USER_PASS_PAGE, SIGNED_IN, CANCEL_DONE])
+        executor = VLMExecutor(vlm, settle_delay=0)
+        result = executor.run('netflix', 'cancel', {'email': 'a@b.com', 'pass': 'x'})
+        assert result.success
+        assert len(lock_acquired) >= 1

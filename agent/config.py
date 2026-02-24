@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 
 AGENT_PORT = int(os.getenv('AGENT_PORT', '8421'))
+MAX_CONCURRENT_AGENT_JOBS = int(os.getenv('MAX_CONCURRENT_AGENT_JOBS', '3'))
 
 # --- VLM (production executor) ---
 VLM_URL = os.getenv('VLM_URL', '')

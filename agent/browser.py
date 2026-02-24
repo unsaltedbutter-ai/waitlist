@@ -4,6 +4,10 @@ Browser lifecycle management.
 Launch Chrome with fresh temp profiles, manage the process,
 navigate, and tear down after. No headless, no webdriver,
 no automation flags.
+
+GUI-touching operations (focus, resize, keyboard/clipboard) are
+serialized via gui_lock so multiple concurrent jobs don't
+interleave physical input.
 """
 
 from __future__ import annotations
@@ -18,6 +22,7 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from agent.gui_lock import gui_lock
 from agent.input import keyboard, window
 
 CHROME_PATH = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
@@ -72,6 +77,9 @@ def create_session(width: int = 1280, height: int = 900) -> BrowserSession:
 
     Creates a disposable profile dir, launches Chrome to about:blank,
     waits for the window to appear, resizes it, and returns the session.
+
+    The focus + resize portion acquires the GUI lock to avoid interleaving
+    with other concurrent jobs' GUI actions.
     """
     profile_dir = tempfile.mkdtemp(prefix='ub-chrome-')
     _write_chrome_prefs(profile_dir)
@@ -104,11 +112,12 @@ def create_session(width: int = 1280, height: int = 900) -> BrowserSession:
         },
     )
 
-    # Focus and resize to requested dimensions (fast: no human-like timing)
-    window.focus_window_by_pid(process.pid)
-    time.sleep(0.05)
-    window.resize_window_by_drag('Google Chrome', width, height, fast=True)
-    time.sleep(0.2)
+    # Focus and resize: needs the GUI lock (mouse drag for resize)
+    with gui_lock:
+        window.focus_window_by_pid(process.pid)
+        time.sleep(0.05)
+        window.resize_window_by_drag('Google Chrome', width, height, fast=True)
+        time.sleep(0.2)
 
     # Refresh bounds after resize
     get_session_window(session)
@@ -153,28 +162,29 @@ def navigate(session: BrowserSession, url: str, fast: bool = False) -> None:
     """
     Navigate Chrome to a URL using keyboard shortcuts.
 
-    Focuses the specific Chrome instance by PID, Cmd+L to address bar,
-    Cmd+A to select all, types the URL, presses Enter, waits for initial load.
+    The keyboard/clipboard portion (Cmd+L, paste URL, Enter) acquires
+    the GUI lock. The page load wait runs outside the lock.
 
     fast: minimal timing (for initial navigation before human behavior matters)
     """
-    window.focus_window_by_pid(session.pid)
-    time.sleep(0.05 if fast else 0.3)
+    with gui_lock:
+        window.focus_window_by_pid(session.pid)
+        time.sleep(0.05 if fast else 0.3)
 
-    keyboard.hotkey('command', 'l')
-    time.sleep(0.05 if fast else 0.2)
+        keyboard.hotkey('command', 'l')
+        time.sleep(0.05 if fast else 0.2)
 
-    keyboard.hotkey('command', 'a')
-    time.sleep(0.03 if fast else 0.1)
+        keyboard.hotkey('command', 'a')
+        time.sleep(0.03 if fast else 0.1)
 
-    # Paste URL from clipboard (no reason to type navigation URLs)
-    subprocess.run(['pbcopy'], input=url.encode(), check=True)
-    keyboard.hotkey('command', 'v')
-    time.sleep(0.03 if fast else 0.1)
+        # Paste URL from clipboard (no reason to type navigation URLs)
+        subprocess.run(['pbcopy'], input=url.encode(), check=True)
+        keyboard.hotkey('command', 'v')
+        time.sleep(0.03 if fast else 0.1)
 
-    keyboard.press_key('enter')
+        keyboard.press_key('enter')
 
-    # Wait for page to start loading
+    # Wait for page to start loading (outside lock: no GUI needed)
     time.sleep(2.0 if fast else 2.5)
 
 

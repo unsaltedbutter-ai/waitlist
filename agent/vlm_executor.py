@@ -6,6 +6,11 @@ Two-phase prompt chain: sign-in, then cancel/resume.
 The VLM classifies each screenshot and returns one action. For sign-in pages,
 the VLM classifies the page type and the executor dispatches multi-step
 sequences locally (click, type, tab, enter) without additional VLM calls.
+
+GUI actions (click, type, paste, scroll) are serialized via gui_lock so
+multiple concurrent jobs don't interleave physical input. Everything else
+(settle delay, screenshot capture, VLM inference, OTP waits) runs in
+parallel across jobs.
 """
 
 from __future__ import annotations
@@ -22,6 +27,7 @@ from agent import browser
 from agent import screenshot as ss
 from agent.config import SERVICE_URLS
 from agent.debug_trace import DebugTrace
+from agent.gui_lock import gui_lock
 from agent.input import coords, keyboard, mouse, scroll as scroll_mod
 from agent.input.window import focus_window_by_pid
 from agent.playbook import ExecutionResult
@@ -123,7 +129,10 @@ def _clipboard_copy(text: str) -> None:
 
 
 def _enter_credential(value: str) -> bool:
-    """Type or paste a credential value. Returns True if paste was used."""
+    """Type or paste a credential value. Returns True if paste was used.
+
+    MUST be called while holding gui_lock.
+    """
     if random.random() < 0.4:
         _clipboard_copy(value)
         keyboard.hotkey('command', 'v')
@@ -135,7 +144,10 @@ def _enter_credential(value: str) -> bool:
 
 
 def _simulate_app_switch(session) -> None:
-    """Move mouse toward the dock and defocus Chrome."""
+    """Move mouse toward the dock and defocus Chrome.
+
+    MUST be called while holding gui_lock.
+    """
     from agent.input.window import focus_window
     bounds = session.bounds
     dock_x = bounds.get('x', 0) + bounds.get('width', 1280) // 2
@@ -171,7 +183,10 @@ def _infer_credential_from_target(target_desc: str) -> str | None:
 
 
 def _click_bbox(bbox, session, chrome_offset: int = 0) -> None:
-    """Click inside a bbox with inset and center-biased Gaussian randomization."""
+    """Click inside a bbox with inset and center-biased Gaussian randomization.
+
+    MUST be called while holding gui_lock.
+    """
     bw = bbox[2] - bbox[0]
     bh = bbox[3] - bbox[1]
     inset_x = bw * 0.10
@@ -275,11 +290,11 @@ class VLMExecutor:
         trace = DebugTrace(job_id, enabled=self._debug and bool(job_id))
 
         try:
-            # Launch Chrome
+            # Launch Chrome (create_session handles its own gui_lock internally)
             session = browser.create_session()
             log.info('Chrome launched (PID %d) for job %s', session.pid, job_id)
 
-            # Navigate to login page
+            # Navigate to login page (navigate handles its own gui_lock internally)
             browser.navigate(session, start_url, fast=True)
             step_count += 1
 
@@ -309,14 +324,15 @@ class VLMExecutor:
             stuck = _StuckDetector()
 
             for iteration in range(self.max_steps):
+                # Settle delay: no GUI, runs in parallel
                 time.sleep(self.settle_delay)
 
-                # Capture and crop browser chrome
+                # Screenshot: no GUI (screencapture -l uses window server buffer)
                 browser.get_session_window(session)
                 raw_b64 = ss.capture_to_base64(session.window_id)
                 screenshot_b64, chrome_height_px = crop_browser_chrome(raw_b64)
 
-                # Ask VLM
+                # VLM inference: no GUI, runs in parallel
                 current_prompt = prompts[prompt_idx]
                 current_label = labels[prompt_idx]
 
@@ -456,18 +472,18 @@ class VLMExecutor:
                         error_message=error_message,
                     )
 
-                # Execute action
+                # Execute action (GUI actions acquire the lock)
                 if vlm_action == 'click' and bbox:
                     scaled_bbox = [int(c * scale_factor) for c in bbox]
-                    _click_bbox(scaled_bbox, session, chrome_offset=chrome_height_px)
+                    with gui_lock:
+                        focus_window_by_pid(session.pid)
+                        _click_bbox(scaled_bbox, session, chrome_offset=chrome_height_px)
                     step_count += 1
 
                     # Auto-type after clicking input fields
                     auto_hint = _infer_credential_from_target(target_desc)
                     if auto_hint:
                         time.sleep(0.3)
-                        keyboard.hotkey('command', 'a')
-                        time.sleep(0.1)
                         template, actual_value, _ = _resolve_credential(
                             auto_hint, credentials,
                         )
@@ -478,7 +494,11 @@ class VLMExecutor:
                                 credentials[cred_key] = value
                                 actual_value = value
                         if actual_value:
-                            _enter_credential(actual_value)
+                            with gui_lock:
+                                focus_window_by_pid(session.pid)
+                                keyboard.hotkey('command', 'a')
+                                time.sleep(0.1)
+                                _enter_credential(actual_value)
                         step_count += 1
 
                 elif vlm_action == 'type_text':
@@ -492,7 +512,9 @@ class VLMExecutor:
                             credentials[cred_key] = value
                             actual_value = value
                     if actual_value:
-                        _enter_credential(actual_value)
+                        with gui_lock:
+                            focus_window_by_pid(session.pid)
+                            _enter_credential(actual_value)
                     step_count += 1
 
                 elif vlm_action in ('scroll_down', 'scroll_up'):
@@ -500,11 +522,15 @@ class VLMExecutor:
                     px_per_click = 30
                     window_h = session.bounds.get('height', 900)
                     scroll_clicks = max(5, int(window_h * 0.75 / px_per_click))
-                    scroll_mod.scroll(direction, scroll_clicks)
+                    with gui_lock:
+                        focus_window_by_pid(session.pid)
+                        scroll_mod.scroll(direction, scroll_clicks)
                     step_count += 1
 
                 elif vlm_action == 'press_key' and key_to_press:
-                    keyboard.press_key(key_to_press)
+                    with gui_lock:
+                        focus_window_by_pid(session.pid)
+                        keyboard.press_key(key_to_press)
                     step_count += 1
 
                 elif vlm_action == 'wait':
@@ -573,6 +599,10 @@ class VLMExecutor:
         """Handle a sign-in page classification response.
 
         Returns: 'continue', 'done', 'need_human', or 'captcha'.
+
+        GUI actions within each page type are wrapped in gui_lock.
+        OTP requests happen OUTSIDE the lock so the lock is free for
+        other concurrent jobs during the (potentially minutes-long) wait.
         """
 
         def scale(box):
@@ -611,30 +641,32 @@ class VLMExecutor:
         if page_type == 'email_link':
             return 'need_human'
 
-        # Code entry: request OTP via callback
+        # Code entry: request OTP OUTSIDE gui_lock, then enter code inside lock
         if page_type in ('email_code_single', 'email_code_multi',
                          'phone_code_single', 'phone_code_multi'):
+            # OTP wait: no GUI lock held (other jobs can use GUI freely)
             code = self._request_otp(job_id, credentials.get('email', ''))
             if not code:
                 return 'need_human'
 
-            # Focus Chrome and paste code
-            focus_window_by_pid(session.pid)
-            _clipboard_copy(code)
+            # Enter OTP code: acquire lock, focus, paste, submit
+            with gui_lock:
+                focus_window_by_pid(session.pid)
+                _clipboard_copy(code)
 
-            if code_boxes:
-                box = code_boxes[0]['box']
-                _click_bbox(box, session, chrome_offset=chrome_offset)
-                time.sleep(0.5)
-            keyboard.hotkey('command', 'v')
-            time.sleep(0.3)
-
-            if button_box:
+                if code_boxes:
+                    box = code_boxes[0]['box']
+                    _click_bbox(box, session, chrome_offset=chrome_offset)
+                    time.sleep(0.5)
+                keyboard.hotkey('command', 'v')
                 time.sleep(0.3)
-                _click_bbox(button_box, session, chrome_offset=chrome_offset)
-            else:
-                time.sleep(0.2)
-                keyboard.press_key('enter')
+
+                if button_box:
+                    time.sleep(0.3)
+                    _click_bbox(button_box, session, chrome_offset=chrome_offset)
+                else:
+                    time.sleep(0.2)
+                    keyboard.press_key('enter')
             return 'continue'
 
         # Unknown state with recovery actions
@@ -642,90 +674,102 @@ class VLMExecutor:
             actions = response.get('actions') or []
             if not actions:
                 return 'need_human'
-            for act in actions:
-                act_type = act.get('action', '')
-                box = scale(act.get('box'))
-                if act_type in ('click', 'dismiss') and box:
-                    _click_bbox(box, session, chrome_offset=chrome_offset)
-                    time.sleep(0.5)
+            with gui_lock:
+                focus_window_by_pid(session.pid)
+                for act in actions:
+                    act_type = act.get('action', '')
+                    box = scale(act.get('box'))
+                    if act_type in ('click', 'dismiss') and box:
+                        _click_bbox(box, session, chrome_offset=chrome_offset)
+                        time.sleep(0.5)
             return 'continue'
 
         if page_type == 'profile_select' and profile_box:
-            _click_bbox(profile_box, session, chrome_offset=chrome_offset)
+            with gui_lock:
+                focus_window_by_pid(session.pid)
+                _click_bbox(profile_box, session, chrome_offset=chrome_offset)
             return 'continue'
 
         if page_type == 'button_only' and button_box:
-            _click_bbox(button_box, session, chrome_offset=chrome_offset)
+            with gui_lock:
+                focus_window_by_pid(session.pid)
+                _click_bbox(button_box, session, chrome_offset=chrome_offset)
             return 'continue'
 
         if page_type == 'user_pass' and email_box:
-            # Click email, select-all, type, tab/paste password, enter
-            _click_bbox(email_box, session, chrome_offset=chrome_offset)
-            time.sleep(0.3)
-            keyboard.hotkey('command', 'a')
-            time.sleep(0.1)
-            email_val = credentials.get('email', '')
-            email_pasted = False
-            if email_val:
-                email_pasted = _enter_credential(email_val)
-
-            if email_pasted:
-                # Simulate password manager: app switch, wait, refocus
-                time.sleep(random.uniform(0.3, 0.6))
-                _simulate_app_switch(session)
-                time.sleep(random.uniform(2.0, 4.0))
+            with gui_lock:
                 focus_window_by_pid(session.pid)
-                _click_bbox(
-                    password_box or email_box, session,
-                    chrome_offset=chrome_offset,
-                )
-                time.sleep(0.2)
+                # Click email, select-all, type, tab/paste password, enter
+                _click_bbox(email_box, session, chrome_offset=chrome_offset)
+                time.sleep(0.3)
                 keyboard.hotkey('command', 'a')
                 time.sleep(0.1)
-                pass_val = credentials.get('pass', '')
-                if pass_val:
-                    _clipboard_copy(pass_val)
-                    keyboard.hotkey('command', 'v')
-                    time.sleep(0.15)
-            else:
+                email_val = credentials.get('email', '')
+                email_pasted = False
+                if email_val:
+                    email_pasted = _enter_credential(email_val)
+
+                if email_pasted:
+                    # Simulate password manager: app switch, wait, refocus
+                    time.sleep(random.uniform(0.3, 0.6))
+                    _simulate_app_switch(session)
+                    time.sleep(random.uniform(2.0, 4.0))
+                    focus_window_by_pid(session.pid)
+                    _click_bbox(
+                        password_box or email_box, session,
+                        chrome_offset=chrome_offset,
+                    )
+                    time.sleep(0.2)
+                    keyboard.hotkey('command', 'a')
+                    time.sleep(0.1)
+                    pass_val = credentials.get('pass', '')
+                    if pass_val:
+                        _clipboard_copy(pass_val)
+                        keyboard.hotkey('command', 'v')
+                        time.sleep(0.15)
+                else:
+                    time.sleep(0.2)
+                    keyboard.press_key('tab')
+                    time.sleep(0.2)
+                    keyboard.hotkey('command', 'a')
+                    time.sleep(0.1)
+                    pass_val = credentials.get('pass', '')
+                    if pass_val:
+                        _enter_credential(pass_val)
+
                 time.sleep(0.2)
-                keyboard.press_key('tab')
+                keyboard.press_key('enter')
+                time.sleep(1.0)
+            return 'continue'
+
+        if page_type == 'user_only' and email_box:
+            with gui_lock:
+                focus_window_by_pid(session.pid)
+                _click_bbox(email_box, session, chrome_offset=chrome_offset)
+                time.sleep(0.3)
+                keyboard.hotkey('command', 'a')
+                time.sleep(0.1)
+                email_val = credentials.get('email', '')
+                if email_val:
+                    _enter_credential(email_val)
                 time.sleep(0.2)
+                keyboard.press_key('enter')
+                time.sleep(1.0)
+            return 'continue'
+
+        if page_type == 'pass_only' and password_box:
+            with gui_lock:
+                focus_window_by_pid(session.pid)
+                _click_bbox(password_box, session, chrome_offset=chrome_offset)
+                time.sleep(0.3)
                 keyboard.hotkey('command', 'a')
                 time.sleep(0.1)
                 pass_val = credentials.get('pass', '')
                 if pass_val:
                     _enter_credential(pass_val)
-
-            time.sleep(0.2)
-            keyboard.press_key('enter')
-            time.sleep(1.0)
-            return 'continue'
-
-        if page_type == 'user_only' and email_box:
-            _click_bbox(email_box, session, chrome_offset=chrome_offset)
-            time.sleep(0.3)
-            keyboard.hotkey('command', 'a')
-            time.sleep(0.1)
-            email_val = credentials.get('email', '')
-            if email_val:
-                _enter_credential(email_val)
-            time.sleep(0.2)
-            keyboard.press_key('enter')
-            time.sleep(1.0)
-            return 'continue'
-
-        if page_type == 'pass_only' and password_box:
-            _click_bbox(password_box, session, chrome_offset=chrome_offset)
-            time.sleep(0.3)
-            keyboard.hotkey('command', 'a')
-            time.sleep(0.1)
-            pass_val = credentials.get('pass', '')
-            if pass_val:
-                _enter_credential(pass_val)
-            time.sleep(0.2)
-            keyboard.press_key('enter')
-            time.sleep(1.0)
+                time.sleep(0.2)
+                keyboard.press_key('enter')
+                time.sleep(1.0)
             return 'continue'
 
         # Fallback
@@ -740,6 +784,8 @@ class VLMExecutor:
         """Request OTP code via the async callback.
 
         Bridges async server.request_otp from the synchronous executor thread.
+        This call blocks until the user provides the OTP (up to 15 min).
+        It does NOT hold gui_lock, so other jobs can use the GUI freely.
         """
         if self._otp_callback is None or self._loop is None:
             log.warning('OTP needed but no callback configured')
@@ -766,6 +812,7 @@ class VLMExecutor:
 
         Same bridge pattern as _request_otp: schedules the async callback
         on the event loop from the synchronous executor thread.
+        Does NOT hold gui_lock.
         """
         if self._credential_callback is None or self._loop is None:
             log.warning('Credential %s needed but no callback configured', credential_name)

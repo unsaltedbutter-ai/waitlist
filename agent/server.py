@@ -7,10 +7,13 @@ and reports results back to the orchestrator via HTTP callback.
 Endpoints (matches what orchestrator's AgentClient sends):
   POST /execute   - accept a cancel/resume job
   POST /otp       - relay an OTP code to a running job
+  POST /credential - relay a credential to a running job
   POST /abort     - cancel a running job
   GET  /health    - liveness check
 
-Single-threaded execution: one job at a time.
+Multi-job execution: up to MAX_CONCURRENT_AGENT_JOBS jobs run concurrently.
+GUI actions are serialized via gui_lock; everything else (VLM inference,
+screenshots, OTP waits) runs in true parallel across jobs.
 """
 
 from __future__ import annotations
@@ -28,7 +31,7 @@ import httpx
 from aiohttp import web
 from dotenv import load_dotenv
 
-from agent.config import AGENT_PORT
+from agent.config import AGENT_PORT, MAX_CONCURRENT_AGENT_JOBS
 from agent.playbook import ExecutionResult
 from agent.profile import NORMAL, PROFILES
 from agent.recording.vlm_client import VLMClient
@@ -79,17 +82,19 @@ class Agent:
         port: int = AGENT_PORT,
         orchestrator_url: str = "http://192.168.1.101:8422",
         profile_name: str = "normal",
+        max_jobs: int = MAX_CONCURRENT_AGENT_JOBS,
     ) -> None:
         self._host = host
         self._port = port
         self._orchestrator_url = orchestrator_url.rstrip("/")
         self._profile = PROFILES.get(profile_name, NORMAL)
+        self._max_jobs = max_jobs
 
         self._app = web.Application()
         self._runner: web.AppRunner | None = None
         self._http_client: httpx.AsyncClient | None = None
 
-        self._active_job: ActiveJob | None = None
+        self._active_jobs: dict[str, ActiveJob] = {}
         self._lock = asyncio.Lock()
         self._shutdown = asyncio.Event()
         self._loop: asyncio.AbstractEventLoop | None = None
@@ -134,28 +139,29 @@ class Agent:
         await self._runner.setup()
         site = web.TCPSite(self._runner, self._host, self._port)
         await site.start()
-        log.info("Agent listening on %s:%d", self._host, self._port)
+        log.info(
+            "Agent listening on %s:%d (max_jobs=%d)",
+            self._host, self._port, self._max_jobs,
+        )
 
     async def stop(self) -> None:
-        """Graceful shutdown: wait for active job, then clean up."""
+        """Graceful shutdown: wait for all active jobs, then clean up."""
         self._shutdown.set()
 
-        # Wait for active job to finish (with timeout)
-        if self._active_job and self._active_job.task:
-            log.info(
-                "Waiting for active job %s to complete...",
-                self._active_job.job_id,
-            )
-            try:
-                await asyncio.wait_for(self._active_job.task, timeout=30.0)
-            except asyncio.TimeoutError:
-                log.warning(
-                    "Active job %s did not finish in 30s, cancelling",
-                    self._active_job.job_id,
-                )
-                self._active_job.task.cancel()
+        # Wait for all active jobs to finish (with timeout)
+        tasks = [
+            aj.task for aj in self._active_jobs.values()
+            if aj.task and not aj.task.done()
+        ]
+        if tasks:
+            log.info("Waiting for %d active job(s) to complete...", len(tasks))
+            done, pending = await asyncio.wait(tasks, timeout=30.0)
+            for t in pending:
+                job_name = t.get_name()
+                log.warning("Job %s did not finish in 30s, cancelling", job_name)
+                t.cancel()
                 try:
-                    await self._active_job.task
+                    await t
                 except (asyncio.CancelledError, Exception):
                     pass
 
@@ -183,7 +189,7 @@ class Agent:
         """POST /execute
 
         Body: {"job_id": str, "service": str, "action": str, "credentials": dict}
-        Accepts the job if idle, rejects if already running one.
+        Accepts the job if a slot is available, rejects if at capacity.
         """
         try:
             data = await request.json()
@@ -203,20 +209,30 @@ class Agent:
             )
 
         async with self._lock:
-            if self._active_job is not None:
+            if job_id in self._active_jobs:
+                return web.json_response(
+                    {"error": f"Job {job_id} already running"},
+                    status=409,
+                )
+
+            if len(self._active_jobs) >= self._max_jobs:
+                running = list(self._active_jobs.keys())
                 log.warning(
-                    "Rejected job %s: already running %s",
-                    job_id,
-                    self._active_job.job_id,
+                    "Rejected job %s: at capacity (%d/%d, running: %s)",
+                    job_id, len(self._active_jobs), self._max_jobs, running,
                 )
                 return web.json_response(
-                    {"error": f"Busy (running {self._active_job.job_id})"},
+                    {"error": f"At capacity ({len(self._active_jobs)}/{self._max_jobs})"},
                     status=409,
                 )
 
             active = ActiveJob(job_id=job_id, service=service, action=action, plan_id=plan_id or '')
-            self._active_job = active
-            log.info("Accepted job %s (%s/%s)", job_id, service, action)
+            self._active_jobs[job_id] = active
+            log.info(
+                "Accepted job %s (%s/%s) [%d/%d slots]",
+                job_id, service, action,
+                len(self._active_jobs), self._max_jobs,
+            )
 
         # Run the job in a background task so we can return 200 immediately
         active.task = asyncio.create_task(
@@ -230,7 +246,7 @@ class Agent:
         """POST /otp
 
         Body: {"job_id": str, "code": str}
-        Delivers an OTP code to the currently running job.
+        Delivers an OTP code to the specified running job.
         """
         try:
             data = await request.json()
@@ -245,8 +261,8 @@ class Agent:
                 {"error": "Missing job_id or code"}, status=400
             )
 
-        active = self._active_job
-        if active is None or active.job_id != job_id:
+        active = self._active_jobs.get(job_id)
+        if active is None:
             log.warning("OTP for unknown/inactive job %s", job_id)
             return web.json_response(
                 {"error": f"No active job with id {job_id}"}, status=404
@@ -264,7 +280,7 @@ class Agent:
         """POST /credential
 
         Body: {"job_id": str, "credential_name": str, "value": str}
-        Delivers a credential value to the currently running job.
+        Delivers a credential value to the specified running job.
         """
         try:
             data = await request.json()
@@ -280,8 +296,8 @@ class Agent:
                 {"error": "Missing job_id, credential_name, or value"}, status=400
             )
 
-        active = self._active_job
-        if active is None or active.job_id != job_id:
+        active = self._active_jobs.get(job_id)
+        if active is None:
             log.warning("Credential for unknown/inactive job %s", job_id)
             return web.json_response(
                 {"error": f"No active job with id {job_id}"}, status=404
@@ -301,7 +317,7 @@ class Agent:
         """POST /abort
 
         Body: {"job_id": str}
-        Cancels a running job.
+        Cancels a specific running job.
         """
         try:
             data = await request.json()
@@ -312,8 +328,8 @@ class Agent:
         if not job_id:
             return web.json_response({"error": "Missing job_id"}, status=400)
 
-        active = self._active_job
-        if active is None or active.job_id != job_id:
+        active = self._active_jobs.get(job_id)
+        if active is None:
             log.warning("Abort for unknown/inactive job %s", job_id)
             return web.json_response(
                 {"error": f"No active job with id {job_id}"}, status=404
@@ -327,16 +343,24 @@ class Agent:
 
     async def _handle_health(self, request: web.Request) -> web.Response:
         """GET /health"""
+        active_jobs = []
+        for aj in self._active_jobs.values():
+            active_jobs.append({
+                "job_id": aj.job_id,
+                "service": aj.service,
+                "action": aj.action,
+                "elapsed_seconds": round(time.monotonic() - aj.started_at, 1),
+            })
+
         status: dict = {
             "ok": True,
             "version": GIT_HASH,
             "vlm_model": self._vlm_model,
+            "max_jobs": self._max_jobs,
+            "active_job_count": len(self._active_jobs),
+            "slots_available": self._max_jobs - len(self._active_jobs),
+            "active_jobs": active_jobs,
         }
-        if self._active_job:
-            status["active_job"] = self._active_job.job_id
-            status["active_since"] = round(
-                time.monotonic() - self._active_job.started_at, 1
-            )
         return web.json_response(status)
 
     # ------------------------------------------------------------------
@@ -409,10 +433,15 @@ class Agent:
             log.exception("Job %s crashed", active.job_id)
 
         finally:
-            # Always report back to orchestrator, then clear active job
+            # Always report back to orchestrator, then free the slot
             await self._report_result(active, result, error_msg)
             async with self._lock:
-                self._active_job = None
+                self._active_jobs.pop(active.job_id, None)
+            log.info(
+                "Slot freed for job %s [%d/%d slots]",
+                active.job_id,
+                len(self._active_jobs), self._max_jobs,
+            )
 
     async def _report_result(
         self,
@@ -477,8 +506,8 @@ class Agent:
             log.error("Cannot request OTP: HTTP client not initialized")
             return None
 
-        active = self._active_job
-        if active is None or active.job_id != job_id:
+        active = self._active_jobs.get(job_id)
+        if active is None:
             log.error("OTP request for non-active job %s", job_id)
             return None
 
@@ -534,8 +563,8 @@ class Agent:
             log.error("Cannot request credential: HTTP client not initialized")
             return None
 
-        active = self._active_job
-        if active is None or active.job_id != job_id:
+        active = self._active_jobs.get(job_id)
+        if active is None:
             log.error("Credential request for non-active job %s", job_id)
             return None
 
@@ -617,11 +646,12 @@ async def run() -> None:
         loop.add_signal_handler(sig, _signal_handler)
 
     log.info(
-        "Agent %s running (port=%d, vlm=%s, profile=%s)",
+        "Agent %s running (port=%d, vlm=%s, profile=%s, max_jobs=%d)",
         GIT_HASH,
         port,
         os.environ.get("VLM_MODEL", "qwen3-vl-32b"),
         profile_name,
+        MAX_CONCURRENT_AGENT_JOBS,
     )
 
     await shutdown.wait()
