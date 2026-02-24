@@ -73,6 +73,7 @@ class Config:
     # Bot profile
     bot_name: str
     bot_about: str
+    bot_picture: str
     bot_lud16: str
 
     @classmethod
@@ -134,5 +135,6 @@ class Config:
                 "BOT_ABOUT",
                 "DM me to manage your streaming services. Pay-per-action, 3k sats.",
             ).strip(),
+            bot_picture=os.environ.get("BOT_PICTURE", "https://unsaltedbutter.ai/butter-bot.png").strip(),
             bot_lud16=os.environ.get("BOT_LUD16", "").strip(),
         )

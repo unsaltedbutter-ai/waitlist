@@ -189,6 +189,8 @@ async def run(config: Config) -> None:
         "name": config.bot_name,
         "about": config.bot_about,
     }
+    if config.bot_picture:
+        meta_dict["picture"] = config.bot_picture
     if config.bot_lud16:
         meta_dict["lud16"] = config.bot_lud16
     metadata = Metadata.from_json(json.dumps(meta_dict))

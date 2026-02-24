@@ -362,6 +362,9 @@ async def main():
         "name": os.getenv("BOT_NAME", "UnsaltedButter Bot"),
         "about": os.getenv("BOT_ABOUT", "DM me to manage your streaming services. Pay-per-action, 3k sats."),
     }
+    bot_picture = os.getenv("BOT_PICTURE", "https://unsaltedbutter.ai/butter-bot.png").strip()
+    if bot_picture:
+        meta_dict["picture"] = bot_picture
     bot_lud16 = os.getenv("BOT_LUD16", "")
     if bot_lud16:
         meta_dict["lud16"] = bot_lud16

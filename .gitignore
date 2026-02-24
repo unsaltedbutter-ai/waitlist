@@ -25,6 +25,7 @@ encryption.key
 # Screenshots (may contain PII)
 agent/screenshots/
 *.png
+!web/public/butter-bot.png
 
 # Build artifacts
 web/.next/

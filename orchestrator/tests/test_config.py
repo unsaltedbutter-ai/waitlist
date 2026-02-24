@@ -30,7 +30,7 @@ _ALL_KEYS = list(_REQUIRED_ENV.keys()) + [
     "CALLBACK_PORT", "DB_PATH", "MAX_CONCURRENT_AGENT_JOBS",
     "ACTION_PRICE_SATS", "OTP_TIMEOUT_SECONDS", "PAYMENT_EXPIRY_SECONDS",
     "OUTREACH_INTERVAL_SECONDS", "TIMER_TICK_SECONDS", "LOG_LEVEL",
-    "BOT_NAME", "BOT_ABOUT", "BOT_LUD16",
+    "BOT_NAME", "BOT_ABOUT", "BOT_PICTURE", "BOT_LUD16",
 ]
 
 
@@ -103,6 +103,7 @@ def test_load_defaults(env: None) -> None:
     assert cfg.log_level == "INFO"
     assert cfg.bot_name == "UnsaltedButter Bot"
     assert "3k sats" in cfg.bot_about
+    assert cfg.bot_picture == "https://unsaltedbutter.ai/butter-bot.png"
     assert cfg.bot_lud16 == ""
 
 
