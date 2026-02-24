@@ -27,7 +27,6 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import logging
-import os
 import random
 import subprocess
 import time
@@ -538,9 +537,8 @@ class VLMExecutor:
                                      job_id, labels[prompt_idx])
 
                             # On cancel flows, navigate directly to the
-                            # account page (skip VLM finding the menu) then
-                            # scroll down to trigger lazy loads and bring
-                            # the Cancel link into view.
+                            # account page instead of letting the VLM
+                            # click through menus. Saves inference calls.
                             if action == 'cancel':
                                 account_url = ACCOUNT_URLS.get(service)
                                 if account_url:
@@ -549,18 +547,6 @@ class VLMExecutor:
                                     step_count += 1
                                     log.info('Job %s: navigated to %s',
                                              job_id, account_url)
-
-                                if os.environ.get('AGENT_NO_AUTO_SCROLL') != '1':
-                                    with gui_lock:
-                                        focus_window_by_pid(session.pid)
-                                        px_per_click = 30
-                                        window_h = session.bounds.get('height', 900)
-                                        clicks = max(5, int(window_h * 0.6 / px_per_click))
-                                        scroll_mod.scroll('down', clicks)
-                                    time.sleep(self.settle_delay)
-                                    step_count += 1
-                                    log.info('Job %s: scrolled down on account page',
-                                             job_id)
 
                             continue
                         else:
