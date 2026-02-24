@@ -537,24 +537,30 @@ class VLMExecutor:
                             log.info('Job %s: sign-in complete, moving to %s',
                                      job_id, labels[prompt_idx])
 
-                            # On cancel flows, scroll down once before the
-                            # first cancel-phase screenshot. Account pages
-                            # always bury "Cancel" at the bottom, and lazy-
-                            # loaded elements above it can shift the layout
-                            # between screenshot and click. Scrolling first
-                            # triggers those loads and brings the target into
-                            # a stable position.
-                            if action == 'cancel' and os.environ.get('AGENT_NO_AUTO_SCROLL') != '1':
-                                with gui_lock:
-                                    focus_window_by_pid(session.pid)
-                                    px_per_click = 30
-                                    window_h = session.bounds.get('height', 900)
-                                    clicks = max(5, int(window_h * 0.6 / px_per_click))
-                                    scroll_mod.scroll('down', clicks)
-                                time.sleep(self.settle_delay)
-                                step_count += 1
-                                log.info('Job %s: scrolled down on account page',
-                                         job_id)
+                            # On cancel flows, navigate directly to the
+                            # account page (skip VLM finding the menu) then
+                            # scroll down to trigger lazy loads and bring
+                            # the Cancel link into view.
+                            if action == 'cancel':
+                                account_url = ACCOUNT_URLS.get(service)
+                                if account_url:
+                                    browser.navigate(session, account_url)
+                                    used_account_fallback = True
+                                    step_count += 1
+                                    log.info('Job %s: navigated to %s',
+                                             job_id, account_url)
+
+                                if os.environ.get('AGENT_NO_AUTO_SCROLL') != '1':
+                                    with gui_lock:
+                                        focus_window_by_pid(session.pid)
+                                        px_per_click = 30
+                                        window_h = session.bounds.get('height', 900)
+                                        clicks = max(5, int(window_h * 0.6 / px_per_click))
+                                        scroll_mod.scroll('down', clicks)
+                                    time.sleep(self.settle_delay)
+                                    step_count += 1
+                                    log.info('Job %s: scrolled down on account page',
+                                             job_id)
 
                             continue
                         else:

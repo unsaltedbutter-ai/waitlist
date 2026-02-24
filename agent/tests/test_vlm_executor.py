@@ -1235,45 +1235,56 @@ class TestGUILockSerialization:
 # Account fallback URL tests
 # ---------------------------------------------------------------------------
 
-class TestAccountFallbackURL:
-    """Stuck during cancel/resume navigates to ACCOUNT_URLS once before failing."""
+class TestAccountNavigation:
+    """Cancel flows navigate directly to account URL after sign-in."""
 
-    def test_stuck_cancel_triggers_fallback_then_succeeds(self, monkeypatch):
-        """Stuck during cancel -> navigate to account URL -> next VLM call succeeds."""
+    def test_cancel_navigates_to_account_url_after_signin(self, monkeypatch):
+        """After sign-in, cancel flows go straight to the account page."""
         nav_calls = []
         monkeypatch.setattr('agent.vlm_executor.browser.navigate',
                             lambda s, url, **kw: nav_calls.append(url))
 
-        # 3x same click = stuck, then after fallback navigate, VLM returns done
-        vlm = _make_vlm([SIGNED_IN, CANCEL_CLICK, CANCEL_CLICK, CANCEL_CLICK,
-                          CANCEL_DONE])
+        vlm = _make_vlm([SIGNED_IN, CANCEL_DONE])
         executor = VLMExecutor(vlm, settle_delay=0)
         result = executor.run('paramount', 'cancel', {'email': 'a', 'pass': 'b'})
         assert result.success
-        # First nav = start URL, then fallback = account URL
         assert 'https://www.paramountplus.com/account/' in nav_calls
 
-    def test_fallback_fires_only_once(self, monkeypatch):
-        """Second stuck after fallback -> failure (no infinite retries)."""
+    def test_stuck_on_account_page_fails(self, monkeypatch):
+        """Already on account page via direct nav, stuck = failure (no redundant fallback)."""
         nav_calls = []
         monkeypatch.setattr('agent.vlm_executor.browser.navigate',
                             lambda s, url, **kw: nav_calls.append(url))
 
-        # 3x click = stuck (fallback fires), then 3x more click = stuck again (fail)
+        # 3x same click on account page = stuck -> fail
         vlm = _make_vlm([SIGNED_IN,
-                          CANCEL_CLICK, CANCEL_CLICK, CANCEL_CLICK,
                           CANCEL_CLICK, CANCEL_CLICK, CANCEL_CLICK])
         executor = VLMExecutor(vlm, settle_delay=0)
         result = executor.run('paramount', 'cancel', {'email': 'a', 'pass': 'b'})
         assert not result.success
         assert 'Stuck' in result.error_message
-        # Fallback URL used exactly once
+        # Account URL navigated once (direct nav), not again as fallback
         account_navs = [u for u in nav_calls
                         if u == 'https://www.paramountplus.com/account/']
         assert len(account_navs) == 1
 
-    def test_signin_stuck_no_fallback(self, monkeypatch):
-        """Stuck during sign-in does NOT trigger fallback."""
+    def test_resume_does_not_navigate_to_account(self, monkeypatch):
+        """Resume flows skip the direct account navigation."""
+        nav_calls = []
+        monkeypatch.setattr('agent.vlm_executor.browser.navigate',
+                            lambda s, url, **kw: nav_calls.append(url))
+
+        resume_done = {'state': 'confirmation', 'action': 'done',
+                       'billing_end_date': None}
+        vlm = _make_vlm([SIGNED_IN, resume_done])
+        executor = VLMExecutor(vlm, settle_delay=0)
+        result = executor.run('netflix', 'resume', {'email': 'a', 'pass': 'b'})
+        assert result.success
+        account_navs = [u for u in nav_calls if 'account' in u.lower()]
+        assert len(account_navs) == 0
+
+    def test_signin_stuck_no_account_nav(self, monkeypatch):
+        """Stuck during sign-in does NOT trigger account navigation."""
         nav_calls = []
         monkeypatch.setattr('agent.vlm_executor.browser.navigate',
                             lambda s, url, **kw: nav_calls.append(url))
@@ -1283,7 +1294,7 @@ class TestAccountFallbackURL:
         result = executor.run('netflix', 'cancel', {'email': 'a', 'pass': 'b'})
         assert not result.success
         assert 'Stuck during sign-in' in result.error_message
-        # Only the initial navigate call, no account URL fallback
+        # Only the initial navigate call, no account URL
         account_navs = [u for u in nav_calls
                         if 'account' in u.lower()]
         assert len(account_navs) == 0
