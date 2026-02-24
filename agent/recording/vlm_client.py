@@ -117,7 +117,7 @@ class VLMClient:
         api_key: str,
         model: str,
         max_tokens: int = 2048,
-        temperature: float = 0.1,
+        temperature: float = 0.0,
         timeout: float = 60.0,
     ) -> None:
         # Strip trailing /v1 so we can always append /v1/chat/completions
