@@ -65,6 +65,7 @@ export default function OnboardingPage() {
   const [useSameCreds, setUseSameCreds] = useState(false);
   const [sharedCreds, setSharedCreds] = useState({ email: "", password: "" });
   const [showPasswords, setShowPasswords] = useState(false);
+  const [credentialMode, setCredentialMode] = useState<"later" | "now">("later");
 
   // Step 2 state: queue order
   const [queue, setQueue] = useState<QueueItem[]>([]);
@@ -184,6 +185,7 @@ export default function OnboardingPage() {
   const selectedIds = Array.from(selectedServiceIds);
 
   const canSaveStep1 = (() => {
+    if (credentialMode === "later") return true;
     if (selectedIds.length === 0) return true;
     if (useSameCreds) {
       return !!sharedCreds.email && !!sharedCreds.password;
@@ -198,6 +200,12 @@ export default function OnboardingPage() {
 
   async function saveCredentials() {
     setError("");
+
+    // "Later" mode: skip credentials entirely, go straight to consent
+    if (credentialMode === "later") {
+      setStep(3);
+      return;
+    }
 
     // If services are selected, validate credentials are filled in
     if (selectedIds.length > 0) {
@@ -306,191 +314,238 @@ export default function OnboardingPage() {
           </p>
         </div>
 
-        {/* Credentials callout */}
-        <div className="border-l-4 border-amber-500 bg-amber-500/[0.08] rounded-r-lg px-5 py-4">
-          <p className="text-amber-200 text-sm font-medium leading-relaxed">
-            Provide the email and password you use to log in to each service. We'll only use them when you explicitly ask us to, otherwise they stay encrypted.
-          </p>
+        {/* Credential mode toggle */}
+        <div className="rounded-lg border border-border bg-surface p-1 flex">
+          <button
+            type="button"
+            onClick={() => setCredentialMode("later")}
+            className={`flex-1 py-2 px-3 rounded-md text-sm font-medium transition-colors ${
+              credentialMode === "later"
+                ? "bg-accent text-background"
+                : "text-muted hover:text-foreground"
+            }`}
+          >
+            Add Credentials Later
+          </button>
+          <button
+            type="button"
+            onClick={() => setCredentialMode("now")}
+            className={`flex-1 py-2 px-3 rounded-md text-sm font-medium transition-colors ${
+              credentialMode === "now"
+                ? "bg-accent text-background"
+                : "text-muted hover:text-foreground"
+            }`}
+          >
+            Add Credentials Now
+          </button>
         </div>
 
-        {/* Same credentials toggle */}
-        <div className="space-y-3">
-          <label className="flex items-center gap-3 cursor-pointer">
-            <input
-              type="checkbox"
-              checked={useSameCreds}
-              onChange={(e) => setUseSameCreds(e.target.checked)}
-              className="w-4 h-4 rounded border-border bg-surface text-accent accent-amber-500"
-            />
-            <span className="text-sm text-foreground font-medium">
-              Use the same credentials for every service
-            </span>
-          </label>
+        {credentialMode === "later" ? (
+          <>
+            <p className="text-sm text-muted leading-relaxed">
+              You can add services later from your dashboard.
+            </p>
 
-          {useSameCreds && (
-            <div className="grid grid-cols-2 gap-3">
-              <input
-                type="email"
-                value={sharedCreds.email}
-                onChange={(e) =>
-                  setSharedCreds((prev) => ({ ...prev, email: e.target.value }))
-                }
-                placeholder="Login email"
-                className="py-2.5 px-3 bg-surface border border-border rounded-lg text-foreground placeholder:text-muted/50 text-sm focus:outline-none focus:border-amber-500/60 focus:ring-1 focus:ring-amber-500/20 transition-colors"
-              />
-              <div className="relative">
-                <input
-                  type={showPasswords ? "text" : "password"}
-                  value={sharedCreds.password}
-                  onChange={(e) =>
-                    setSharedCreds((prev) => ({
-                      ...prev,
-                      password: e.target.value,
-                    }))
-                  }
-                  placeholder="Password"
-                  className="w-full py-2.5 px-3 pr-10 bg-surface border border-border rounded-lg text-foreground placeholder:text-muted/50 text-sm focus:outline-none focus:border-amber-500/60 focus:ring-1 focus:ring-amber-500/20 transition-colors"
-                />
-                <PasswordToggle visible={showPasswords} onToggle={() => setShowPasswords((p) => !p)} />
-              </div>
+            {error && <p className="text-red-400 text-sm">{error}</p>}
+
+            <button
+              type="button"
+              onClick={saveCredentials}
+              disabled={submitting}
+              className="w-full py-3 px-4 rounded-lg font-medium text-sm transition-colors bg-accent text-background hover:bg-accent/90 disabled:bg-accent/20 disabled:text-accent/40 disabled:cursor-not-allowed"
+            >
+              Continue
+            </button>
+          </>
+        ) : (
+          <>
+            {/* Credentials callout */}
+            <div className="border-l-4 border-amber-500 bg-amber-500/[0.08] rounded-r-lg px-5 py-4">
+              <p className="text-amber-200 text-sm font-medium leading-relaxed">
+                Provide the email and password you use to log in to each service. We'll only use them when you explicitly ask us to, otherwise they stay encrypted.
+              </p>
             </div>
-          )}
-        </div>
 
-        {/* Service accordion */}
-        <div className="space-y-2">
-          {services.map((svc) => {
-            const isSelected = selectedServiceIds.has(svc.service_id);
-            const isExpanded = expandedGroups.has(svc.service_id);
-            const group = getGroupForService(svc.service_id);
-            const selectedPlan = getSelectedPlanForService(svc.service_id);
-            const hasMultiplePlans = group && group.plans.length > 1;
+            {/* Same credentials toggle */}
+            <div className="space-y-3">
+              <label className="flex items-center gap-3 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={useSameCreds}
+                  onChange={(e) => setUseSameCreds(e.target.checked)}
+                  className="w-4 h-4 rounded border-border bg-surface text-accent accent-amber-500"
+                />
+                <span className="text-sm text-foreground font-medium">
+                  Use the same credentials for every service
+                </span>
+              </label>
 
-            return (
-              <div key={svc.service_id}>
-                {/* Service header */}
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (hasMultiplePlans) {
-                      toggleAccordion(svc.service_id);
-                    } else {
-                      toggleService(svc.service_id);
+              {useSameCreds && (
+                <div className="grid grid-cols-2 gap-3">
+                  <input
+                    type="email"
+                    value={sharedCreds.email}
+                    onChange={(e) =>
+                      setSharedCreds((prev) => ({ ...prev, email: e.target.value }))
                     }
-                  }}
-                  className={`flex items-center justify-between w-full px-4 py-3 rounded-lg border text-sm transition-colors ${
-                    isSelected
-                      ? "bg-surface border-accent/60"
-                      : "bg-surface border-border hover:border-amber-500/40"
-                  }`}
-                >
-                  <span className="font-medium text-foreground">
-                    {svc.service_name}
-                  </span>
-                  {isSelected && selectedPlan ? (
-                    <span className="flex items-center gap-2 text-accent text-xs">
-                      {!useSameCreds && (!creds[svc.service_id]?.email || !creds[svc.service_id]?.password) && (
-                        <span className="w-2 h-2 rounded-full bg-amber-500 shrink-0" title="Needs credentials" />
-                      )}
-                      {selectedPlan.display_name} - ${(selectedPlan.monthly_price_cents / 100).toFixed(2)}/mo
-                    </span>
-                  ) : isSelected ? (
-                    <span className="flex items-center gap-2 text-accent text-xs">
-                      {!useSameCreds && (!creds[svc.service_id]?.email || !creds[svc.service_id]?.password) && (
-                        <span className="w-2 h-2 rounded-full bg-amber-500 shrink-0" title="Needs credentials" />
-                      )}
-                      Selected
-                    </span>
-                  ) : hasMultiplePlans ? (
-                    <span className="text-muted/60 text-xs">
-                      {group.plans.length} plans
-                    </span>
-                  ) : null}
-                </button>
-
-                {/* Expanded: plan options */}
-                {isExpanded && hasMultiplePlans && (
-                  <div className="mt-1 ml-8 space-y-1">
-                    {group.plans.map((plan) => {
-                      const isPlanSelected = selectedPlans[svc.service_id] === plan.id;
-                      return (
-                        <button
-                          key={plan.id}
-                          type="button"
-                          onClick={() => {
-                            if (!isSelected) {
-                              toggleService(svc.service_id);
-                            }
-                            selectPlan(svc.service_id, plan.id);
-                          }}
-                          className={`w-full flex items-center justify-between py-2 px-3 rounded text-sm border transition-colors ${
-                            isPlanSelected
-                              ? "bg-accent/10 text-accent border-accent/40"
-                              : "bg-surface text-muted border-border hover:border-muted"
-                          }`}
-                        >
-                          <span>{plan.display_name}</span>
-                          <span className={isPlanSelected ? "text-accent" : "text-muted/60"}>
-                            ${(plan.monthly_price_cents / 100).toFixed(2)}/mo
-                          </span>
-                        </button>
-                      );
-                    })}
-                  </div>
-                )}
-
-                {/* Credentials inputs */}
-                {isSelected && !useSameCreds && (
-                  <div className="grid grid-cols-2 gap-3 mt-1 ml-8 pb-2">
+                    placeholder="Login email"
+                    className="py-2.5 px-3 bg-surface border border-border rounded-lg text-foreground placeholder:text-muted/50 text-sm focus:outline-none focus:border-amber-500/60 focus:ring-1 focus:ring-amber-500/20 transition-colors"
+                  />
+                  <div className="relative">
                     <input
-                      type="email"
-                      value={creds[svc.service_id]?.email ?? ""}
+                      type={showPasswords ? "text" : "password"}
+                      value={sharedCreds.password}
                       onChange={(e) =>
-                        updateCred(svc.service_id, "email", e.target.value)
+                        setSharedCreds((prev) => ({
+                          ...prev,
+                          password: e.target.value,
+                        }))
                       }
-                      placeholder="Login email"
-                      className="py-2.5 px-3 bg-surface border border-border rounded-lg text-foreground placeholder:text-muted/50 text-sm focus:outline-none focus:border-amber-500/60 focus:ring-1 focus:ring-amber-500/20 transition-colors"
+                      placeholder="Password"
+                      className="w-full py-2.5 px-3 pr-10 bg-surface border border-border rounded-lg text-foreground placeholder:text-muted/50 text-sm focus:outline-none focus:border-amber-500/60 focus:ring-1 focus:ring-amber-500/20 transition-colors"
                     />
-                    <div className="relative">
-                      <input
-                        type={showPasswords ? "text" : "password"}
-                        value={creds[svc.service_id]?.password ?? ""}
-                        onChange={(e) =>
-                          updateCred(svc.service_id, "password", e.target.value)
-                        }
-                        placeholder="Password"
-                        className="w-full py-2.5 px-3 pr-10 bg-surface border border-border rounded-lg text-foreground placeholder:text-muted/50 text-sm focus:outline-none focus:border-amber-500/60 focus:ring-1 focus:ring-amber-500/20 transition-colors"
-                      />
-                      <PasswordToggle visible={showPasswords} onToggle={() => setShowPasswords((p) => !p)} />
-                    </div>
+                    <PasswordToggle visible={showPasswords} onToggle={() => setShowPasswords((p) => !p)} />
                   </div>
-                )}
-              </div>
-            );
-          })}
-        </div>
+                </div>
+              )}
+            </div>
 
-        {error && <p className="text-red-400 text-sm">{error}</p>}
+            {/* Service accordion */}
+            <div className="space-y-2">
+              {services.map((svc) => {
+                const isSelected = selectedServiceIds.has(svc.service_id);
+                const isExpanded = expandedGroups.has(svc.service_id);
+                const group = getGroupForService(svc.service_id);
+                const selectedPlan = getSelectedPlanForService(svc.service_id);
+                const hasMultiplePlans = group && group.plans.length > 1;
 
-        <button
-          type="button"
-          onClick={saveCredentials}
-          disabled={submitting || !canSaveStep1}
-          className="w-full py-3 px-4 rounded-lg font-medium text-sm transition-colors bg-accent text-background hover:bg-accent/90 disabled:bg-accent/20 disabled:text-accent/40 disabled:cursor-not-allowed"
-        >
-          {submitting ? "Saving..." : selectedIds.length === 0 ? "Skip for now" : "Save credentials"}
-        </button>
+                return (
+                  <div key={svc.service_id}>
+                    {/* Service header */}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (hasMultiplePlans) {
+                          toggleAccordion(svc.service_id);
+                        } else {
+                          toggleService(svc.service_id);
+                        }
+                      }}
+                      className={`flex items-center justify-between w-full px-4 py-3 rounded-lg border text-sm transition-colors ${
+                        isSelected
+                          ? "bg-surface border-accent/60"
+                          : "bg-surface border-border hover:border-amber-500/40"
+                      }`}
+                    >
+                      <span className="font-medium text-foreground">
+                        {svc.service_name}
+                      </span>
+                      {isSelected && selectedPlan ? (
+                        <span className="flex items-center gap-2 text-accent text-xs">
+                          {!useSameCreds && (!creds[svc.service_id]?.email || !creds[svc.service_id]?.password) && (
+                            <span className="w-2 h-2 rounded-full bg-amber-500 shrink-0" title="Needs credentials" />
+                          )}
+                          {selectedPlan.display_name} - ${(selectedPlan.monthly_price_cents / 100).toFixed(2)}/mo
+                        </span>
+                      ) : isSelected ? (
+                        <span className="flex items-center gap-2 text-accent text-xs">
+                          {!useSameCreds && (!creds[svc.service_id]?.email || !creds[svc.service_id]?.password) && (
+                            <span className="w-2 h-2 rounded-full bg-amber-500 shrink-0" title="Needs credentials" />
+                          )}
+                          Selected
+                        </span>
+                      ) : hasMultiplePlans ? (
+                        <span className="text-muted/60 text-xs">
+                          {group.plans.length} plans
+                        </span>
+                      ) : null}
+                    </button>
 
-        {selectedIds.length === 0 && (
-          <p className="text-xs text-muted/60 text-center -mt-3">
-            You can add services later from your dashboard.
-          </p>
-        )}
+                    {/* Expanded: plan options */}
+                    {isExpanded && hasMultiplePlans && (
+                      <div className="mt-1 ml-8 space-y-1">
+                        {group.plans.map((plan) => {
+                          const isPlanSelected = selectedPlans[svc.service_id] === plan.id;
+                          return (
+                            <button
+                              key={plan.id}
+                              type="button"
+                              onClick={() => {
+                                if (!isSelected) {
+                                  toggleService(svc.service_id);
+                                }
+                                selectPlan(svc.service_id, plan.id);
+                              }}
+                              className={`w-full flex items-center justify-between py-2 px-3 rounded text-sm border transition-colors ${
+                                isPlanSelected
+                                  ? "bg-accent/10 text-accent border-accent/40"
+                                  : "bg-surface text-muted border-border hover:border-muted"
+                              }`}
+                            >
+                              <span>{plan.display_name}</span>
+                              <span className={isPlanSelected ? "text-accent" : "text-muted/60"}>
+                                ${(plan.monthly_price_cents / 100).toFixed(2)}/mo
+                              </span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
 
-        {selectedIds.length > 0 && !canSaveStep1 && (
-          <p className="text-xs text-muted/60 text-center -mt-3">
-            Provide credentials for each selected service to continue.
-          </p>
+                    {/* Credentials inputs */}
+                    {isSelected && !useSameCreds && (
+                      <div className="grid grid-cols-2 gap-3 mt-1 ml-8 pb-2">
+                        <input
+                          type="email"
+                          value={creds[svc.service_id]?.email ?? ""}
+                          onChange={(e) =>
+                            updateCred(svc.service_id, "email", e.target.value)
+                          }
+                          placeholder="Login email"
+                          className="py-2.5 px-3 bg-surface border border-border rounded-lg text-foreground placeholder:text-muted/50 text-sm focus:outline-none focus:border-amber-500/60 focus:ring-1 focus:ring-amber-500/20 transition-colors"
+                        />
+                        <div className="relative">
+                          <input
+                            type={showPasswords ? "text" : "password"}
+                            value={creds[svc.service_id]?.password ?? ""}
+                            onChange={(e) =>
+                              updateCred(svc.service_id, "password", e.target.value)
+                            }
+                            placeholder="Password"
+                            className="w-full py-2.5 px-3 pr-10 bg-surface border border-border rounded-lg text-foreground placeholder:text-muted/50 text-sm focus:outline-none focus:border-amber-500/60 focus:ring-1 focus:ring-amber-500/20 transition-colors"
+                          />
+                          <PasswordToggle visible={showPasswords} onToggle={() => setShowPasswords((p) => !p)} />
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+
+            {error && <p className="text-red-400 text-sm">{error}</p>}
+
+            <button
+              type="button"
+              onClick={saveCredentials}
+              disabled={submitting || !canSaveStep1}
+              className="w-full py-3 px-4 rounded-lg font-medium text-sm transition-colors bg-accent text-background hover:bg-accent/90 disabled:bg-accent/20 disabled:text-accent/40 disabled:cursor-not-allowed"
+            >
+              {submitting ? "Saving..." : selectedIds.length === 0 ? "Skip for now" : "Save credentials"}
+            </button>
+
+            {selectedIds.length === 0 && (
+              <p className="text-xs text-muted/60 text-center -mt-3">
+                You can add services later from your dashboard.
+              </p>
+            )}
+
+            {selectedIds.length > 0 && !canSaveStep1 && (
+              <p className="text-xs text-muted/60 text-center -mt-3">
+                Provide credentials for each selected service to continue.
+              </p>
+            )}
+          </>
         )}
       </div>
     );
