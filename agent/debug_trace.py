@@ -21,6 +21,70 @@ DEFAULT_DEBUG_DIR = os.path.expanduser('~/.unsaltedbutter/debug')
 DEFAULT_MAX_AGE_DAYS = 14
 
 
+def _draw_bbox_overlay(
+    screenshot_b64: str,
+    vlm_response: dict,
+    scale_factor: float,
+) -> bytes | None:
+    """Draw bounding box rectangles onto a copy of the screenshot.
+
+    Returns PNG bytes, or None if no boxes found or drawing fails.
+    """
+    from PIL import Image, ImageDraw, ImageFont  # lazy import
+    import io
+
+    # Collect (label, [x1, y1, x2, y2]) pairs from both response schemas
+    boxes: list[tuple[str, list]] = []
+
+    # Cancel/resume schema: single bounding_box
+    bb = vlm_response.get('bounding_box')
+    if bb and len(bb) == 4:
+        label = vlm_response.get('target_description', 'target') or 'target'
+        boxes.append((label[:30], bb))
+
+    # Sign-in schema: named boxes
+    for key in ('email_box', 'password_box', 'button_box', 'profile_box'):
+        box = vlm_response.get(key)
+        if box and len(box) == 4:
+            boxes.append((key, box))
+
+    # Sign-in schema: code_boxes list
+    for cb in vlm_response.get('code_boxes') or []:
+        if isinstance(cb, dict) and cb.get('box') and len(cb['box']) == 4:
+            boxes.append((cb.get('label', 'code')[:30], cb['box']))
+
+    if not boxes:
+        return None
+
+    try:
+        png_bytes = base64.b64decode(screenshot_b64)
+        img = Image.open(io.BytesIO(png_bytes)).convert('RGB')
+        draw = ImageDraw.Draw(img)
+
+        try:
+            font = ImageFont.truetype('/System/Library/Fonts/Helvetica.ttc', 14)
+        except Exception:
+            font = ImageFont.load_default()
+
+        for label, box in boxes:
+            x1 = int(box[0] * scale_factor)
+            y1 = int(box[1] * scale_factor)
+            x2 = int(box[2] * scale_factor)
+            y2 = int(box[3] * scale_factor)
+            draw.rectangle([x1, y1, x2, y2], outline='red', width=3)
+            # Label background
+            text_bbox = draw.textbbox((x1, y1 - 16), label, font=font)
+            draw.rectangle(text_bbox, fill='red')
+            draw.text((x1, y1 - 16), label, fill='white', font=font)
+
+        buf = io.BytesIO()
+        img.save(buf, format='PNG')
+        return buf.getvalue()
+    except Exception as exc:
+        log.debug('Failed to draw bbox overlay: %s', exc)
+        return None
+
+
 class DebugTrace:
     """Per-job debug trace writer.
 
@@ -54,6 +118,8 @@ class DebugTrace:
         screenshot_b64: str,
         vlm_response: dict | None,
         phase: str = '',
+        scale_factor: float = 0.0,
+        diagnostics: dict | None = None,
     ) -> None:
         """Save a single step's screenshot and VLM response.
 
@@ -63,6 +129,11 @@ class DebugTrace:
             vlm_response: The VLM response dict (bounding boxes, actions, etc.).
                 Never contains actual credential values.
             phase: Label like 'sign-in', 'cancel', 'resume'.
+            scale_factor: When > 0, draw bounding box overlay and save as
+                step_NNN_overlay.png alongside the original.
+            diagnostics: Optional dict with coordinate pipeline data
+                (window_bounds, display_scale, chrome_offset, etc.)
+                for debugging click-position issues.
         """
         if not self.enabled or not self._dir:
             return
@@ -86,10 +157,21 @@ class DebugTrace:
             }
             if vlm_response is not None:
                 meta['vlm_response'] = vlm_response
+            if diagnostics is not None:
+                meta['diagnostics'] = diagnostics
             json_path = self._dir / f'{prefix}.json'
             json_path.write_text(json.dumps(meta, indent=2, default=str))
         except Exception as exc:
             log.debug('Failed to save debug metadata step %d: %s', step, exc)
+
+        # Save bbox overlay
+        if scale_factor > 0.0 and vlm_response is not None:
+            overlay_bytes = _draw_bbox_overlay(
+                screenshot_b64, vlm_response, scale_factor,
+            )
+            if overlay_bytes:
+                overlay_path = self._dir / f'{prefix}_overlay.png'
+                overlay_path.write_bytes(overlay_bytes)
 
     def cleanup_success(self) -> None:
         """Delete the trace folder (job succeeded, no forensics needed)."""

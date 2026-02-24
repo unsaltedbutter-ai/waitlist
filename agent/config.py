@@ -23,6 +23,16 @@ SERVICE_URLS: dict[str, str] = {
     'max': 'https://play.max.com/login',
 }
 
+ACCOUNT_URLS: dict[str, str] = {
+    'netflix': 'https://www.netflix.com/account',
+    'hulu': 'https://secure.hulu.com/account',
+    'disney': 'https://www.disneyplus.com/account',
+    'appletv': 'https://tv.apple.com/settings',
+    'paramount': 'https://www.paramountplus.com/account/',
+    'peacock': 'https://www.peacocktv.com/account',
+    'max': 'https://play.max.com/account',
+}
+
 # --- Paths ---
 
 def _resolve_playbook_dir() -> Path:

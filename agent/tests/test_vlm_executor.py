@@ -404,8 +404,10 @@ class TestVLMExecutorRun:
         assert 'Stuck' in result.error_message
 
     def test_stuck_during_cancel_fails(self):
-        """Same state+action 3 times during cancel phase -> stuck."""
-        vlm = _make_vlm([SIGNED_IN, CANCEL_CLICK, CANCEL_CLICK, CANCEL_CLICK])
+        """Same state+action 3x triggers fallback, then 3x again -> stuck failure."""
+        vlm = _make_vlm([SIGNED_IN,
+                          CANCEL_CLICK, CANCEL_CLICK, CANCEL_CLICK,
+                          CANCEL_CLICK, CANCEL_CLICK, CANCEL_CLICK])
         executor = VLMExecutor(vlm, settle_delay=0)
         result = executor.run('netflix', 'cancel', {'email': 'a', 'pass': 'b'})
         assert not result.success
@@ -463,6 +465,23 @@ class TestVLMExecutorRun:
         executor = VLMExecutor(vlm, settle_delay=0)
         result = executor.run('netflix', 'cancel', {'email': 'a', 'pass': 'b'})
         assert result.success
+
+    def test_chrome_window_lost_during_cancel(self, monkeypatch):
+        """Chrome window disappearing mid-flow returns clean failure."""
+        call_count = 0
+        def maybe_crash(s):
+            nonlocal call_count
+            call_count += 1
+            if call_count >= 3:
+                raise RuntimeError('Chrome window not found for PID 12345')
+            return s.bounds
+        monkeypatch.setattr('agent.vlm_executor.browser.get_session_window', maybe_crash)
+
+        vlm = _make_vlm([SIGNED_IN, CANCEL_CLICK, CANCEL_DONE])
+        executor = VLMExecutor(vlm, settle_delay=0)
+        result = executor.run('netflix', 'cancel', {'email': 'a', 'pass': 'b'})
+        assert not result.success
+        assert 'Chrome window lost' in result.error_message
 
     def test_vlm_error_recovery(self):
         """VLM throws on first cancel call, succeeds on retry."""
@@ -1210,3 +1229,66 @@ class TestGUILockSerialization:
         result = executor.run('netflix', 'cancel', {'email': 'a@b.com', 'pass': 'x'})
         assert result.success
         assert len(lock_acquired) >= 1
+
+
+# ---------------------------------------------------------------------------
+# Account fallback URL tests
+# ---------------------------------------------------------------------------
+
+class TestAccountFallbackURL:
+    """Stuck during cancel/resume navigates to ACCOUNT_URLS once before failing."""
+
+    def test_stuck_cancel_triggers_fallback_then_succeeds(self, monkeypatch):
+        """Stuck during cancel -> navigate to account URL -> next VLM call succeeds."""
+        nav_calls = []
+        monkeypatch.setattr('agent.vlm_executor.browser.navigate',
+                            lambda s, url, **kw: nav_calls.append(url))
+
+        # 3x same click = stuck, then after fallback navigate, VLM returns done
+        vlm = _make_vlm([SIGNED_IN, CANCEL_CLICK, CANCEL_CLICK, CANCEL_CLICK,
+                          CANCEL_DONE])
+        executor = VLMExecutor(vlm, settle_delay=0)
+        result = executor.run('paramount', 'cancel', {'email': 'a', 'pass': 'b'})
+        assert result.success
+        # First nav = start URL, then fallback = account URL
+        assert 'https://www.paramountplus.com/account/' in nav_calls
+
+    def test_fallback_fires_only_once(self, monkeypatch):
+        """Second stuck after fallback -> failure (no infinite retries)."""
+        nav_calls = []
+        monkeypatch.setattr('agent.vlm_executor.browser.navigate',
+                            lambda s, url, **kw: nav_calls.append(url))
+
+        # 3x click = stuck (fallback fires), then 3x more click = stuck again (fail)
+        vlm = _make_vlm([SIGNED_IN,
+                          CANCEL_CLICK, CANCEL_CLICK, CANCEL_CLICK,
+                          CANCEL_CLICK, CANCEL_CLICK, CANCEL_CLICK])
+        executor = VLMExecutor(vlm, settle_delay=0)
+        result = executor.run('paramount', 'cancel', {'email': 'a', 'pass': 'b'})
+        assert not result.success
+        assert 'Stuck' in result.error_message
+        # Fallback URL used exactly once
+        account_navs = [u for u in nav_calls
+                        if u == 'https://www.paramountplus.com/account/']
+        assert len(account_navs) == 1
+
+    def test_signin_stuck_no_fallback(self, monkeypatch):
+        """Stuck during sign-in does NOT trigger fallback."""
+        nav_calls = []
+        monkeypatch.setattr('agent.vlm_executor.browser.navigate',
+                            lambda s, url, **kw: nav_calls.append(url))
+
+        vlm = _make_vlm([USER_PASS_PAGE, USER_PASS_PAGE, USER_PASS_PAGE])
+        executor = VLMExecutor(vlm, settle_delay=0)
+        result = executor.run('netflix', 'cancel', {'email': 'a', 'pass': 'b'})
+        assert not result.success
+        assert 'Stuck during sign-in' in result.error_message
+        # Only the initial navigate call, no account URL fallback
+        account_navs = [u for u in nav_calls
+                        if 'account' in u.lower()]
+        assert len(account_navs) == 0
+
+    def test_service_urls_match_account_urls(self):
+        """SERVICE_URLS and ACCOUNT_URLS cover the same set of services."""
+        from agent.config import ACCOUNT_URLS, SERVICE_URLS
+        assert set(SERVICE_URLS.keys()) == set(ACCOUNT_URLS.keys())

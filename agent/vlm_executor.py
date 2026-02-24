@@ -34,7 +34,7 @@ from typing import Callable
 
 from agent import browser
 from agent import screenshot as ss
-from agent.config import SERVICE_URLS
+from agent.config import ACCOUNT_URLS, SERVICE_URLS
 from agent.debug_trace import DebugTrace
 from agent.gui_lock import gui_lock
 from agent.input import coords, keyboard, mouse, scroll as scroll_mod
@@ -211,6 +211,10 @@ def _click_bbox(bbox, session, chrome_offset: int = 0) -> None:
 
     sx, sy = coords.image_to_screen(cx, cy, session.bounds,
                                     chrome_offset=chrome_offset)
+    log.debug('click_bbox: image=(%.1f, %.1f) chrome_offset=%d bounds=%s '
+              'display_scale=%.2f -> screen=(%.1f, %.1f)',
+              cx, cy, chrome_offset, session.bounds,
+              coords._get_display_scale(), sx, sy)
     mouse.click(sx, sy)
 
 
@@ -378,6 +382,7 @@ class VLMExecutor:
             stuck = _StuckDetector()
             last_click_screen_bbox = None
             pending_action = None
+            used_account_fallback = False
 
             for iteration in range(self.max_steps):
                 # -------------------------------------------------------
@@ -436,14 +441,29 @@ class VLMExecutor:
                 # another job from displacing the cursor between restore
                 # and capture.
                 # -------------------------------------------------------
-                with gui_lock:
-                    if last_click_screen_bbox is not None:
-                        if _restore_cursor(last_click_screen_bbox, session):
-                            log.debug('Job %s: cursor restored before screenshot',
-                                      job_id)
-                            time.sleep(0.3)
-                    browser.get_session_window(session)
-                    raw_b64 = ss.capture_to_base64(session.window_id)
+                try:
+                    with gui_lock:
+                        if last_click_screen_bbox is not None:
+                            if _restore_cursor(last_click_screen_bbox, session):
+                                log.debug('Job %s: cursor restored before screenshot',
+                                          job_id)
+                                time.sleep(0.3)
+                        browser.get_session_window(session)
+                        raw_b64 = ss.capture_to_base64(session.window_id)
+                except RuntimeError as exc:
+                    error_message = f'Chrome window lost: {exc}'
+                    log.warning('Job %s: %s', job_id, error_message)
+                    return ExecutionResult(
+                        job_id=job_id,
+                        service=service,
+                        flow=action,
+                        success=False,
+                        duration_seconds=time.monotonic() - t0,
+                        step_count=step_count,
+                        inference_count=inference_count,
+                        playbook_version=0,
+                        error_message=error_message,
+                    )
 
                 screenshot_b64, chrome_height_px = crop_browser_chrome(raw_b64)
 
@@ -465,7 +485,15 @@ class VLMExecutor:
                     continue
 
                 trace.save_step(iteration, screenshot_b64, response,
-                                phase=current_label)
+                                phase=current_label,
+                                scale_factor=scale_factor,
+                                diagnostics={
+                                    'window_bounds': dict(session.bounds),
+                                    'display_scale': coords._get_display_scale(),
+                                    'chrome_offset_px': chrome_height_px,
+                                    'vlm_scale_factor': scale_factor,
+                                    'last_click_screen_bbox': last_click_screen_bbox,
+                                })
 
                 # -------------------------------------------------------
                 # Phase 5 [no lock]: Parse result, resolve credentials,
@@ -596,6 +624,16 @@ class VLMExecutor:
                     )
 
                 if stuck.check(state, vlm_action, screenshot_b64):
+                    account_url = ACCOUNT_URLS.get(service)
+                    if account_url and not used_account_fallback:
+                        log.info('Job %s: stuck, navigating to %s',
+                                 job_id, account_url)
+                        browser.navigate(session, account_url)
+                        used_account_fallback = True
+                        stuck.reset()
+                        last_click_screen_bbox = None
+                        pending_action = None
+                        continue
                     error_message = f'Stuck during {current_label} (state={state}, action={vlm_action})'
                     log.warning('Job %s: %s', job_id, error_message)
                     return ExecutionResult(

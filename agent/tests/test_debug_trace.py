@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import io
 import json
 import os
 import time
@@ -10,21 +11,33 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
+from PIL import Image
 
-from agent.debug_trace import DebugTrace
+from agent.debug_trace import DebugTrace, _draw_bbox_overlay
 
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
-# 1x1 red PNG for testing
+# 1x1 red PNG for testing (used by core tests that don't need real image data)
 _TINY_PNG = base64.b64encode(
     b'\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01'
     b'\x00\x00\x00\x01\x08\x02\x00\x00\x00\x90wS\xde\x00'
     b'\x00\x00\x0cIDATx\x9cc\xf8\x0f\x00\x00\x01\x01\x00'
     b'\x05\x18\xd8N\x00\x00\x00\x00IEND\xaeB`\x82'
 ).decode()
+
+
+def _make_test_png(width: int = 800, height: int = 600) -> str:
+    """Create a base64-encoded PNG of the given size."""
+    img = Image.new('RGB', (width, height), color=(200, 200, 200))
+    buf = io.BytesIO()
+    img.save(buf, format='PNG')
+    return base64.b64encode(buf.getvalue()).decode()
+
+
+_TEST_PNG = _make_test_png()
 
 _SAMPLE_RESPONSE = {
     'state': 'account page',
@@ -288,3 +301,98 @@ class TestDebugTraceVLMIntegration:
         assert result.success
         # Folder cleaned up on success, but the error step was recorded
         assert not (self.tmp_path / 'job-vlmerr').exists()
+
+
+# ---------------------------------------------------------------------------
+# Bbox overlay tests
+# ---------------------------------------------------------------------------
+
+class TestDrawBboxOverlay:
+    """Tests for _draw_bbox_overlay and save_step overlay generation."""
+
+    def test_overlay_created_with_scale_factor(self, tmp_path):
+        """Overlay PNG is written when scale_factor > 0 and response has bboxes."""
+        trace = DebugTrace('job-overlay', base_dir=str(tmp_path))
+        trace.save_step(0, _TEST_PNG, _SAMPLE_RESPONSE, phase='cancel',
+                        scale_factor=1.0)
+        overlay_path = trace.trace_dir / 'step_000_overlay.png'
+        assert overlay_path.exists()
+        # Verify it's a valid PNG
+        img = Image.open(overlay_path)
+        assert img.size == (800, 600)
+
+    def test_no_overlay_when_scale_factor_zero(self, tmp_path):
+        """Default scale_factor=0 produces no overlay."""
+        trace = DebugTrace('job-no-overlay', base_dir=str(tmp_path))
+        trace.save_step(0, _TEST_PNG, _SAMPLE_RESPONSE, phase='cancel')
+        overlay_path = trace.trace_dir / 'step_000_overlay.png'
+        assert not overlay_path.exists()
+
+    def test_no_overlay_when_response_none(self, tmp_path):
+        """No overlay when vlm_response is None (VLM error case)."""
+        trace = DebugTrace('job-none-resp', base_dir=str(tmp_path))
+        trace.save_step(0, _TEST_PNG, None, phase='cancel', scale_factor=1.0)
+        overlay_path = trace.trace_dir / 'step_000_overlay.png'
+        assert not overlay_path.exists()
+
+    def test_no_overlay_when_no_bboxes(self, tmp_path):
+        """No overlay when response has no bbox keys."""
+        response = {'state': 'loading', 'action': 'wait', 'confidence': 0.8}
+        trace = DebugTrace('job-no-bbox', base_dir=str(tmp_path))
+        trace.save_step(0, _TEST_PNG, response, phase='cancel',
+                        scale_factor=1.0)
+        overlay_path = trace.trace_dir / 'step_000_overlay.png'
+        assert not overlay_path.exists()
+
+    def test_original_png_preserved(self, tmp_path):
+        """Original screenshot PNG is unchanged when overlay is drawn."""
+        trace = DebugTrace('job-preserve', base_dir=str(tmp_path))
+        trace.save_step(0, _TEST_PNG, _SAMPLE_RESPONSE, phase='cancel',
+                        scale_factor=1.0)
+        original_path = trace.trace_dir / 'step_000.png'
+        original_bytes = original_path.read_bytes()
+        expected_bytes = base64.b64decode(_TEST_PNG)
+        assert original_bytes == expected_bytes
+
+    def test_signin_response_boxes(self):
+        """Sign-in response with email_box, password_box, button_box."""
+        response = {
+            'page_type': 'user_pass',
+            'email_box': [10, 20, 200, 50],
+            'password_box': [10, 70, 200, 100],
+            'button_box': [50, 120, 150, 150],
+            'profile_box': None,
+            'code_boxes': None,
+        }
+        result = _draw_bbox_overlay(_TEST_PNG, response, 1.0)
+        assert result is not None
+        img = Image.open(io.BytesIO(result))
+        assert img.size == (800, 600)
+
+    def test_code_boxes_handled(self):
+        """code_boxes list entries are drawn."""
+        response = {
+            'page_type': 'email_code_single',
+            'email_box': None,
+            'password_box': None,
+            'button_box': [200, 400, 350, 440],
+            'profile_box': None,
+            'code_boxes': [{'label': 'code', 'box': [100, 300, 400, 340]}],
+        }
+        result = _draw_bbox_overlay(_TEST_PNG, response, 1.0)
+        assert result is not None
+
+    def test_scale_factor_applied(self):
+        """Bboxes are scaled by scale_factor (VLM coords != image coords)."""
+        response = {
+            'state': 'page',
+            'action': 'click',
+            'target_description': 'button',
+            'bounding_box': [100, 100, 200, 200],
+        }
+        # scale_factor=2.0 means box drawn at [200,200,400,400]
+        result = _draw_bbox_overlay(_TEST_PNG, response, 2.0)
+        assert result is not None
+        # Check the overlay is different from a 1.0 scale overlay
+        result_1x = _draw_bbox_overlay(_TEST_PNG, response, 1.0)
+        assert result != result_1x
