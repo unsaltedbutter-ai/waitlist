@@ -57,7 +57,7 @@
   {
     "id": "credentials-safe",
     "question": "Are my streaming credentials safe?",
-    "answer": "Credentials are encrypted with AES-256-GCM before storage. The encryption key lives on a separate machine from the database, never in environment variables or source code. A fresh browser profile is created for each action and destroyed immediately after."
+    "answer": "Credentials are encrypted with AES-256-GCM before storage. A fresh browser profile is created for each action and destroyed immediately after."
   },
   {
     "id": "how-join",
