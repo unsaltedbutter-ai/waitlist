@@ -27,6 +27,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import logging
+import os
 import random
 import subprocess
 import time
@@ -543,7 +544,7 @@ class VLMExecutor:
                             # between screenshot and click. Scrolling first
                             # triggers those loads and brings the target into
                             # a stable position.
-                            if action == 'cancel':
+                            if action == 'cancel' and os.environ.get('AGENT_NO_AUTO_SCROLL') != '1':
                                 with gui_lock:
                                     focus_window_by_pid(session.pid)
                                     px_per_click = 30
