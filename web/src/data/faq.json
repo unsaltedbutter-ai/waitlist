@@ -1,0 +1,52 @@
+[
+  {
+    "id": "what-is-it",
+    "question": "What is UnsaltedButter?",
+    "answer": "A concierge bot that cancels and resumes your streaming subscriptions on your behalf. You keep your own accounts and payment methods. We just press the buttons for you."
+  },
+  {
+    "id": "how-much",
+    "question": "How much does it cost?",
+    "answer": "3,000 sats per action (one cancel or one resume). No subscriptions, no prepaid balance, no hidden fees. You pay after the job is done."
+  },
+  {
+    "id": "which-services",
+    "question": "Which streaming services are supported?",
+    "answer": "Netflix, Apple TV+, Hulu, Disney+, Paramount+, Peacock, and Max."
+  },
+  {
+    "id": "how-pay",
+    "question": "How do I pay?",
+    "answer": "Bitcoin only, via Lightning Network. After a cancel or resume completes, you receive a Lightning invoice. No fiat, no credit cards."
+  },
+  {
+    "id": "how-communicate",
+    "question": "How do I talk to the bot?",
+    "answer": "Everything happens over Nostr DMs. Send a message to the UnsaltedButter bot from any Nostr client. No app to install, no account to create beyond your Nostr identity."
+  },
+  {
+    "id": "credentials-safe",
+    "question": "Are my streaming credentials safe?",
+    "answer": "Credentials are encrypted with AES-256-GCM before storage. The encryption key lives on a separate machine from the database, never in environment variables or source code. A fresh browser profile is created for each action and destroyed immediately after."
+  },
+  {
+    "id": "what-if-fail",
+    "question": "What happens if a cancel or resume fails?",
+    "answer": "You get a DM immediately explaining what happened. You are never charged for failed actions. If a resume fails, the system retries automatically before alerting you."
+  },
+  {
+    "id": "how-join",
+    "question": "How do I join?",
+    "answer": "Submit your Nostr npub on the waitlist, or DM \"waitlist\" to the bot. We invite people in order. There is a hard cap of 5,000 users."
+  },
+  {
+    "id": "billing-dates",
+    "question": "How does UnsaltedButter know my billing date?",
+    "answer": "Billing dates are captured directly from the cancel confirmation screen shown by the streaming service. We never guess or assume your billing cycle."
+  },
+  {
+    "id": "delete-account",
+    "question": "What happens if I delete my account?",
+    "answer": "All your data is permanently destroyed, including stored credentials. Nothing is soft-deleted. Once it is gone, it is gone."
+  }
+]

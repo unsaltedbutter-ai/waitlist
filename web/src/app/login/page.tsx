@@ -171,6 +171,12 @@ export default function LoginPage() {
           )}
         </div>
 
+        <p className="text-center text-xs text-muted">
+          <a href="/faq" className="hover:text-foreground transition-colors">
+            FAQ
+          </a>
+        </p>
+
         {/* Error */}
         {error && <p className="text-red-400 text-sm mt-4">{error}</p>}
       </div>
