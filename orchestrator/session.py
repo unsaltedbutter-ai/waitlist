@@ -67,10 +67,11 @@ class Session:
         user_npub: str,
         job: dict,
         error: str | None,
+        error_code: str | None = None,
     ) -> None:
         """Common failure handling: update statuses, DM user/operator, delete session.
 
-        The user gets a generic failure message (no internal details).
+        The user gets a failure message (differentiated by error_code).
         The operator gets the full error via DM. The error is also logged.
         """
         job_id = job["id"]
@@ -90,11 +91,12 @@ class Session:
                 log.exception("Failed to update VPS job status for %s", job_id)
         await self._db.update_job_status(job_id, "failed")
 
-        # Always DM the user (they're waiting for a result)
-        await self._send_dm(
-            user_npub,
-            messages.action_failed(service_id, action),
-        )
+        # DM the user (differentiated by error_code)
+        if error_code == "credential_invalid":
+            dm = messages.action_failed_credentials(service_id, action)
+        else:
+            dm = messages.action_failed(service_id, action)
+        await self._send_dm(user_npub, dm)
 
         # Notify operator (skip for CLI jobs, operator sees the error directly)
         if not job_id.startswith("cli-"):
@@ -392,6 +394,7 @@ class Session:
         access_end_date: str | None,
         error: str | None,
         duration_seconds: int,
+        error_code: str | None = None,
     ) -> None:
         """Agent callback: job finished. EXECUTING/AWAITING_OTP/AWAITING_CREDENTIAL -> INVOICE_SENT or IDLE."""
         log.info(
@@ -474,7 +477,7 @@ class Session:
                     PAYMENT_EXPIRY, job_id, self._config.payment_expiry_seconds
                 )
         else:
-            await self._fail_job(user_npub, job, error)
+            await self._fail_job(user_npub, job, error, error_code=error_code)
 
     async def handle_payment_received(
         self, job_id: str, amount_sats: int

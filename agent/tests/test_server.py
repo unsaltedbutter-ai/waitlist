@@ -28,6 +28,7 @@ def _fake_json_response(data, *, status=200):
 from aiohttp import web  # this is actually a MagicMock from conftest
 web.json_response = _fake_json_response
 
+from agent.playbook import ExecutionResult
 from agent.server import ActiveJob, Agent
 
 
@@ -432,5 +433,93 @@ class TestShutdown:
 
             await agent.stop()
             assert set(completed) == {"job-0", "job-1"}
+
+        _run(go())
+
+
+# ---------------------------------------------------------------------------
+# Report result tests
+# ---------------------------------------------------------------------------
+
+class TestReportResult:
+    def test_report_result_includes_error_code(self):
+        """_report_result should include error_code in the POST payload."""
+        async def go():
+            agent = _make_agent()
+            agent._http_client = AsyncMock()
+            mock_resp = MagicMock()
+            mock_resp.status_code = 200
+            agent._http_client.post.return_value = mock_resp
+
+            active = ActiveJob(job_id="job-ec", service="netflix", action="cancel")
+            result = ExecutionResult(
+                job_id="job-ec",
+                service="netflix",
+                flow="cancel",
+                success=False,
+                duration_seconds=42.0,
+                step_count=5,
+                inference_count=3,
+                playbook_version=0,
+                error_message="Sign-in failed: credentials rejected by service",
+                error_code="credential_invalid",
+            )
+
+            await agent._report_result(active, result, "")
+
+            agent._http_client.post.assert_awaited_once()
+            call_kwargs = agent._http_client.post.call_args
+            payload = call_kwargs.kwargs.get("json") or call_kwargs[1].get("json")
+            assert payload["error_code"] == "credential_invalid"
+            assert payload["success"] is False
+
+        _run(go())
+
+    def test_report_result_null_error_code_when_no_error(self):
+        """_report_result should send error_code=null for normal failures."""
+        async def go():
+            agent = _make_agent()
+            agent._http_client = AsyncMock()
+            mock_resp = MagicMock()
+            mock_resp.status_code = 200
+            agent._http_client.post.return_value = mock_resp
+
+            active = ActiveJob(job_id="job-ok", service="netflix", action="cancel")
+            result = ExecutionResult(
+                job_id="job-ok",
+                service="netflix",
+                flow="cancel",
+                success=False,
+                duration_seconds=10.0,
+                step_count=2,
+                inference_count=1,
+                playbook_version=0,
+                error_message="Max steps reached",
+            )
+
+            await agent._report_result(active, result, "")
+
+            call_kwargs = agent._http_client.post.call_args
+            payload = call_kwargs.kwargs.get("json") or call_kwargs[1].get("json")
+            assert payload["error_code"] is None
+
+        _run(go())
+
+    def test_report_result_fallback_has_null_error_code(self):
+        """When result is None (crash), error_code should be null."""
+        async def go():
+            agent = _make_agent()
+            agent._http_client = AsyncMock()
+            mock_resp = MagicMock()
+            mock_resp.status_code = 200
+            agent._http_client.post.return_value = mock_resp
+
+            active = ActiveJob(job_id="job-crash", service="netflix", action="cancel")
+
+            await agent._report_result(active, None, "Unexpected error")
+
+            call_kwargs = agent._http_client.post.call_args
+            payload = call_kwargs.kwargs.get("json") or call_kwargs[1].get("json")
+            assert payload["error_code"] is None
 
         _run(go())

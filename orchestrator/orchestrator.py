@@ -273,9 +273,11 @@ async def run(config: Config) -> None:
         access_end_date: str | None,
         error: str | None,
         duration_seconds: int,
+        error_code: str | None = None,
     ) -> None:
         await session.handle_result(
-            job_id, success, access_end_date, error, duration_seconds
+            job_id, success, access_end_date, error, duration_seconds,
+            error_code=error_code,
         )
         await job_manager.on_job_complete(job_id)
         # Store result for CLI polling if it was a CLI-dispatched job

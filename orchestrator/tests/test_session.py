@@ -719,6 +719,64 @@ async def test_result_failure_resume(deps):
 
 
 @pytest.mark.asyncio
+async def test_result_failure_credential_invalid_dm(deps):
+    """When error_code='credential_invalid', user DM says credentials were rejected."""
+    s = deps["session"]
+    db = deps["db"]
+    api = deps["api"]
+    send_dm = deps["send_dm"]
+
+    await db.upsert_job(_make_job(action="cancel"))
+    await db.upsert_session("npub1alice", EXECUTING, job_id="job-1")
+
+    await s.handle_result(
+        job_id="job-1",
+        success=False,
+        access_end_date=None,
+        error="Sign-in failed: credentials rejected by service",
+        duration_seconds=30,
+        error_code="credential_invalid",
+    )
+
+    # Session deleted (back to IDLE)
+    assert await db.get_session("npub1alice") is None
+
+    # User gets credential-specific failure DM
+    send_dm.assert_awaited_once()
+    msg = send_dm.call_args[0][1]
+    assert "credentials were rejected" in msg
+    # Should NOT contain the generic "notified our human" text
+    assert "notified" not in msg.lower()
+
+
+@pytest.mark.asyncio
+async def test_result_failure_generic_dm_unchanged(deps):
+    """When error_code=None, user DM is the existing generic message."""
+    s = deps["session"]
+    db = deps["db"]
+    api = deps["api"]
+    send_dm = deps["send_dm"]
+
+    await db.upsert_job(_make_job(action="cancel"))
+    await db.upsert_session("npub1alice", EXECUTING, job_id="job-1")
+
+    await s.handle_result(
+        job_id="job-1",
+        success=False,
+        access_end_date=None,
+        error="Login page changed",
+        duration_seconds=60,
+        error_code=None,
+    )
+
+    # User gets generic failure DM
+    send_dm.assert_awaited_once()
+    msg = send_dm.call_args[0][1]
+    assert "notified" in msg.lower()
+    assert "credentials" not in msg.lower()
+
+
+@pytest.mark.asyncio
 async def test_result_failure_updates_vps(deps):
     """Failure should update VPS job status to 'failed'."""
     s = deps["session"]

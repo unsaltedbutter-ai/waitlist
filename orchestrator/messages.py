@@ -171,6 +171,16 @@ def action_failed(service_id: str, action: str) -> str:
     return f"Failed to {verb} {name}. We've notified our human. \U0001f916"
 
 
+def action_failed_credentials(service_id: str, action: str) -> str:
+    """Action failed due to invalid credentials."""
+    name = display_name(service_id)
+    verb = "cancel" if action == "cancel" else "resume"
+    return (
+        f"Failed to {verb} {name}: your credentials were rejected. "
+        f"Please double-check your {name} email and password, then try again."
+    )
+
+
 def action_failed_cancel(service_id: str) -> str:
     """Cancel failed (legacy wrapper)."""
     return action_failed(service_id, "cancel")

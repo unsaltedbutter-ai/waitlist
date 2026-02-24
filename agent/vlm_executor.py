@@ -386,6 +386,21 @@ class VLMExecutor:
                         else:
                             # Sign-in was the only phase (shouldn't happen)
                             break
+                    elif result == 'credential_invalid':
+                        error_message = 'Sign-in failed: credentials rejected by service'
+                        log.warning('Job %s: %s', job_id, error_message)
+                        return ExecutionResult(
+                            job_id=job_id,
+                            service=service,
+                            flow=action,
+                            success=False,
+                            duration_seconds=time.monotonic() - t0,
+                            step_count=step_count,
+                            inference_count=inference_count,
+                            playbook_version=0,
+                            error_message=error_message,
+                            error_code='credential_invalid',
+                        )
                     elif result == 'captcha':
                         error_message = 'CAPTCHA detected during sign-in'
                         log.warning('Job %s: %s', job_id, error_message)
@@ -399,6 +414,7 @@ class VLMExecutor:
                             inference_count=inference_count,
                             playbook_version=0,
                             error_message=error_message,
+                            error_code='captcha',
                         )
                     elif result == 'need_human':
                         error_message = 'Sign-in requires human intervention'
@@ -598,7 +614,7 @@ class VLMExecutor:
     ) -> str:
         """Handle a sign-in page classification response.
 
-        Returns: 'continue', 'done', 'need_human', or 'captcha'.
+        Returns: 'continue', 'done', 'need_human', 'captcha', or 'credential_invalid'.
 
         GUI actions within each page type are wrapped in gui_lock.
         OTP requests happen OUTSIDE the lock so the lock is free for
@@ -627,6 +643,9 @@ class VLMExecutor:
 
         log.debug('Sign-in page_type=%s, email=%s, pass=%s, button=%s',
                   page_type, email_box, password_box, button_box)
+
+        if page_type == 'credential_error':
+            return 'credential_invalid'
 
         if page_type == 'signed_in':
             return 'done'

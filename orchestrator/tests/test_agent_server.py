@@ -148,6 +148,7 @@ async def test_result_callback_success(aio_client: AioTestClient) -> None:
         access_end_date: str | None,
         error: str | None,
         duration_seconds: int,
+        error_code: str | None = None,
     ) -> None:
         received.append((job_id, success, access_end_date, error, duration_seconds))
 
@@ -182,6 +183,7 @@ async def test_result_callback_failure(aio_client: AioTestClient) -> None:
         access_end_date: str | None,
         error: str | None,
         duration_seconds: int,
+        error_code: str | None = None,
     ) -> None:
         received.append((job_id, success, access_end_date, error, duration_seconds))
 
@@ -201,6 +203,71 @@ async def test_result_callback_failure(aio_client: AioTestClient) -> None:
 
     assert len(received) == 1
     assert received[0] == ("j2", False, None, "Login failed", 15)
+
+
+@pytest.mark.asyncio
+async def test_result_callback_passes_error_code(aio_client: AioTestClient) -> None:
+    """POST /callback/result with error_code passes it through to the callback."""
+    received = []
+
+    async def on_result(
+        job_id: str,
+        success: bool,
+        access_end_date: str | None,
+        error: str | None,
+        duration_seconds: int,
+        error_code: str | None,
+    ) -> None:
+        received.append((job_id, success, error, error_code))
+
+    aio_client.app[_server_key].set_result_callback(on_result)
+
+    resp = await aio_client.post(
+        "/callback/result",
+        json={
+            "job_id": "j-cred",
+            "success": False,
+            "access_end_date": None,
+            "error": "Sign-in failed: credentials rejected",
+            "error_code": "credential_invalid",
+            "duration_seconds": 30,
+        },
+    )
+    assert resp.status == 200
+
+    assert len(received) == 1
+    assert received[0] == (
+        "j-cred", False, "Sign-in failed: credentials rejected", "credential_invalid"
+    )
+
+
+@pytest.mark.asyncio
+async def test_result_callback_null_error_code(aio_client: AioTestClient) -> None:
+    """POST /callback/result without error_code passes None to the callback."""
+    received = []
+
+    async def on_result(
+        job_id: str,
+        success: bool,
+        access_end_date: str | None,
+        error: str | None,
+        duration_seconds: int,
+        error_code: str | None,
+    ) -> None:
+        received.append(error_code)
+
+    aio_client.app[_server_key].set_result_callback(on_result)
+
+    resp = await aio_client.post(
+        "/callback/result",
+        json={
+            "job_id": "j1",
+            "success": True,
+            "duration_seconds": 10,
+        },
+    )
+    assert resp.status == 200
+    assert received == [None]
 
 
 @pytest.mark.asyncio
@@ -234,6 +301,7 @@ async def test_result_duration_defaults_to_zero(aio_client: AioTestClient) -> No
         access_end_date: str | None,
         error: str | None,
         duration_seconds: int,
+        error_code: str | None = None,
     ) -> None:
         received.append(duration_seconds)
 
@@ -267,6 +335,7 @@ async def test_result_callback_error_returns_500(aio_client: AioTestClient) -> N
         access_end_date: str | None,
         error: str | None,
         duration_seconds: int,
+        error_code: str | None = None,
     ) -> None:
         raise RuntimeError("db down")
 

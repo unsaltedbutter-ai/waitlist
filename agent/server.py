@@ -461,6 +461,7 @@ class Agent:
                 "success": result.success,
                 "access_end_date": result.billing_date,
                 "error": result.error_message or None,
+                "error_code": result.error_code or None,
                 "duration_seconds": int(result.duration_seconds),
             }
         else:
@@ -469,6 +470,7 @@ class Agent:
                 "success": False,
                 "access_end_date": None,
                 "error": fallback_error or "Unknown error",
+                "error_code": None,
                 "duration_seconds": int(time.monotonic() - active.started_at),
             }
 

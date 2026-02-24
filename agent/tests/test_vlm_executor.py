@@ -124,6 +124,17 @@ CAPTCHA_PAGE = {
     'reasoning': 'captcha challenge detected',
 }
 
+CREDENTIAL_ERROR_PAGE = {
+    'page_type': 'credential_error',
+    'email_box': [100, 200, 400, 230],
+    'password_box': [100, 260, 400, 290],
+    'button_box': [150, 320, 350, 360],
+    'profile_box': None,
+    'code_boxes': None,
+    'confidence': 0.93,
+    'reasoning': 'login form with credential error message',
+}
+
 
 # ---------------------------------------------------------------------------
 # Patches applied to all executor tests (no real Chrome, screenshots, etc.)
@@ -347,6 +358,25 @@ class TestVLMExecutorRun:
         result = executor.run('netflix', 'cancel', {'email': 'a', 'pass': 'b'})
         assert not result.success
         assert 'CAPTCHA' in result.error_message
+        assert result.error_code == 'captcha'
+
+    def test_credential_error_page_type_returns_failure(self):
+        """credential_error page -> immediate failure with error_code."""
+        vlm = _make_vlm([CREDENTIAL_ERROR_PAGE])
+        executor = VLMExecutor(vlm, settle_delay=0)
+        result = executor.run('netflix', 'cancel', {'email': 'a', 'pass': 'b'})
+        assert not result.success
+        assert result.error_code == 'credential_invalid'
+        assert 'credentials rejected' in result.error_message.lower()
+
+    def test_credential_error_fails_immediately(self):
+        """credential_error should NOT retry (no stuck detection loop)."""
+        vlm = _make_vlm([CREDENTIAL_ERROR_PAGE])
+        executor = VLMExecutor(vlm, settle_delay=0)
+        result = executor.run('netflix', 'cancel', {'email': 'a', 'pass': 'b'})
+        assert not result.success
+        # Only one VLM call: the credential_error page. No retries.
+        assert result.inference_count == 1
 
     def test_need_human_during_cancel_fails(self):
         need_human = {

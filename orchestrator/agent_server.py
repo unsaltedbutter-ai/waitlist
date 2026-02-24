@@ -17,7 +17,7 @@ log = logging.getLogger(__name__)
 # Callback type aliases for clarity.
 OtpCallback = Callable[[str, str, str | None], Awaitable[None]]
 CredentialCallback = Callable[[str, str, str], Awaitable[None]]
-ResultCallback = Callable[[str, bool, str | None, str | None, int], Awaitable[None]]
+ResultCallback = Callable[[str, bool, str | None, str | None, int, str | None], Awaitable[None]]
 CliDispatchCallback = Callable[[str, str, str, dict, str], Awaitable[str]]
 
 
@@ -70,7 +70,8 @@ class AgentCallbackServer:
         """Set handler for POST /callback/result.
 
         callback(job_id: str, success: bool, access_end_date: str | None,
-                 error: str | None, duration_seconds: int)
+                 error: str | None, duration_seconds: int,
+                 error_code: str | None)
         Called when a cancel/resume job completes on the agent.
         """
         self._result_callback = callback
@@ -172,6 +173,7 @@ class AgentCallbackServer:
                     data.get("access_end_date"),
                     data.get("error"),
                     data.get("duration_seconds", 0),
+                    data.get("error_code"),
                 )
             except Exception:
                 log.exception("Result callback error for job %s", job_id)
