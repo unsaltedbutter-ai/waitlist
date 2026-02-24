@@ -205,6 +205,50 @@ def _click_bbox(bbox, session, chrome_offset: int = 0) -> None:
     mouse.click(sx, sy)
 
 
+def _bbox_to_screen(bbox, session, chrome_offset: int = 0):
+    """Convert image-pixel bbox [x1,y1,x2,y2] to screen-point bbox."""
+    x1, y1 = coords.image_to_screen(bbox[0], bbox[1], session.bounds,
+                                     chrome_offset=chrome_offset)
+    x2, y2 = coords.image_to_screen(bbox[2], bbox[3], session.bounds,
+                                     chrome_offset=chrome_offset)
+    return (x1, y1, x2, y2)
+
+
+def _restore_cursor(screen_bbox, session) -> bool:
+    """Move cursor back into the last-clicked bbox if another job displaced it.
+
+    Each concurrent job tracks where it last clicked (in screen coordinates).
+    Before each screenshot, we check whether the cursor is still inside that
+    box. If another job moved it away, we re-enter the box at a random point
+    (center-biased Gaussian, matching _click_bbox distribution) so hover
+    menus reappear.
+
+    Acquires gui_lock only when a move is needed.
+    Returns True if the cursor was restored.
+    """
+    x1, y1, x2, y2 = screen_bbox
+    cx, cy = mouse.position()
+    if x1 <= cx <= x2 and y1 <= cy <= y2:
+        return False
+
+    with gui_lock:
+        focus_window_by_pid(session.pid)
+        bw = x2 - x1
+        bh = y2 - y1
+        inset_x = bw * 0.10
+        inset_y = bh * 0.10
+        safe_x1 = x1 + inset_x
+        safe_y1 = y1 + inset_y
+        safe_x2 = x2 - inset_x
+        safe_y2 = y2 - inset_y
+        rx = (safe_x1 + safe_x2) / 2 + random.gauss(0, bw * 0.10)
+        ry = (safe_y1 + safe_y2) / 2 + random.gauss(0, bh * 0.10)
+        rx = max(safe_x1, min(rx, safe_x2))
+        ry = max(safe_y1, min(ry, safe_y2))
+        mouse.move_to(int(rx), int(ry), fast=True)
+    return True
+
+
 # ---------------------------------------------------------------------------
 # VLMExecutor
 # ---------------------------------------------------------------------------
@@ -322,8 +366,17 @@ class VLMExecutor:
 
             prompt_idx = 0
             stuck = _StuckDetector()
+            last_click_screen_bbox = None
 
             for iteration in range(self.max_steps):
+                # Restore cursor if another concurrent job displaced it.
+                # Re-triggers hover menus that were lost when the other
+                # job moved the mouse to its own Chrome window.
+                if last_click_screen_bbox is not None:
+                    if _restore_cursor(last_click_screen_bbox, session):
+                        log.debug('Job %s: cursor restored to last click bbox',
+                                  job_id)
+
                 # Settle delay: no GUI, runs in parallel
                 time.sleep(self.settle_delay)
 
@@ -494,6 +547,8 @@ class VLMExecutor:
                     with gui_lock:
                         focus_window_by_pid(session.pid)
                         _click_bbox(scaled_bbox, session, chrome_offset=chrome_height_px)
+                    last_click_screen_bbox = _bbox_to_screen(
+                        scaled_bbox, session, chrome_offset=chrome_height_px)
                     step_count += 1
 
                     # Auto-type after clicking input fields
@@ -541,6 +596,7 @@ class VLMExecutor:
                     with gui_lock:
                         focus_window_by_pid(session.pid)
                         scroll_mod.scroll(direction, scroll_clicks)
+                    last_click_screen_bbox = None  # page shifted, bbox invalid
                     step_count += 1
 
                 elif vlm_action == 'press_key' and key_to_press:

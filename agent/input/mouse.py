@@ -135,6 +135,11 @@ def right_click(x: int | None = None, y: int | None = None) -> None:
     click(x, y, button='right')
 
 
+def position() -> tuple[int, int]:
+    """Return current mouse position in screen points."""
+    return pyautogui.position()
+
+
 def drag(
     start_x: int,
     start_y: int,
