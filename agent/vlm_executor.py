@@ -532,18 +532,6 @@ class VLMExecutor:
                             stuck.reset()
                             log.info('Job %s: sign-in complete, moving to %s',
                                      job_id, labels[prompt_idx])
-
-                            # Zoom out one more step (90% -> 80%) for cancel
-                            # flows so the Cancel button is above the fold
-                            # and the VLM doesn't confuse it with "Edit Plan".
-                            if action == 'cancel':
-                                with gui_lock:
-                                    focus_window_by_pid(session.pid)
-                                    keyboard.hotkey('command', '-')
-                                    time.sleep(0.1)
-                                log.info('Job %s: zoomed to 80%% for cancel',
-                                         job_id)
-
                             continue
                         else:
                             # Sign-in was the only phase (shouldn't happen)

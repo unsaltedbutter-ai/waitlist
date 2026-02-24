@@ -123,8 +123,10 @@ def create_session(width: int = 1280, height: int = 900) -> BrowserSession:
         window.resize_window_by_drag('Google Chrome', width, height, fast=True)
         time.sleep(0.2)
 
-        # Zoom out to 90% so more content is visible above the fold.
-        # Cmd+minus once = 90%, common among real laptop users.
+        # Zoom out to 80% so more content (including Cancel buttons)
+        # is visible above the fold. Cmd+minus twice = 80%.
+        keyboard.hotkey('command', '-')
+        time.sleep(0.05)
         keyboard.hotkey('command', '-')
         time.sleep(0.1)
 
