@@ -383,6 +383,7 @@ class VLMExecutor:
             last_click_screen_bbox = None
             pending_action = None
             used_account_fallback = False
+            last_typed_cred_key = None
 
             for iteration in range(self.max_steps):
                 # -------------------------------------------------------
@@ -642,10 +643,16 @@ class VLMExecutor:
                         log.info('Job %s: stuck, navigating to %s',
                                  job_id, account_url)
                         browser.navigate(session, account_url)
+                        # Dismiss any "Leave page?" beforeunload dialog
+                        with gui_lock:
+                            focus_window_by_pid(session.pid)
+                            keyboard.press_key('return')
+                        time.sleep(1.0)
                         used_account_fallback = True
                         stuck.reset()
                         last_click_screen_bbox = None
                         pending_action = None
+                        last_typed_cred_key = None
                         continue
                     error_message = f'Stuck during {current_label} (state={state}, action={vlm_action})'
                     log.warning('Job %s: %s', job_id, error_message)
@@ -660,6 +667,10 @@ class VLMExecutor:
                         playbook_version=0,
                         error_message=error_message,
                     )
+
+                # Reset typed-credential tracking when action changes
+                if vlm_action != 'type_text':
+                    last_typed_cred_key = None
 
                 # Build pending_action (credentials resolved NOW, outside lock)
                 if vlm_action == 'click' and bbox:
@@ -676,6 +687,7 @@ class VLMExecutor:
                             if value:
                                 credentials[cred_key] = value
                                 actual_value = value
+                                stuck.reset()
                         auto_value = actual_value or None
                     pending_action = {
                         'type': 'click',
@@ -688,17 +700,34 @@ class VLMExecutor:
                     template, actual_value, _ = _resolve_credential(
                         text_to_type, credentials,
                     )
-                    if not actual_value and template.startswith('{'):
-                        cred_key = template.strip('{}')
+                    cred_key = template.strip('{}') if template.startswith('{') else None
+                    if not actual_value and cred_key:
                         value = self._request_credential(job_id, service, cred_key)
                         if value:
                             credentials[cred_key] = value
                             actual_value = value
+                            stuck.reset()
                     if actual_value:
-                        pending_action = {
-                            'type': 'type_text',
-                            'text': actual_value,
-                        }
+                        if cred_key and cred_key == last_typed_cred_key:
+                            log.info('Job %s: credential %s already typed, waiting',
+                                     job_id, cred_key)
+                            pending_action = {'type': 'wait'}
+                        elif bbox:
+                            # Click the target field first, then type
+                            scaled_bbox = [int(c * scale_factor) for c in bbox]
+                            pending_action = {
+                                'type': 'click',
+                                'bbox': scaled_bbox,
+                                'chrome_offset': chrome_height_px,
+                                'auto_value': actual_value,
+                            }
+                            last_typed_cred_key = cred_key
+                        else:
+                            pending_action = {
+                                'type': 'type_text',
+                                'text': actual_value,
+                            }
+                            last_typed_cred_key = cred_key
                     else:
                         pending_action = {'type': 'wait'}
 

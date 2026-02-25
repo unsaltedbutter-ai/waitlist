@@ -921,6 +921,95 @@ class TestCredentialCallback:
             thread.join(timeout=2)
             loop.close()
 
+    def test_duplicate_type_text_skipped(self):
+        """Same credential typed twice in a row: second is converted to wait."""
+        type_cvv = {
+            'state': 'payment page',
+            'action': 'type_text',
+            'text_to_type': 'the cvv',
+            'confidence': 0.9,
+            'reasoning': 'type cvv',
+        }
+        # VLM returns type_cvv twice, then done.
+        # Without the fix, agent would type '789' twice (corrupting the field).
+        # With the fix, second type_text is converted to wait.
+        loop = asyncio.new_event_loop()
+
+        async def cred_callback(job_id, service, credential_name):
+            return '789'
+
+        vlm = _make_vlm([SIGNED_IN, type_cvv, type_cvv, CANCEL_DONE])
+
+        import threading
+        thread = threading.Thread(target=loop.run_forever, daemon=True)
+        thread.start()
+        try:
+            executor = VLMExecutor(
+                vlm, settle_delay=0,
+                credential_callback=cred_callback,
+                loop=loop,
+            )
+            result = executor.run(
+                'netflix', 'cancel',
+                {'email': 'a@b.com', 'pass': 'x'},
+                job_id='job-nodup',
+            )
+            assert result.success
+        finally:
+            loop.call_soon_threadsafe(loop.stop)
+            thread.join(timeout=2)
+            loop.close()
+
+    def test_stuck_reset_after_credential_receipt(self):
+        """Stuck detector resets when a credential arrives via callback.
+
+        Pre-credential entries should not count toward the stuck threshold.
+        """
+        type_cvv = {
+            'state': 'payment page',
+            'action': 'type_text',
+            'text_to_type': 'the cvv',
+            'confidence': 0.9,
+            'reasoning': 'type cvv',
+        }
+        click_submit = {
+            'state': 'payment page',
+            'action': 'click',
+            'target_description': 'Agree and Subscribe button',
+            'bounding_box': [100, 400, 300, 440],
+            'confidence': 0.9,
+            'reasoning': 'submit payment',
+        }
+        # Sequence: sign-in, type_cvv (triggers callback), click_submit, done
+        # The type_cvv adds one stuck entry. After credential receipt, stuck
+        # resets. click_submit adds a new entry. No false stuck detection.
+        loop = asyncio.new_event_loop()
+
+        async def cred_callback(job_id, service, credential_name):
+            return '789'
+
+        vlm = _make_vlm([SIGNED_IN, type_cvv, click_submit, CANCEL_DONE])
+
+        import threading
+        thread = threading.Thread(target=loop.run_forever, daemon=True)
+        thread.start()
+        try:
+            executor = VLMExecutor(
+                vlm, settle_delay=0,
+                credential_callback=cred_callback,
+                loop=loop,
+            )
+            result = executor.run(
+                'netflix', 'cancel',
+                {'email': 'a@b.com', 'pass': 'x'},
+                job_id='job-stuck-reset',
+            )
+            assert result.success
+        finally:
+            loop.call_soon_threadsafe(loop.stop)
+            thread.join(timeout=2)
+            loop.close()
+
 
 # ---------------------------------------------------------------------------
 # Cursor restore tests (concurrent job hover-menu fix)
