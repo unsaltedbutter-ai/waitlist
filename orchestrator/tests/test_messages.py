@@ -294,7 +294,7 @@ class TestMisc:
         assert result[0] == "123456-789012"
         # Second message has instructions
         assert "15 minutes" in result[1]
-        assert "https://unsaltedbutter.ai/login" in result[1]
+        assert "https://unsaltedbutter.ai/login?code=123456-789012" in result[1]
 
     def test_not_registered(self) -> None:
         msg = not_registered("https://unsaltedbutter.ai")

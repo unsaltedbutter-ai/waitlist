@@ -11,7 +11,6 @@ SERVICE_DISPLAY: dict[str, str] = {
     "netflix": "Netflix",
     "hulu": "Hulu",
     "disney_plus": "Disney+",
-    "apple_tv": "Apple TV+",
     "paramount": "Paramount+",
     "peacock": "Peacock",
     "max": "Max",
@@ -277,7 +276,7 @@ def login_code(code: str, base_url: str) -> list[str]:
     formatted = f"{code[:6]}-{code[6:]}"
     return [
         formatted,
-        f"That's your login code. Enter it within 15 minutes.\n\n{base_url}/login",
+        f"That's your login code. Enter it within 15 minutes.\n\n{base_url}/login?code={formatted}",
     ]
 
 
@@ -309,7 +308,7 @@ def session_cancelled() -> str:
 def unknown_service(service_input: str) -> str:
     return (
         f"Unknown service: {service_input}\n"
-        f"Try: netflix, hulu, disney+, apple tv+, paramount+, peacock, max"
+        f"Try: netflix, hulu, disney+, paramount+, peacock, max"
     )
 
 

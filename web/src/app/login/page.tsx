@@ -1,20 +1,30 @@
 "use client";
 
-import { useState } from "react";
-import { useRouter } from "next/navigation";
+import { useState, useEffect, useRef, Suspense } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 
 const TOKEN_KEY = "ub_token";
 const BOT_NPUB = process.env.NEXT_PUBLIC_NOSTR_BOT_NPUB ?? "npub1hssdvydgqjx9y6ptlkt23sc5uptnqkc3q2r8j68zpdeyt9psl27s534rcr";
 const BOT_NAME = process.env.NEXT_PUBLIC_NOSTR_BOT_NAME ?? "UnsaltedButter Bot";
 
 export default function LoginPage() {
+  return (
+    <Suspense>
+      <LoginForm />
+    </Suspense>
+  );
+}
+
+function LoginForm() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
   // OTP state
   const [otpCode, setOtpCode] = useState("");
   const [npubCopied, setNpubCopied] = useState(false);
+  const autoSubmitted = useRef(false);
 
   // Format OTP input as XXXXXX-XXXXXX
   function handleOtpChange(value: string) {
@@ -26,6 +36,31 @@ export default function LoginPage() {
       setOtpCode(digits);
     }
   }
+
+  // Auto-fill and auto-submit from ?code= query param
+  useEffect(() => {
+    if (autoSubmitted.current) return;
+    const code = searchParams.get("code");
+    if (!code) return;
+    const digits = code.replace(/\D/g, "").slice(0, 12);
+    if (digits.length !== 12) return;
+    const formatted = `${digits.slice(0, 6)}-${digits.slice(6)}`;
+    setOtpCode(formatted);
+    autoSubmitted.current = true;
+  }, [searchParams]);
+
+  // Auto-submit after code is populated from URL
+  useEffect(() => {
+    if (!autoSubmitted.current) return;
+    if (otpCode.replace("-", "").length !== 12) return;
+    if (loading) return;
+    // Submit on next tick so React finishes rendering
+    const id = setTimeout(() => {
+      handleOtpSubmit(new Event("submit") as unknown as React.FormEvent);
+    }, 0);
+    return () => clearTimeout(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [otpCode]);
 
   async function handleOtpSubmit(e: React.FormEvent) {
     e.preventDefault();
