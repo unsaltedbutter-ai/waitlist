@@ -286,8 +286,10 @@ export default function OnboardingPage() {
   async function saveCredentials() {
     setError("");
 
-    // "Later" mode: skip credentials entirely, go to queue step
+    // "Later" mode: skip credentials entirely, go to queue step.
+    // Clear queue so previously-entered selections don't leak through.
     if (credentialMode === "later") {
+      setQueue([]);
       setStep(3);
       return;
     }
