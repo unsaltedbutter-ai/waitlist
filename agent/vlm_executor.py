@@ -259,7 +259,7 @@ def _restore_cursor(screen_bbox, session) -> bool:
     ry = (safe_y1 + safe_y2) / 2 + random.gauss(0, bh * 0.10)
     rx = max(safe_x1, min(rx, safe_x2))
     ry = max(safe_y1, min(ry, safe_y2))
-    mouse.move_to(int(rx), int(ry), fast=True)
+    mouse.move_to(int(rx), int(ry))
     return True
 
 

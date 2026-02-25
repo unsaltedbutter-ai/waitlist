@@ -54,13 +54,6 @@ def move_to(x: int, y: int, fast: bool = False) -> None:
         pyautogui.moveTo(x, y)
         return
 
-    # Pre-move jerk: hand re-engages (~50% of non-fast moves with enough distance)
-    if not fast and distance > 30 and random.random() < 0.50:
-        jerk_dist = random.uniform(20, 80)
-        jerk_points = humanize.jerk_offset((sx, sy), distance=jerk_dist)
-        _execute_path(jerk_points, duration=random.uniform(0.06, 0.12))
-        sx, sy = jerk_points[-1]
-
     n_points = humanize.num_waypoints(distance)
     duration = humanize.movement_duration(distance)
     if fast:

@@ -944,7 +944,7 @@ class TestCursorRestore:
         assert len(move_calls) == 0
 
     def test_restore_moves_when_outside(self, monkeypatch):
-        """Cursor outside bbox triggers a fast move into the safe area.
+        """Cursor outside bbox triggers a normal-speed move into the safe area.
 
         _restore_cursor requires the caller to hold gui_lock.
         """
@@ -960,7 +960,7 @@ class TestCursorRestore:
         # With random.gauss patched to return mu, lands at center of safe area
         assert 100 <= x <= 300
         assert 200 <= y <= 250
-        assert fast is True
+        assert fast is False
 
     def test_restore_on_bbox_edge_stays_inside(self, monkeypatch):
         """Cursor exactly on bbox boundary counts as inside (no restore)."""
@@ -970,27 +970,33 @@ class TestCursorRestore:
     def test_click_saves_bbox_and_restore_fires(self, monkeypatch):
         """Click sets last_click_screen_bbox; next iteration restores if drifted."""
         monkeypatch.setattr('agent.vlm_executor.mouse.position', lambda: (0, 0))
-        restore_moves = []
-        def tracking_move(x, y, fast=False):
-            if fast:
-                restore_moves.append((x, y))
-        monkeypatch.setattr('agent.vlm_executor.mouse.move_to', tracking_move)
+        restore_count = [0]
+        orig_restore = _restore_cursor
+        def counting_restore(screen_bbox, session):
+            result = orig_restore(screen_bbox, session)
+            if result:
+                restore_count[0] += 1
+            return result
+        monkeypatch.setattr('agent.vlm_executor._restore_cursor', counting_restore)
 
         vlm = _make_vlm([SIGNED_IN, CANCEL_CLICK, CANCEL_DONE])
         executor = VLMExecutor(vlm, settle_delay=0)
         result = executor.run('netflix', 'cancel', {'email': 'a', 'pass': 'b'})
         assert result.success
         # CANCEL_DONE iteration triggers restore (cursor at 0,0, outside click bbox)
-        assert len(restore_moves) == 1
+        assert restore_count[0] == 1
 
     def test_scroll_clears_saved_bbox(self, monkeypatch):
         """Scroll clears the saved bbox so no restore fires on the next iteration."""
         monkeypatch.setattr('agent.vlm_executor.mouse.position', lambda: (0, 0))
-        restore_moves = []
-        def tracking_move(x, y, fast=False):
-            if fast:
-                restore_moves.append((x, y))
-        monkeypatch.setattr('agent.vlm_executor.mouse.move_to', tracking_move)
+        restore_count = [0]
+        orig_restore = _restore_cursor
+        def counting_restore(screen_bbox, session):
+            result = orig_restore(screen_bbox, session)
+            if result:
+                restore_count[0] += 1
+            return result
+        monkeypatch.setattr('agent.vlm_executor._restore_cursor', counting_restore)
 
         scroll_action = {
             'state': 'page_scroll',
@@ -1006,7 +1012,7 @@ class TestCursorRestore:
         assert result.success
         # 2 restores: once before screenshot (after click), once before scroll execution.
         # No restore before done (scroll cleared bbox).
-        assert len(restore_moves) == 2
+        assert restore_count[0] == 2
 
     def test_no_restore_during_signin_phase(self, monkeypatch):
         """Cursor restore only fires in cancel/resume phase, not sign-in."""
