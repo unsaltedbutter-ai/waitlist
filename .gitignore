@@ -53,3 +53,20 @@ scripts/migrations/
 # Logs
 *.log
 logs/
+
+# Private planning docs (purged from history)
+notes-from-chat-with-claude-website/
+unsalted-butter-handoff/
+streaming-rotator-plan.md
+docs/
+
+# Review/workflow notes (never tracked)
+code-review-instructions.txt
+code-review.txt
+expert-reviews-*.md
+workflow-instructions.md
+private-setup-notes.txt
+
+# Claude Code
+.claude/
+scan_repo/
