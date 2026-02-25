@@ -276,7 +276,7 @@ def login_code(code: str, base_url: str) -> list[str]:
     formatted = f"{code[:6]}-{code[6:]}"
     return [
         formatted,
-        f"That's your login code. Enter it within 15 minutes.\n\n{base_url}/login?code={formatted}",
+        f"Use your login code within 15 minutes.\n\nOr use this link:\n\n{base_url}/login?code={formatted}",
     ]
 
 
