@@ -40,7 +40,7 @@ export function FaqAccordion({ items }: { items: FaqItem[] }) {
                 id={`faq-panel-${item.id}`}
                 role="region"
                 aria-labelledby={`faq-btn-${item.id}`}
-                className="px-5 pb-4 text-muted text-sm leading-relaxed"
+                className="px-5 pb-4 text-muted text-sm leading-relaxed break-all"
               >
                 {item.answer.split("\n").map((para, i) => (
                   <p key={i} className={i > 0 ? "mt-3" : ""}>{para}</p>

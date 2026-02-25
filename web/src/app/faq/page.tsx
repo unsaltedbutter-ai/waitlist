@@ -5,7 +5,7 @@ import { FaqAccordion } from "./faq-accordion";
 export default function FaqPage() {
   return (
     <main className="min-h-screen flex items-center justify-center px-4 py-16">
-      <div className="max-w-lg w-full">
+      <div className="max-w-xl w-full">
         <div className="mb-10 text-center">
           <h1 className="text-4xl font-bold tracking-tight mb-3 text-foreground">
             FAQ
