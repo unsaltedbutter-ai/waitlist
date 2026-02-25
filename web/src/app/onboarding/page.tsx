@@ -55,7 +55,7 @@ export default function OnboardingPage() {
   const [submitting, setSubmitting] = useState(false);
   const [authorized, setAuthorized] = useState(false);
 
-  // Step 1 state: services + credentials
+  // Step 2 state: services + credentials
   const [services, setServices] = useState<ServiceOption[]>([]);
   const [serviceGroups, setServiceGroups] = useState<ServiceGroup[]>([]);
   const [selectedServiceIds, setSelectedServiceIds] = useState<Set<string>>(new Set());
@@ -67,7 +67,7 @@ export default function OnboardingPage() {
   const [showPasswords, setShowPasswords] = useState(false);
   const [credentialMode, setCredentialMode] = useState<"later" | "now">("later");
 
-  // Step 2 state: queue order
+  // Step 3 state: queue order
   const [queue, setQueue] = useState<QueueItem[]>([]);
 
   // Fetch available services on mount
@@ -184,7 +184,7 @@ export default function OnboardingPage() {
 
   const selectedIds = Array.from(selectedServiceIds);
 
-  const canSaveStep1 = (() => {
+  const canSaveStep2 = (() => {
     if (credentialMode === "later") return true;
     if (selectedIds.length === 0) return true;
     if (useSameCreds) {
@@ -196,14 +196,99 @@ export default function OnboardingPage() {
     });
   })();
 
-  // --- Step 1: Add Services + Credentials ---
+  // =====================================================================
+  // Step 1: How it works
+  // =====================================================================
+
+  function renderStep1() {
+    return (
+      <div className="space-y-8">
+        <div>
+          <h1 className="text-4xl font-bold tracking-tight text-foreground mb-4">
+            Before you start
+          </h1>
+        </div>
+
+        <div className="bg-surface border border-border rounded p-6 space-y-4">
+          <h3 className="text-lg font-semibold text-foreground">
+            How it works
+          </h3>
+          <ul className="space-y-3 text-sm text-muted leading-relaxed">
+            <li className="flex gap-2">
+              <span className="text-muted/60 shrink-0">&bull;</span>
+              <span>
+                We cancel and resume subscriptions for you, when you ask.
+              </span>
+            </li>
+            <li className="flex gap-2">
+              <span className="text-muted/60 shrink-0">&bull;</span>
+              <span>
+                We charge you per transaction.
+              </span>
+            </li>
+            <li className="flex gap-2">
+              <span className="text-muted/60 shrink-0">&bull;</span>
+              <span>
+                Your credentials are encrypted and destroyed immediately when you delete your account.
+              </span>
+            </li>
+            <li className="flex gap-2">
+              <span className="text-muted/60 shrink-0">&bull;</span>
+              <span>
+                We do not share your data with anyone.
+              </span>
+            </li>
+          </ul>
+        </div>
+
+        <div className="bg-amber-950/40 border border-amber-700/50 rounded p-5 space-y-3">
+          <p className="text-amber-400 font-semibold text-sm">
+            Understand the risks
+          </p>
+          <p className="text-amber-200/70 text-sm leading-relaxed">
+            Using UnsaltedButter to manage your streaming accounts may violate
+            those services&apos; Terms of Service. Streaming providers could
+            suspend or terminate your account at their discretion.
+          </p>
+          <p className="text-amber-200/70 text-sm leading-relaxed">
+            UnsaltedButter is not liable for any action a streaming service
+            takes against your account (including suspension,
+            termination, or loss of content) as a result of using this service.
+          </p>
+        </div>
+
+        <div className="bg-surface border-2 border-amber-500 rounded p-5">
+          <p className="text-foreground text-sm leading-relaxed font-bold">
+            You remain responsible for your own subscriptions.
+          </p>
+          <p className="text-muted text-sm mt-2 leading-relaxed">
+            UnsaltedButter acts on your instructions but does not guarantee that
+            every cancel or resume will succeed. Check your streaming accounts
+            periodically to verify.
+          </p>
+        </div>
+
+        <button
+          type="button"
+          onClick={() => setStep(2)}
+          className="w-full py-3 px-4 bg-accent text-background font-semibold rounded hover:bg-accent/90 transition-colors"
+        >
+          Continue
+        </button>
+      </div>
+    );
+  }
+
+  // =====================================================================
+  // Step 2: Add Services + Credentials
+  // =====================================================================
 
   async function saveCredentials() {
     setError("");
 
     // "Later" mode: skip credentials entirely, go to queue step
     if (credentialMode === "later") {
-      setStep(2);
+      setStep(3);
       return;
     }
 
@@ -264,16 +349,23 @@ export default function OnboardingPage() {
       }
 
       setSubmitting(false);
-      setStep(2);
+      setStep(3);
     } catch {
       setError("Connection failed. Try again.");
       setSubmitting(false);
     }
   }
 
-  function renderStep1() {
+  function renderStep2() {
     return (
       <div className="space-y-6">
+        <button
+          type="button"
+          onClick={() => setStep(1)}
+          className="text-sm text-muted hover:text-foreground transition-colors"
+        >
+          &larr; Back
+        </button>
         <div>
           <h1 className="text-4xl font-bold tracking-tight text-foreground mb-3">
             Add your services
@@ -497,7 +589,7 @@ export default function OnboardingPage() {
             <button
               type="button"
               onClick={saveCredentials}
-              disabled={submitting || !canSaveStep1}
+              disabled={submitting || !canSaveStep2}
               className="w-full py-3 px-4 rounded-lg font-medium text-sm transition-colors bg-accent text-background hover:bg-accent/90 disabled:bg-accent/20 disabled:text-accent/40 disabled:cursor-not-allowed"
             >
               {submitting ? "Saving..." : selectedIds.length === 0 ? "Skip for now" : "Save credentials"}
@@ -509,7 +601,7 @@ export default function OnboardingPage() {
               </p>
             )}
 
-            {selectedIds.length > 0 && !canSaveStep1 && (
+            {selectedIds.length > 0 && !canSaveStep2 && (
               <p className="text-xs text-muted/60 text-center -mt-3">
                 Provide credentials for each selected service to continue.
               </p>
@@ -520,7 +612,9 @@ export default function OnboardingPage() {
     );
   }
 
-  // --- Step 2: Arrange Queue ---
+  // =====================================================================
+  // Step 3: Queue + Authorization
+  // =====================================================================
 
   function handleDragEnd(event: DragEndEvent) {
     const { active, over } = event;
@@ -533,7 +627,7 @@ export default function OnboardingPage() {
     });
   }
 
-  async function confirmQueueOrder() {
+  async function handleFinish() {
     setError("");
     setSubmitting(true);
 
@@ -562,22 +656,42 @@ export default function OnboardingPage() {
         }
       }
 
-      setSubmitting(false);
-      setStep(3);
+      // Record consent
+      const authOk = await authFetch("/api/consent", {
+        method: "POST",
+        body: JSON.stringify({ consentType: "authorization" }),
+      });
+      if (!authOk.ok) {
+        setError("Failed to record authorization. Try again.");
+        setSubmitting(false);
+        return;
+      }
+
+      const confirmOk = await authFetch("/api/consent", {
+        method: "POST",
+        body: JSON.stringify({ consentType: "confirmation" }),
+      });
+      if (!confirmOk.ok) {
+        setError("Failed to record confirmation. Try again.");
+        setSubmitting(false);
+        return;
+      }
+
+      router.push("/dashboard");
     } catch {
       setError("Connection failed. Try again.");
       setSubmitting(false);
     }
   }
 
-  function renderStep2() {
+  function renderStep3() {
     const hasQueue = queue.length > 1;
 
     return (
       <div className="space-y-8">
         <button
           type="button"
-          onClick={() => setStep(1)}
+          onClick={() => setStep(2)}
           className="text-sm text-muted hover:text-foreground transition-colors"
         >
           &larr; Back
@@ -643,129 +757,7 @@ export default function OnboardingPage() {
           </div>
         )}
 
-        {error && <p className="text-red-400 text-sm">{error}</p>}
-
-        <button
-          type="button"
-          onClick={confirmQueueOrder}
-          disabled={submitting}
-          className="w-full py-3 px-4 bg-accent text-background font-semibold rounded hover:bg-accent/90 transition-colors disabled:opacity-50"
-        >
-          {submitting ? "Saving..." : "Next"}
-        </button>
-      </div>
-    );
-  }
-
-  // --- Step 3: Consent ---
-
-  async function handleConsent() {
-    setError("");
-    setSubmitting(true);
-    try {
-      const authOk = await authFetch("/api/consent", {
-        method: "POST",
-        body: JSON.stringify({ consentType: "authorization" }),
-      });
-      if (!authOk.ok) {
-        setError("Failed to record authorization. Try again.");
-        setSubmitting(false);
-        return;
-      }
-
-      const confirmOk = await authFetch("/api/consent", {
-        method: "POST",
-        body: JSON.stringify({ consentType: "confirmation" }),
-      });
-      if (!confirmOk.ok) {
-        setError("Failed to record confirmation. Try again.");
-        setSubmitting(false);
-        return;
-      }
-
-      router.push("/dashboard");
-    } catch {
-      setError("Connection failed. Try again.");
-      setSubmitting(false);
-    }
-  }
-
-  function renderStep3() {
-    return (
-      <div className="space-y-8">
-        <button
-          type="button"
-          onClick={() => setStep(queue.length > 1 ? 2 : 1)}
-          className="text-sm text-muted hover:text-foreground transition-colors"
-        >
-          &larr; Back
-        </button>
-        <div>
-          <h1 className="text-4xl font-bold tracking-tight text-foreground mb-4">
-            Almost there
-          </h1>
-        </div>
-
-        <div className="bg-surface border border-border rounded p-6 space-y-4">
-          <h3 className="text-lg font-semibold text-foreground">
-            How it works
-          </h3>
-          <ul className="space-y-3 text-sm text-muted leading-relaxed">
-            <li className="flex gap-2">
-              <span className="text-muted/60 shrink-0">&bull;</span>
-              <span>
-                We cancel and resume subscriptions for you, when you ask.
-              </span>
-            </li>
-            <li className="flex gap-2">
-              <span className="text-muted/60 shrink-0">&bull;</span>
-              <span>
-                We charge you per transaction.
-              </span>
-            </li>
-            <li className="flex gap-2">
-              <span className="text-muted/60 shrink-0">&bull;</span>
-              <span>
-                Your credentials are destroyed immediately when you destroy your account.
-              </span>
-            </li>
-            <li className="flex gap-2">
-              <span className="text-muted/60 shrink-0">&bull;</span>
-              <span>
-                We do not share your data with anyone.
-              </span>
-            </li>
-          </ul>
-        </div>
-
-        <div className="bg-amber-950/40 border border-amber-700/50 rounded p-5 space-y-3">
-          <p className="text-amber-400 font-semibold text-sm">
-            Understand the risks
-          </p>
-          <p className="text-amber-200/70 text-sm leading-relaxed">
-            Using UnsaltedButter to manage your streaming accounts may violate
-            those services&apos; Terms of Service. Streaming providers could
-            suspend or terminate your account at their discretion.
-          </p>
-          <p className="text-amber-200/70 text-sm leading-relaxed">
-            By authorizing us, you acknowledge this risk and agree that
-            UnsaltedButter is not liable for any action a streaming service
-            takes against your account (including suspension,
-            termination, or loss of content) as a result of using this service.
-          </p>
-        </div>
-
-        <div className="bg-surface border-2 border-amber-500 rounded p-5">
-          <p className="text-foreground text-sm leading-relaxed font-bold">
-            You remain responsible for your own subscriptions.
-          </p>
-          <p className="text-muted text-sm mt-2 leading-relaxed">
-            UnsaltedButter acts on your instructions but does not guarantee that
-            every cancel or resume will succeed. Check your streaming accounts
-            periodically to verify.
-          </p>
-        </div>
-
+        {/* Authorization */}
         <label className="flex items-start gap-3 cursor-pointer">
           <input
             type="checkbox"
@@ -784,11 +776,11 @@ export default function OnboardingPage() {
 
         <button
           type="button"
-          onClick={handleConsent}
+          onClick={handleFinish}
           disabled={submitting || !authorized}
           className="w-full py-3 px-4 bg-accent text-background font-semibold rounded hover:bg-accent/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
         >
-          {submitting ? "Finishing..." : "Accept and finish"}
+          {submitting ? "Finishing..." : "Authorize & finish"}
         </button>
       </div>
     );
