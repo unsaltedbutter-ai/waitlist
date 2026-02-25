@@ -51,8 +51,10 @@ export const GET = withAgentAuth(async (_req: NextRequest, { params }) => {
       service_id: string;
       action: string;
       status: string;
+      invoice_id: string | null;
+      amount_sats: number | null;
     }>(
-      `SELECT id, service_id, action, status
+      `SELECT id, service_id, action, status, invoice_id, amount_sats
        FROM jobs
        WHERE user_id = $1 AND status NOT IN (${placeholders})
        ORDER BY created_at DESC`,
@@ -81,6 +83,8 @@ export const GET = withAgentAuth(async (_req: NextRequest, { params }) => {
         service_id: r.service_id,
         action: r.action,
         status: r.status,
+        invoice_id: r.invoice_id,
+        amount_sats: r.amount_sats,
       })),
     });
   } catch (err) {

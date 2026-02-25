@@ -52,8 +52,10 @@ function mockQueue(items: { service_id: string; position: number; plan_id: strin
   vi.mocked(query).mockResolvedValueOnce(mockQueryResult(items));
 }
 
-function mockActiveJobs(jobs: { id: string; service_id: string; action: string; status: string }[]) {
-  vi.mocked(query).mockResolvedValueOnce(mockQueryResult(jobs));
+function mockActiveJobs(jobs: { id: string; service_id: string; action: string; status: string; invoice_id?: string | null; amount_sats?: number | null }[]) {
+  vi.mocked(query).mockResolvedValueOnce(mockQueryResult(
+    jobs.map((j) => ({ invoice_id: null, amount_sats: null, ...j }))
+  ));
 }
 
 describe("GET /api/agent/users/[npub]", () => {
@@ -68,7 +70,7 @@ describe("GET /api/agent/users/[npub]", () => {
       { service_id: "hulu", position: 2, plan_id: null },
     ]);
     mockActiveJobs([
-      { id: "job-1", service_id: "netflix", action: "cancel", status: "active" },
+      { id: "job-1", service_id: "netflix", action: "cancel", status: "active", invoice_id: "inv-1", amount_sats: 3000 },
     ]);
 
     const req = makeRequest();
@@ -92,6 +94,8 @@ describe("GET /api/agent/users/[npub]", () => {
 
     expect(data.active_jobs).toHaveLength(1);
     expect(data.active_jobs[0].action).toBe("cancel");
+    expect(data.active_jobs[0].invoice_id).toBe("inv-1");
+    expect(data.active_jobs[0].amount_sats).toBe(3000);
   });
 
   it("user not found: returns 404", async () => {

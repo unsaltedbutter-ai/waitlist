@@ -48,7 +48,6 @@ def _make_9734_json(
     p_hex: str | None = BOT_PK,
     amount_msats: int | None = AMOUNT_MSATS,
     kind_num: int = 9734,
-    job_id: str | None = None,
 ) -> str:
     """Build a fake 9734 JSON string (the zap request embedded in the description tag)."""
     tags: list[list[str]] = []
@@ -56,8 +55,6 @@ def _make_9734_json(
         tags.append(["p", p_hex])
     if amount_msats is not None:
         tags.append(["amount", str(amount_msats)])
-    if job_id is not None:
-        tags.append(["job_id", job_id])
     tags.append(["relays", "wss://relay.damus.io"])
 
     return json.dumps({
@@ -140,14 +137,12 @@ def _bolt11_mock(
     return mock
 
 
-def _valid_set(
-    job_id: str | None = None,
-) -> tuple[MagicMock, str, MagicMock, MagicMock]:
+def _valid_set() -> tuple[MagicMock, str, MagicMock, MagicMock]:
     """Return (receipt_event, desc_json, bolt11_mock, zap_request_event) for a valid zap.
 
     All six checks will pass with these defaults.
     """
-    desc_json = _make_9734_json(job_id=job_id)
+    desc_json = _make_9734_json()
     desc_hash = hashlib.sha256(desc_json.encode("utf-8")).hexdigest()
     receipt = _make_9735(description_json=desc_json)
     invoice = _bolt11_mock(description_hash=desc_hash)
@@ -167,7 +162,8 @@ def api_client() -> AsyncMock:
             "id": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
             "debt_sats": 0,
             "onboarded_at": "2026-01-01",
-        }
+        },
+        "active_jobs": [],
     }
     client.mark_job_paid.return_value = {"status_code": 200, "data": {"success": True}}
     return client
@@ -389,29 +385,95 @@ async def test_reject_amount_mismatch(api_client: AsyncMock, send_dm: AsyncMock)
     send_dm.assert_not_called()
 
 
-# -- Happy path: valid zap with job_id ----------------------------------------
+# -- Happy path: zap matches payable job ---------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_valid_zap_with_job_id(api_client: AsyncMock, send_dm: AsyncMock) -> None:
-    receipt, desc_json, invoice, zap_req = _valid_set(job_id="job-123")
+async def test_zap_matches_payable_job(api_client: AsyncMock, send_dm: AsyncMock) -> None:
+    """Zap amount matches the single payable job: mark paid."""
+    api_client.get_user.return_value = {
+        "user": {"id": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee", "debt_sats": 0},
+        "active_jobs": [
+            {"id": "job-456", "service_id": "netflix", "action": "cancel",
+             "status": "active", "invoice_id": "inv-1", "amount_sats": 3000},
+        ],
+    }
+    receipt, desc_json, invoice, zap_req = _valid_set()
 
     await _run(receipt, invoice, zap_req, send_dm, api_client)
 
     api_client.mark_job_paid.assert_called_once()
-    call_args = api_client.mark_job_paid.call_args
-    assert call_args[0][0] == "job-123"
+    assert api_client.mark_job_paid.call_args[0][0] == "job-456"
     send_dm.assert_called_once()
     assert "received" in send_dm.call_args[0][1].lower()
+
+
+# -- Overpayment: zap exceeds invoice amount -----------------------------------
+
+
+@pytest.mark.asyncio
+async def test_zap_overpayment_still_matches(api_client: AsyncMock, send_dm: AsyncMock) -> None:
+    """Zap of 5000 sats covers a 3000 sat invoice: mark paid."""
+    api_client.get_user.return_value = {
+        "user": {"id": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee", "debt_sats": 0},
+        "active_jobs": [
+            {"id": "job-456", "service_id": "netflix", "action": "cancel",
+             "status": "active", "invoice_id": "inv-1", "amount_sats": 3000},
+        ],
+    }
+    # 5000 sat zap
+    desc_json = _make_9734_json(amount_msats=5_000_000)
+    desc_hash = hashlib.sha256(desc_json.encode("utf-8")).hexdigest()
+    receipt = _make_9735(description_json=desc_json)
+    invoice = _bolt11_mock(amount_msats=5_000_000, description_hash=desc_hash)
+    zap_req = _make_9734_event(desc_json)
+
+    await _run(receipt, invoice, zap_req, send_dm, api_client)
+
+    api_client.mark_job_paid.assert_called_once()
+    assert api_client.mark_job_paid.call_args[0][0] == "job-456"
+
+
+# -- Underpayment: zap less than invoice amount --------------------------------
+
+
+@pytest.mark.asyncio
+async def test_zap_underpayment_rejected(api_client: AsyncMock, send_dm: AsyncMock) -> None:
+    """Zap of 1000 sats does not cover a 3000 sat invoice: no match."""
+    api_client.get_user.return_value = {
+        "user": {"id": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee", "debt_sats": 0},
+        "active_jobs": [
+            {"id": "job-456", "service_id": "netflix", "action": "cancel",
+             "status": "active", "invoice_id": "inv-1", "amount_sats": 3000},
+        ],
+    }
+    desc_json = _make_9734_json(amount_msats=1_000_000)
+    desc_hash = hashlib.sha256(desc_json.encode("utf-8")).hexdigest()
+    receipt = _make_9735(description_json=desc_json)
+    invoice = _bolt11_mock(amount_msats=1_000_000, description_hash=desc_hash)
+    zap_req = _make_9734_event(desc_json)
+
+    await _run(receipt, invoice, zap_req, send_dm, api_client)
+
+    api_client.mark_job_paid.assert_not_called()
+    send_dm.assert_called_once()
+    assert "no open invoice" in send_dm.call_args[0][1].lower()
 
 
 # -- Already paid (409) -------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_valid_zap_already_paid(api_client: AsyncMock, send_dm: AsyncMock) -> None:
+async def test_zap_already_paid(api_client: AsyncMock, send_dm: AsyncMock) -> None:
     api_client.mark_job_paid.return_value = {"status_code": 409, "data": {"error": "Already paid"}}
-    receipt, desc_json, invoice, zap_req = _valid_set(job_id="job-123")
+    api_client.get_user.return_value = {
+        "user": {"id": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee", "debt_sats": 0},
+        "active_jobs": [
+            {"id": "job-456", "service_id": "netflix", "action": "cancel",
+             "status": "active", "invoice_id": "inv-1", "amount_sats": 3000},
+        ],
+    }
+    receipt, desc_json, invoice, zap_req = _valid_set()
 
     await _run(receipt, invoice, zap_req, send_dm, api_client)
 
@@ -420,18 +482,65 @@ async def test_valid_zap_already_paid(api_client: AsyncMock, send_dm: AsyncMock)
     send_dm.assert_not_called()
 
 
-# -- Valid zap without job_id --------------------------------------------------
+# -- No payable jobs -----------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_valid_zap_no_job_id(api_client: AsyncMock, send_dm: AsyncMock) -> None:
-    receipt, desc_json, invoice, zap_req = _valid_set(job_id=None)
+async def test_zap_no_payable_jobs(api_client: AsyncMock, send_dm: AsyncMock) -> None:
+    """User has no active jobs with invoices."""
+    receipt, desc_json, invoice, zap_req = _valid_set()
 
     await _run(receipt, invoice, zap_req, send_dm, api_client)
 
     api_client.mark_job_paid.assert_not_called()
     send_dm.assert_called_once()
-    assert "no job reference" in send_dm.call_args[0][1].lower()
+    assert "no open invoice" in send_dm.call_args[0][1].lower()
+
+
+# -- Job still executing (no invoice yet) --------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_zap_job_no_invoice_yet(api_client: AsyncMock, send_dm: AsyncMock) -> None:
+    """Active job has no invoice yet (still executing): no match."""
+    api_client.get_user.return_value = {
+        "user": {"id": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee", "debt_sats": 0},
+        "active_jobs": [
+            {"id": "job-456", "service_id": "netflix", "action": "cancel",
+             "status": "active", "invoice_id": None, "amount_sats": None},
+        ],
+    }
+    receipt, desc_json, invoice, zap_req = _valid_set()
+
+    await _run(receipt, invoice, zap_req, send_dm, api_client)
+
+    api_client.mark_job_paid.assert_not_called()
+    send_dm.assert_called_once()
+    assert "no open invoice" in send_dm.call_args[0][1].lower()
+
+
+# -- Multiple payable jobs (ambiguous) -----------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_zap_ambiguous_multiple_jobs(api_client: AsyncMock, send_dm: AsyncMock) -> None:
+    """Two jobs match: refuse to guess."""
+    api_client.get_user.return_value = {
+        "user": {"id": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee", "debt_sats": 0},
+        "active_jobs": [
+            {"id": "job-1", "service_id": "netflix", "action": "cancel",
+             "status": "active", "invoice_id": "inv-1", "amount_sats": 3000},
+            {"id": "job-2", "service_id": "hulu", "action": "cancel",
+             "status": "active", "invoice_id": "inv-2", "amount_sats": 3000},
+        ],
+    }
+    receipt, desc_json, invoice, zap_req = _valid_set()
+
+    await _run(receipt, invoice, zap_req, send_dm, api_client)
+
+    api_client.mark_job_paid.assert_not_called()
+    send_dm.assert_called_once()
+    assert "no open invoice" in send_dm.call_args[0][1].lower()
 
 
 # -- Unregistered user ---------------------------------------------------------
@@ -440,10 +549,52 @@ async def test_valid_zap_no_job_id(api_client: AsyncMock, send_dm: AsyncMock) ->
 @pytest.mark.asyncio
 async def test_unregistered_user_zap(api_client: AsyncMock, send_dm: AsyncMock) -> None:
     api_client.get_user.return_value = None
-    receipt, desc_json, invoice, zap_req = _valid_set(job_id="job-123")
+    receipt, desc_json, invoice, zap_req = _valid_set()
 
     await _run(receipt, invoice, zap_req, send_dm, api_client)
 
     api_client.mark_job_paid.assert_not_called()
     send_dm.assert_called_once()
     assert "No account found" in send_dm.call_args[0][1]
+
+
+# -- Unit tests for _find_payable_job ------------------------------------------
+
+
+class TestFindPayableJob:
+    def test_exact_match(self) -> None:
+        data = {"active_jobs": [
+            {"id": "j1", "invoice_id": "inv-1", "amount_sats": 3000},
+        ]}
+        assert zap_handler._find_payable_job(data, 3000) == "j1"
+
+    def test_overpayment_matches(self) -> None:
+        data = {"active_jobs": [
+            {"id": "j1", "invoice_id": "inv-1", "amount_sats": 3000},
+        ]}
+        assert zap_handler._find_payable_job(data, 5000) == "j1"
+
+    def test_underpayment_rejects(self) -> None:
+        data = {"active_jobs": [
+            {"id": "j1", "invoice_id": "inv-1", "amount_sats": 3000},
+        ]}
+        assert zap_handler._find_payable_job(data, 1) is None
+
+    def test_no_active_jobs(self) -> None:
+        assert zap_handler._find_payable_job({"active_jobs": []}, 3000) is None
+
+    def test_no_invoice(self) -> None:
+        data = {"active_jobs": [
+            {"id": "j1", "invoice_id": None, "amount_sats": 3000},
+        ]}
+        assert zap_handler._find_payable_job(data, 3000) is None
+
+    def test_ambiguous(self) -> None:
+        data = {"active_jobs": [
+            {"id": "j1", "invoice_id": "inv-1", "amount_sats": 3000},
+            {"id": "j2", "invoice_id": "inv-2", "amount_sats": 3000},
+        ]}
+        assert zap_handler._find_payable_job(data, 3000) is None
+
+    def test_missing_key(self) -> None:
+        assert zap_handler._find_payable_job({}, 3000) is None
