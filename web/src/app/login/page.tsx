@@ -4,7 +4,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 
 const TOKEN_KEY = "ub_token";
-const BOT_NPUB = process.env.NEXT_PUBLIC_NOSTR_BOT_NPUB ?? "";
+const BOT_NPUB = process.env.NEXT_PUBLIC_NOSTR_BOT_NPUB ?? "npub1hssdvydgqjx9y6ptlkt23sc5uptnqkc3q2r8j68zpdeyt9psl27s534rcr";
 const BOT_NAME = process.env.NEXT_PUBLIC_NOSTR_BOT_NAME ?? "UnsaltedButter Bot";
 
 export default function LoginPage() {

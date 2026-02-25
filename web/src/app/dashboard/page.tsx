@@ -1,6 +1,8 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
+
+const BOT_NPUB = process.env.NEXT_PUBLIC_NOSTR_BOT_NPUB ?? "npub1hssdvydgqjx9y6ptlkt23sc5uptnqkc3q2r8j68zpdeyt9psl27s534rcr";
 import { useAuth, authFetch } from "@/lib/hooks/use-auth";
 import { DebtBanner } from "@/components/debt-banner";
 import { QueueSection, RecentJobsSection, AccountSection } from "./_sections";
@@ -19,6 +21,7 @@ export default function DashboardPage() {
   const [loadingData, setLoadingData] = useState(true);
   const [error, setError] = useState("");
   const [jobsError, setJobsError] = useState(false);
+  const [npubCopied, setNpubCopied] = useState(false);
 
   // Service catalog (for "add service" in QueueSection)
   const [allServices, setAllServices] = useState<ServiceOption[]>([]);
@@ -138,6 +141,22 @@ export default function DashboardPage() {
               logout={logout}
               setError={setError}
             />
+
+            {BOT_NPUB && (
+              <p className="text-center text-xs text-muted pt-4">
+                <button
+                  type="button"
+                  onClick={() => {
+                    navigator.clipboard.writeText(BOT_NPUB);
+                    setNpubCopied(true);
+                    setTimeout(() => setNpubCopied(false), 2000);
+                  }}
+                  className="font-mono text-muted hover:text-foreground transition-colors break-all"
+                >
+                  {npubCopied ? "Copied!" : BOT_NPUB}
+                </button>
+              </p>
+            )}
 
             <p className="text-center text-xs text-muted pt-4">
               <a href="/faq" className="hover:text-foreground transition-colors">
