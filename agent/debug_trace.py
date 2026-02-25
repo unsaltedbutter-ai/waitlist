@@ -120,12 +120,16 @@ class DebugTrace:
         phase: str = '',
         scale_factor: float = 0.0,
         diagnostics: dict | None = None,
+        sent_image_b64: str = '',
+        prompt: str = '',
     ) -> None:
         """Save a single step's screenshot and VLM response.
 
         Args:
             step: Zero-based step/iteration number.
-            screenshot_b64: Base64-encoded PNG screenshot.
+            screenshot_b64: Base64-encoded PNG screenshot (chrome-cropped,
+                pre-resize). Saved as step_NNN.png for full-resolution
+                forensics.
             vlm_response: The VLM response dict (bounding boxes, actions, etc.).
                 Never contains actual credential values.
             phase: Label like 'sign-in', 'cancel', 'resume'.
@@ -134,19 +138,40 @@ class DebugTrace:
             diagnostics: Optional dict with coordinate pipeline data
                 (window_bounds, display_scale, chrome_offset, etc.)
                 for debugging click-position issues.
+            sent_image_b64: Base64-encoded JPEG that was actually sent to the
+                VLM (post-resize). Saved as step_NNN_sent.jpg.
+            prompt: The system prompt sent to the VLM. Saved as
+                step_NNN_prompt.txt.
         """
         if not self.enabled or not self._dir:
             return
 
         prefix = f'step_{step:03d}'
 
-        # Save screenshot as PNG
+        # Save screenshot as PNG (full-res, chrome-cropped)
         try:
             png_path = self._dir / f'{prefix}.png'
             png_bytes = base64.b64decode(screenshot_b64)
             png_path.write_bytes(png_bytes)
         except Exception as exc:
             log.debug('Failed to save debug screenshot step %d: %s', step, exc)
+
+        # Save the actual image sent to VLM (post-resize JPEG)
+        if sent_image_b64:
+            try:
+                sent_path = self._dir / f'{prefix}_sent.jpg'
+                sent_bytes = base64.b64decode(sent_image_b64)
+                sent_path.write_bytes(sent_bytes)
+            except Exception as exc:
+                log.debug('Failed to save sent image step %d: %s', step, exc)
+
+        # Save the prompt sent to VLM
+        if prompt:
+            try:
+                prompt_path = self._dir / f'{prefix}_prompt.txt'
+                prompt_path.write_text(prompt)
+            except Exception as exc:
+                log.debug('Failed to save prompt step %d: %s', step, exc)
 
         # Save VLM response as JSON
         try:
@@ -164,11 +189,18 @@ class DebugTrace:
         except Exception as exc:
             log.debug('Failed to save debug metadata step %d: %s', step, exc)
 
-        # Save bbox overlay
+        # Save bbox overlay (drawn on VLM-sent image when available)
         if scale_factor > 0.0 and vlm_response is not None:
-            overlay_bytes = _draw_bbox_overlay(
-                screenshot_b64, vlm_response, scale_factor,
-            )
+            if sent_image_b64:
+                # Draw on the actual image the VLM saw (boxes are in sent-image space)
+                overlay_bytes = _draw_bbox_overlay(
+                    sent_image_b64, vlm_response, 1.0,
+                )
+            else:
+                # Fallback: draw on original with scale_factor
+                overlay_bytes = _draw_bbox_overlay(
+                    screenshot_b64, vlm_response, scale_factor,
+                )
             if overlay_bytes:
                 overlay_path = self._dir / f'{prefix}_overlay.png'
                 overlay_path.write_bytes(overlay_bytes)
@@ -181,7 +213,8 @@ class DebugTrace:
         """
         if not self._dir or not self._dir.exists():
             return
-        if os.environ.get('AGENT_DEBUG_KEEP_ALL', '') == '1':
+        keep_all = os.environ.get('AGENT_DEBUG_KEEP_ALL', '0')
+        if keep_all and keep_all != '0':
             log.info('Keeping debug trace for successful job %s (AGENT_DEBUG_KEEP_ALL)',
                      self.job_id)
             return

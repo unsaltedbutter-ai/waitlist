@@ -106,6 +106,46 @@ class TestDebugTrace:
         assert (trace.trace_dir / 'step_042.png').exists()
         assert (trace.trace_dir / 'step_042.json').exists()
 
+    def test_save_step_writes_sent_image(self, tmp_path):
+        """Sent image (what VLM actually saw) is saved as _sent.jpg."""
+        trace = DebugTrace('job-sent', base_dir=str(tmp_path))
+        # Create a JPEG to mimic VLMClient._resize_if_needed output
+        img = Image.new('RGB', (640, 480), color=(100, 100, 100))
+        buf = io.BytesIO()
+        img.save(buf, format='JPEG', quality=85)
+        sent_b64 = base64.b64encode(buf.getvalue()).decode()
+
+        trace.save_step(0, _TINY_PNG, _SAMPLE_RESPONSE, phase='cancel',
+                        scale_factor=1.0, sent_image_b64=sent_b64)
+
+        sent_path = trace.trace_dir / 'step_000_sent.jpg'
+        assert sent_path.exists()
+        # Verify it's a JPEG
+        assert sent_path.read_bytes()[:2] == b'\xff\xd8'
+
+    def test_save_step_writes_prompt(self, tmp_path):
+        """System prompt sent to VLM is saved as _prompt.txt."""
+        trace = DebugTrace('job-prompt', base_dir=str(tmp_path))
+        prompt_text = 'You are a browser automation assistant...'
+        trace.save_step(0, _TINY_PNG, _SAMPLE_RESPONSE, phase='cancel',
+                        prompt=prompt_text)
+
+        prompt_path = trace.trace_dir / 'step_000_prompt.txt'
+        assert prompt_path.exists()
+        assert prompt_path.read_text() == prompt_text
+
+    def test_save_step_no_sent_image_no_file(self, tmp_path):
+        """No _sent.jpg when sent_image_b64 is empty."""
+        trace = DebugTrace('job-nosent', base_dir=str(tmp_path))
+        trace.save_step(0, _TINY_PNG, _SAMPLE_RESPONSE, phase='cancel')
+        assert not (trace.trace_dir / 'step_000_sent.jpg').exists()
+
+    def test_save_step_no_prompt_no_file(self, tmp_path):
+        """No _prompt.txt when prompt is empty."""
+        trace = DebugTrace('job-noprompt', base_dir=str(tmp_path))
+        trace.save_step(0, _TINY_PNG, _SAMPLE_RESPONSE, phase='cancel')
+        assert not (trace.trace_dir / 'step_000_prompt.txt').exists()
+
     def test_cleanup_success_removes_dir(self, tmp_path):
         trace = DebugTrace('job-007', base_dir=str(tmp_path))
         trace.save_step(0, _TINY_PNG, _SAMPLE_RESPONSE)
@@ -137,6 +177,22 @@ class TestDebugTrace:
         trace.save_step(0, _TINY_PNG, _SAMPLE_RESPONSE)
         trace.cleanup_success()
         assert not trace.trace_dir.exists()
+
+    def test_cleanup_success_deletes_when_keep_all_zero(self, tmp_path, monkeypatch):
+        """AGENT_DEBUG_KEEP_ALL=0 means don't keep."""
+        monkeypatch.setenv('AGENT_DEBUG_KEEP_ALL', '0')
+        trace = DebugTrace('job-zero', base_dir=str(tmp_path))
+        trace.save_step(0, _TINY_PNG, _SAMPLE_RESPONSE)
+        trace.cleanup_success()
+        assert not trace.trace_dir.exists()
+
+    def test_cleanup_success_keeps_when_keep_all_any_truthy(self, tmp_path, monkeypatch):
+        """Any non-zero value for AGENT_DEBUG_KEEP_ALL keeps the trace."""
+        monkeypatch.setenv('AGENT_DEBUG_KEEP_ALL', 'yes')
+        trace = DebugTrace('job-yes', base_dir=str(tmp_path))
+        trace.save_step(0, _TINY_PNG, _SAMPLE_RESPONSE)
+        trace.cleanup_success()
+        assert trace.trace_dir.exists()
 
 
 # ---------------------------------------------------------------------------
@@ -317,6 +373,37 @@ class TestDebugTraceVLMIntegration:
         # Folder cleaned up on success, but the error step was recorded
         assert not (self.tmp_path / 'job-vlmerr').exists()
 
+    def test_failure_saves_sent_image_and_prompt(self):
+        """Failed jobs save sent image and prompt alongside screenshot."""
+        from agent.vlm_executor import VLMExecutor
+
+        # Build a valid base64 JPEG to simulate VLMClient._resize_if_needed output
+        img = Image.new('RGB', (640, 480), color=(100, 100, 100))
+        buf = io.BytesIO()
+        img.save(buf, format='JPEG', quality=85)
+        sent_b64 = base64.b64encode(buf.getvalue()).decode()
+
+        captcha = {'page_type': 'captcha'}
+        vlm = MagicMock()
+        vlm.analyze = MagicMock(side_effect=[(captcha, 1.0)])
+        vlm.last_sent_image_b64 = sent_b64
+
+        executor = VLMExecutor(vlm, settle_delay=0, debug=True)
+        result = executor.run('netflix', 'cancel', {'email': 'a', 'pass': 'b'},
+                              job_id='job-artifacts')
+        assert not result.success
+
+        job_dir = self.tmp_path / 'job-artifacts'
+        assert job_dir.exists()
+        # Prompt should be saved
+        prompt_path = job_dir / 'step_000_prompt.txt'
+        assert prompt_path.exists()
+        assert len(prompt_path.read_text()) > 0
+        # Sent image should be saved
+        sent_path = job_dir / 'step_000_sent.jpg'
+        assert sent_path.exists()
+        assert sent_path.read_bytes()[:2] == b'\xff\xd8'  # JPEG magic
+
 
 # ---------------------------------------------------------------------------
 # Bbox overlay tests
@@ -411,3 +498,34 @@ class TestDrawBboxOverlay:
         # Check the overlay is different from a 1.0 scale overlay
         result_1x = _draw_bbox_overlay(_TEST_PNG, response, 1.0)
         assert result != result_1x
+
+    def test_overlay_uses_sent_image_when_available(self, tmp_path):
+        """Overlay is drawn on VLM-sent image (not full-res) when provided."""
+        # Full-res screenshot: 800x600
+        full_res = _make_test_png(800, 600)
+        # Sent image: 640x480 (what VLM saw after resize)
+        sent_img = Image.new('RGB', (640, 480), color=(150, 150, 150))
+        buf = io.BytesIO()
+        sent_img.save(buf, format='JPEG', quality=85)
+        sent_b64 = base64.b64encode(buf.getvalue()).decode()
+
+        trace = DebugTrace('job-overlay-sent', base_dir=str(tmp_path))
+        trace.save_step(0, full_res, _SAMPLE_RESPONSE, phase='cancel',
+                        scale_factor=1.25, sent_image_b64=sent_b64)
+
+        overlay_path = trace.trace_dir / 'step_000_overlay.png'
+        assert overlay_path.exists()
+        overlay_img = Image.open(overlay_path)
+        # Overlay should be 640x480 (sent image size), not 800x600
+        assert overlay_img.size == (640, 480)
+
+    def test_overlay_falls_back_to_original_without_sent_image(self, tmp_path):
+        """Without sent_image_b64, overlay uses the original screenshot."""
+        trace = DebugTrace('job-overlay-fallback', base_dir=str(tmp_path))
+        trace.save_step(0, _TEST_PNG, _SAMPLE_RESPONSE, phase='cancel',
+                        scale_factor=1.0)
+
+        overlay_path = trace.trace_dir / 'step_000_overlay.png'
+        assert overlay_path.exists()
+        overlay_img = Image.open(overlay_path)
+        assert overlay_img.size == (800, 600)

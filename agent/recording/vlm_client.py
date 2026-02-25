@@ -164,6 +164,9 @@ class VLMClient:
         # Resize oversized screenshots to stay under API payload limits
         image_b64, scale_factor, sent_size = self._resize_if_needed(screenshot_b64)
 
+        # Store sent image for debug trace (before building payload)
+        self.last_sent_image_b64: str = image_b64
+
         if not user_message:
             w, h = sent_size
             user_message = (

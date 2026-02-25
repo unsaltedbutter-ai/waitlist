@@ -481,10 +481,14 @@ class VLMExecutor:
                     inference_count += 1
                 except Exception as exc:
                     log.warning('VLM error on iteration %d: %s', iteration, exc)
+                    sent_b64 = getattr(self.vlm, 'last_sent_image_b64', '')
                     trace.save_step(iteration, screenshot_b64, None,
-                                    phase=current_label)
+                                    phase=current_label,
+                                    sent_image_b64=sent_b64,
+                                    prompt=current_prompt)
                     continue
 
+                sent_b64 = getattr(self.vlm, 'last_sent_image_b64', '')
                 trace.save_step(iteration, screenshot_b64, response,
                                 phase=current_label,
                                 scale_factor=scale_factor,
@@ -494,7 +498,9 @@ class VLMExecutor:
                                     'chrome_offset_px': chrome_height_px,
                                     'vlm_scale_factor': scale_factor,
                                     'last_click_screen_bbox': last_click_screen_bbox,
-                                })
+                                },
+                                sent_image_b64=sent_b64,
+                                prompt=current_prompt)
 
                 # -------------------------------------------------------
                 # Phase 5 [no lock]: Parse result, resolve credentials,
