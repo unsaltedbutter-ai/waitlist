@@ -216,6 +216,31 @@ async def test_handle_yes_job_not_found(deps):
     assert "wrong" in msg.lower() or "try again" in msg.lower()
 
 
+@pytest.mark.asyncio
+async def test_handle_yes_passes_plan_display_name(deps):
+    """handle_yes should forward plan_display_name to agent.execute()."""
+    s = deps["session"]
+    db = deps["db"]
+    api = deps["api"]
+    agent = deps["agent"]
+
+    await db.upsert_job(_make_job(
+        action="resume",
+        plan_id="disney_plus_bundle_trio_premium",
+        plan_display_name="Disney Bundle Trio Premium",
+    ))
+    api.get_credentials.return_value = {"email": "a@b.com", "password": "pw"}
+    agent.execute.return_value = True
+
+    await s.handle_yes("npub1alice", "job-1")
+
+    agent.execute.assert_awaited_once_with(
+        "job-1", "netflix", "resume", {"email": "a@b.com", "pass": "pw"},
+        plan_id="disney_plus_bundle_trio_premium",
+        plan_display_name="Disney Bundle Trio Premium",
+    )
+
+
 # ------------------------------------------------------------------
 # handle_otp_confirm_yes: OTP_CONFIRM -> EXECUTING
 # ------------------------------------------------------------------
@@ -251,7 +276,7 @@ async def test_otp_confirm_yes_happy_path(deps):
     # Agent dispatched with credentials
     agent.execute.assert_awaited_once_with(
         "job-1", "netflix", "cancel", {"email": "a@b.com", "pass": "pw"},
-        plan_id=None,
+        plan_id=None, plan_display_name=None,
     )
 
     # DM sent (executing message)
@@ -262,13 +287,17 @@ async def test_otp_confirm_yes_happy_path(deps):
 
 @pytest.mark.asyncio
 async def test_otp_confirm_yes_resume_passes_plan_id(deps):
-    """Resume jobs should pass plan_id to agent.execute()."""
+    """Resume jobs should pass plan_id and plan_display_name to agent.execute()."""
     s = deps["session"]
     db = deps["db"]
     api = deps["api"]
     agent = deps["agent"]
 
-    await db.upsert_job(_make_job(action="resume", plan_id="netflix_premium"))
+    await db.upsert_job(_make_job(
+        action="resume",
+        plan_id="disney_plus_bundle_trio_premium",
+        plan_display_name="Disney Bundle Trio Premium",
+    ))
     await db.upsert_session("npub1alice", OTP_CONFIRM, job_id="job-1")
 
     api.get_credentials.return_value = {"email": "a@b.com", "password": "pw"}
@@ -278,7 +307,8 @@ async def test_otp_confirm_yes_resume_passes_plan_id(deps):
 
     agent.execute.assert_awaited_once_with(
         "job-1", "netflix", "resume", {"email": "a@b.com", "pass": "pw"},
-        plan_id="netflix_premium",
+        plan_id="disney_plus_bundle_trio_premium",
+        plan_display_name="Disney Bundle Trio Premium",
     )
 
 

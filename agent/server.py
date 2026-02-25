@@ -63,6 +63,7 @@ class ActiveJob:
     service: str
     action: str
     plan_id: str = ''
+    plan_display_name: str = ''
     task: asyncio.Task | None = None
     otp_future: asyncio.Future | None = None
     credential_future: asyncio.Future | None = None
@@ -201,6 +202,7 @@ class Agent:
         action = data.get("action")
         credentials = data.get("credentials")
         plan_id = data.get("plan_id", "")
+        plan_display_name = data.get("plan_display_name", "")
 
         if not job_id or not service or not action or not credentials:
             return web.json_response(
@@ -226,7 +228,10 @@ class Agent:
                     status=409,
                 )
 
-            active = ActiveJob(job_id=job_id, service=service, action=action, plan_id=plan_id or '')
+            active = ActiveJob(
+                job_id=job_id, service=service, action=action,
+                plan_id=plan_id or '', plan_display_name=plan_display_name or '',
+            )
             self._active_jobs[job_id] = active
             log.info(
                 "Accepted job %s (%s/%s) [%d/%d slots]",
@@ -377,11 +382,15 @@ class Agent:
         error_msg = ""
 
         try:
-            # Derive tier from plan_id: "netflix_premium" -> "premium"
-            plan_tier = ''
-            if active.plan_id:
+            # Use human-readable display name when available, fall back to
+            # slug derivation: "netflix_premium" -> "premium"
+            if active.plan_display_name:
+                plan_tier = active.plan_display_name
+            elif active.plan_id:
                 prefix = active.service + '_'
                 plan_tier = active.plan_id.removeprefix(prefix)
+            else:
+                plan_tier = ''
 
             log.info(
                 "Starting execution: job=%s service=%s action=%s",

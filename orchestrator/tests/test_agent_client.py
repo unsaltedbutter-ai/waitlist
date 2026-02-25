@@ -91,6 +91,41 @@ async def test_execute_sends_plan_id(client: AgentClient) -> None:
 
 @pytest.mark.asyncio
 @respx.mock
+async def test_execute_sends_plan_display_name(client: AgentClient) -> None:
+    route = respx.post(f"{AGENT_URL}/execute").mock(
+        return_value=httpx.Response(200, json={"ok": True})
+    )
+    await client.execute(
+        "j51", "disney_plus", "resume",
+        {"email": "u@x.com", "password": "pw"},
+        plan_id="disney_plus_bundle_trio_premium",
+        plan_display_name="Disney Bundle Trio Premium",
+    )
+    import json
+
+    body = json.loads(route.calls[0].request.content)
+    assert body["plan_id"] == "disney_plus_bundle_trio_premium"
+    assert body["plan_display_name"] == "Disney Bundle Trio Premium"
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_execute_omits_plan_display_name_when_none(client: AgentClient) -> None:
+    route = respx.post(f"{AGENT_URL}/execute").mock(
+        return_value=httpx.Response(200, json={"ok": True})
+    )
+    await client.execute(
+        "j52", "netflix", "cancel",
+        {"email": "u@x.com", "password": "pw"},
+    )
+    import json
+
+    body = json.loads(route.calls[0].request.content)
+    assert "plan_display_name" not in body
+
+
+@pytest.mark.asyncio
+@respx.mock
 async def test_execute_connection_error(client: AgentClient) -> None:
     respx.post(f"{AGENT_URL}/execute").mock(side_effect=httpx.ConnectError("refused"))
     result = await client.execute(

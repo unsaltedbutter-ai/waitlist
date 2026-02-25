@@ -47,11 +47,13 @@ class AgentClient:
         action: str,
         credentials: dict,
         plan_id: str | None = None,
+        plan_display_name: str | None = None,
     ) -> bool:
         """POST /execute. Dispatch a cancel/resume job to the agent.
 
         credentials: {"email": ..., "password": ...}
         plan_id: optional service plan id (e.g. "netflix_premium") for resume flows.
+        plan_display_name: optional human-readable plan name (e.g. "Disney Bundle Trio Premium").
         Returns True if accepted (200), False otherwise.
         """
         client = self._ensure_started()
@@ -64,6 +66,8 @@ class AgentClient:
             }
             if plan_id:
                 payload["plan_id"] = plan_id
+            if plan_display_name:
+                payload["plan_display_name"] = plan_display_name
             resp = await client.post(
                 f"{self._base_url}/execute",
                 json=payload,

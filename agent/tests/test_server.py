@@ -140,6 +140,42 @@ class TestHandleExecute:
 
         _run(go())
 
+    def test_plan_display_name_flows_to_active_job(self):
+        async def go():
+            agent = _make_agent()
+            agent._loop = asyncio.get_event_loop()
+            agent._run_job = AsyncMock()
+
+            body = _valid_execute_body("job-plan")
+            body["plan_id"] = "disney_plus_bundle_trio_premium"
+            body["plan_display_name"] = "Disney Bundle Trio Premium"
+
+            req = _make_request(body)
+            resp = await agent._handle_execute(req)
+            assert resp.status == 200
+
+            active = agent._active_jobs["job-plan"]
+            assert active.plan_display_name == "Disney Bundle Trio Premium"
+            assert active.plan_id == "disney_plus_bundle_trio_premium"
+
+        _run(go())
+
+    def test_plan_display_name_defaults_empty(self):
+        async def go():
+            agent = _make_agent()
+            agent._loop = asyncio.get_event_loop()
+            agent._run_job = AsyncMock()
+
+            req = _make_request(_valid_execute_body("job-no-plan"))
+            resp = await agent._handle_execute(req)
+            assert resp.status == 200
+
+            active = agent._active_jobs["job-no-plan"]
+            assert active.plan_display_name == ''
+            assert active.plan_id == ''
+
+        _run(go())
+
     def test_rejects_missing_fields(self):
         async def go():
             agent = _make_agent()

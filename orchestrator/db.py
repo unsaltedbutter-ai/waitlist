@@ -142,6 +142,7 @@ class Database:
         """Idempotent schema migrations for columns added after initial release."""
         migrations = [
             "ALTER TABLE jobs ADD COLUMN plan_id TEXT",
+            "ALTER TABLE jobs ADD COLUMN plan_display_name TEXT",
         ]
         for sql in migrations:
             try:
@@ -166,11 +167,12 @@ class Database:
                (id, user_npub, service_id, action, trigger, status,
                 billing_date, access_end_date, outreach_count,
                 next_outreach_at, amount_sats, invoice_id,
-                created_at, updated_at, plan_id)
+                created_at, updated_at, plan_id, plan_display_name)
                VALUES (:id, :user_npub, :service_id, :action, :trigger,
                        :status, :billing_date, :access_end_date,
                        :outreach_count, :next_outreach_at, :amount_sats,
-                       :invoice_id, :created_at, :updated_at, :plan_id)""",
+                       :invoice_id, :created_at, :updated_at, :plan_id,
+                       :plan_display_name)""",
             {
                 "id": job["id"],
                 "user_npub": job["user_npub"],
@@ -187,6 +189,7 @@ class Database:
                 "created_at": job["created_at"],
                 "updated_at": job.get("updated_at", ""),
                 "plan_id": job.get("plan_id"),
+                "plan_display_name": job.get("plan_display_name"),
             },
         )
         await self._db.commit()

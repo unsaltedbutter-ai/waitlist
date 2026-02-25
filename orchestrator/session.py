@@ -179,9 +179,11 @@ class Session:
 
         # Dispatch to agent
         plan_id = job.get("plan_id")
-        log.info("handle_yes: dispatching to agent, job=%s plan=%s", job_id[:8], plan_id)
+        plan_display_name = job.get("plan_display_name")
+        log.info("handle_yes: dispatching to agent, job=%s plan=%s display=%s", job_id[:8], plan_id, plan_display_name)
         accepted = await self._agent.execute(
-            job_id, service_id, action, agent_creds, plan_id=plan_id
+            job_id, service_id, action, agent_creds,
+            plan_id=plan_id, plan_display_name=plan_display_name,
         )
         if not accepted:
             await self._fail_job(user_npub, job, "Agent rejected the job")
@@ -253,8 +255,10 @@ class Session:
 
         # Dispatch to agent
         plan_id = job.get("plan_id")
+        plan_display_name = job.get("plan_display_name")
         accepted = await self._agent.execute(
-            job_id, service_id, action, agent_creds, plan_id=plan_id
+            job_id, service_id, action, agent_creds,
+            plan_id=plan_id, plan_display_name=plan_display_name,
         )
         if not accepted:
             await self._fail_job(user_npub, job, "Agent rejected the job")
@@ -590,6 +594,7 @@ class Session:
         credentials: dict,
         plan_id: str,
         job_id: str,
+        plan_display_name: str = "",
     ) -> None:
         """CLI dispatch: create session and send job to agent.
 
@@ -615,7 +620,8 @@ class Session:
 
         # Dispatch to agent
         accepted = await self._agent.execute(
-            job_id, service, action, credentials, plan_id=plan_id
+            job_id, service, action, credentials,
+            plan_id=plan_id, plan_display_name=plan_display_name or None,
         )
         if not accepted:
             log.error("Agent rejected CLI job %s", job_id)

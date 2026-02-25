@@ -109,6 +109,19 @@ async def test_upsert_job_with_plan_id(db: Database):
 
 
 @pytest.mark.asyncio
+async def test_upsert_job_with_plan_display_name(db: Database):
+    job = _make_job(
+        action="resume",
+        plan_id="disney_plus_bundle_trio_premium",
+        plan_display_name="Disney Bundle Trio Premium",
+    )
+    await db.upsert_job(job)
+    result = await db.get_job("job-1")
+    assert result["plan_display_name"] == "Disney Bundle Trio Premium"
+    assert result["plan_id"] == "disney_plus_bundle_trio_premium"
+
+
+@pytest.mark.asyncio
 async def test_get_jobs_by_status(db: Database):
     await db.upsert_job(_make_job("j1", status="dispatched"))
     await db.upsert_job(_make_job("j2", status="active"))
