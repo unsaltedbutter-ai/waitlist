@@ -1,8 +1,8 @@
 [
   {
-    "id": "what-is-it",
-    "question": "What is UnsaltedButter?",
-    "answer": "A concierge bot that cancels and resumes your streaming subscriptions on your behalf. You keep your own accounts and payment methods. We just press the buttons for you."
+    "id": "how-contact",
+    "question": "How can I talk to someone at UnsaltedButter?",
+    "answer": "Either DM the UnsaltedButter bot (npub1hssdvydgqjx9y6ptlkt23sc5uptnqkc3q2r8j68zpdeyt9psl27s534rcr) or email me (info)."
   },
   {
     "id": "how-much",
@@ -52,7 +52,7 @@
   {
     "id": "how-communicate",
     "question": "How do I talk to the bot?",
-    "answer": "Everything happens over Nostr DMs. Send a message to the UnsaltedButter bot from any Nostr client. No new app to install, no new account to create. Just Nostr."
+    "answer": "Everything happens over Nostr DMs. Send a message to the UnsaltedButter bot from any Nostr client. No new app to install, no new account to create. Just Nostr. npub1hssdvydgqjx9y6ptlkt23sc5uptnqkc3q2r8j68zpdeyt9psl27s534rcr"
   },
   {
     "id": "credentials-safe",
