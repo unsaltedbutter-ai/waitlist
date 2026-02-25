@@ -44,8 +44,6 @@ _SAMPLE_RESPONSE = {
     'action': 'click',
     'target_description': 'Cancel button',
     'bounding_box': [100, 200, 300, 250],
-    'confidence': 0.9,
-    'reasoning': 'found cancel',
 }
 
 
@@ -439,7 +437,7 @@ class TestDrawBboxOverlay:
 
     def test_no_overlay_when_no_bboxes(self, tmp_path):
         """No overlay when response has no bbox keys."""
-        response = {'state': 'loading', 'action': 'wait', 'confidence': 0.8}
+        response = {'state': 'loading', 'action': 'wait'}
         trace = DebugTrace('job-no-bbox', base_dir=str(tmp_path))
         trace.save_step(0, _TEST_PNG, response, phase='cancel',
                         scale_factor=1.0)

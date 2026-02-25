@@ -629,7 +629,7 @@ class VLMExecutor:
                     )
 
                 if 'need_human' in state or vlm_action == 'need_human':
-                    error_message = f'Needs human intervention: {response.get("reasoning", "")}'
+                    error_message = f'Needs human intervention: {response.get("state", "unknown")}'
                     log.warning('Job %s: %s', job_id, error_message)
                     return ExecutionResult(
                         job_id=job_id,

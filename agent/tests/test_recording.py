@@ -106,13 +106,13 @@ class TestBuildSigninPrompt:
         prompt = build_signin_prompt('netflix')
         assert 'netflix' in prompt.lower() or 'Netflix' in prompt
 
+    @_skip_without_private
     def test_contains_response_schema(self) -> None:
         prompt = build_signin_prompt('netflix')
         assert '"page_type"' in prompt
         assert '"email_box"' in prompt
         assert '"password_box"' in prompt
         assert '"code_boxes"' in prompt
-        assert '"page_description"' in prompt
         assert '"actions"' in prompt
 
     @_skip_without_private
@@ -121,11 +121,13 @@ class TestBuildSigninPrompt:
         assert 'Sign In' in prompt
         assert 'Email or mobile number' in prompt
 
+    @_skip_without_private
     def test_unknown_service_uses_defaults(self) -> None:
         prompt = build_signin_prompt('unknownservice')
         assert 'unknownservice' in prompt
         assert 'Email' in prompt
 
+    @_skip_without_private
     def test_contains_new_states(self) -> None:
         prompt = build_signin_prompt('netflix')
         assert 'email_code_single' in prompt
@@ -146,6 +148,7 @@ class TestBuildSigninPrompt:
         assert 'browser tab bar' not in prompt
         assert '~150 pixels' not in prompt
 
+    @_skip_without_private
     def test_profile_selection_hint(self) -> None:
         prompt = build_signin_prompt('netflix')
         assert 'profile' in prompt.lower()
@@ -154,6 +157,7 @@ class TestBuildSigninPrompt:
 class TestBuildCancelPrompt:
     """Cancel prompt builder."""
 
+    @_skip_without_private
     def test_contains_cancel_keywords(self) -> None:
         prompt = build_cancel_prompt('netflix')
         assert 'cancel' in prompt.lower()
@@ -164,6 +168,7 @@ class TestBuildCancelPrompt:
         prompt = build_cancel_prompt('netflix')
         assert 'cancelplan' in prompt
 
+    @_skip_without_private
     def test_contains_response_schema(self) -> None:
         prompt = build_cancel_prompt('netflix')
         assert '"bounding_box"' in prompt
@@ -180,6 +185,7 @@ class TestBuildResumePrompt:
         prompt = build_resume_prompt('netflix', 'premium')
         assert 'resume' in prompt.lower() or 'restart' in prompt.lower()
 
+    @_skip_without_private
     def test_includes_plan_tier(self) -> None:
         prompt = build_resume_prompt('netflix', 'premium')
         assert 'premium' in prompt
@@ -191,10 +197,12 @@ class TestBuildResumePrompt:
         # Should not include plan change instructions
         assert 'Change Plan' not in prompt
 
+    @_skip_without_private
     def test_contains_response_schema(self) -> None:
         prompt = build_resume_prompt('hulu', 'basic')
         assert '"action"' in prompt
 
+    @_skip_without_private
     def test_plan_mismatch_triggers_change(self) -> None:
         prompt = build_resume_prompt('netflix', 'Standard with ads')
         assert 'Change' in prompt
@@ -202,6 +210,7 @@ class TestBuildResumePrompt:
         # Should instruct to click Change when wrong plan is shown
         assert 'DIFFERENT plan' in prompt
 
+    @_skip_without_private
     def test_account_navigation_before_completion(self) -> None:
         """Account navigation should appear before completion check in the prompt."""
         prompt = build_resume_prompt('netflix', 'premium')
@@ -209,15 +218,18 @@ class TestBuildResumePrompt:
         completion_pos = prompt.find('COMPLETION CHECK')
         assert account_pos < completion_pos, 'Account navigation must come before completion check'
 
+    @_skip_without_private
     def test_onboarding_means_done(self) -> None:
         prompt = build_resume_prompt('netflix', 'premium')
         assert 'onboarding' in prompt.lower()
         assert 'ALREADY SUCCEEDED' in prompt
 
+    @_skip_without_private
     def test_welcome_message_triggers_done(self) -> None:
         prompt = build_resume_prompt('netflix', '')
         assert 'Welcome to netflix' in prompt or 'Welcome back' in prompt
 
+    @_skip_without_private
     def test_browse_page_not_done(self) -> None:
         """The prompt must warn that seeing content does NOT mean done."""
         prompt = build_resume_prompt('peacock', 'premium')
@@ -345,8 +357,6 @@ class TestVLMClientAnalyze:
                         'action': 'click',
                         'target_description': 'email field',
                         'bounding_box': [100, 200, 300, 230],
-                        'confidence': 0.95,
-                        'reasoning': 'I see the email field',
                     }),
                 },
             }],
@@ -369,7 +379,6 @@ class TestVLMClientAnalyze:
 
         assert result['action'] == 'click'
         assert result['bounding_box'] == [100, 200, 300, 230]
-        assert result['confidence'] == 0.95
         assert scale_factor == 1.0  # 200px wide, under MAX_IMAGE_WIDTH
 
     def test_sends_correct_payload(self, monkeypatch) -> None:
@@ -453,7 +462,6 @@ class TestVLMClientAnalyze:
                         'state': 'page',
                         'action': 'click',
                         'bounding_box': [100, 50, 200, 80],
-                        'confidence': 0.9,
                     }),
                 },
             }],
@@ -491,7 +499,6 @@ class TestVLMClientAnalyze:
                         'state': 'page',
                         'action': 'click',
                         'bounding_box': [321, 335, 666, 398],
-                        'confidence': 0.95,
                     }),
                 },
             }],
@@ -533,7 +540,6 @@ class TestVLMClientAnalyze:
                         'state': 'page',
                         'action': 'click',
                         'bounding_box': [100, 200, 300, 250],
-                        'confidence': 0.9,
                     }),
                 },
             }],

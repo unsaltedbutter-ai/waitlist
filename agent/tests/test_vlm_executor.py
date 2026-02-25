@@ -44,13 +44,11 @@ def _make_session():
 
 
 # Common response dicts
-SIGNED_IN = {'page_type': 'signed_in', 'confidence': 0.99, 'reasoning': 'logged in'}
+SIGNED_IN = {'page_type': 'signed_in'}
 
 CANCEL_DONE = {
     'state': 'confirmation',
     'action': 'done',
-    'confidence': 0.95,
-    'reasoning': 'cancel confirmed',
     'billing_end_date': '2026-03-15',
 }
 
@@ -59,15 +57,11 @@ CANCEL_CLICK = {
     'action': 'click',
     'target_description': 'Cancel Membership button',
     'bounding_box': [100, 200, 300, 250],
-    'confidence': 0.90,
-    'reasoning': 'found cancel button',
 }
 
 RESUME_DONE = {
     'state': 'reactivated',
     'action': 'done',
-    'confidence': 0.95,
-    'reasoning': 'subscription reactivated',
     'billing_end_date': None,
 }
 
@@ -78,8 +72,6 @@ USER_PASS_PAGE = {
     'button_box': [150, 320, 350, 360],
     'profile_box': None,
     'code_boxes': None,
-    'confidence': 0.95,
-    'reasoning': 'email and password fields visible',
 }
 
 USER_ONLY_PAGE = {
@@ -89,8 +81,6 @@ USER_ONLY_PAGE = {
     'button_box': [150, 270, 350, 300],
     'profile_box': None,
     'code_boxes': None,
-    'confidence': 0.93,
-    'reasoning': 'email field only',
 }
 
 PROFILE_SELECT_PAGE = {
@@ -100,8 +90,6 @@ PROFILE_SELECT_PAGE = {
     'button_box': None,
     'profile_box': [200, 300, 400, 500],
     'code_boxes': None,
-    'confidence': 0.97,
-    'reasoning': 'profile picker',
 }
 
 EMAIL_CODE_PAGE = {
@@ -111,8 +99,6 @@ EMAIL_CODE_PAGE = {
     'button_box': [200, 400, 350, 440],
     'profile_box': None,
     'code_boxes': [{'label': 'code', 'box': [100, 300, 400, 340]}],
-    'confidence': 0.92,
-    'reasoning': 'verification code entry',
 }
 
 CAPTCHA_PAGE = {
@@ -122,8 +108,6 @@ CAPTCHA_PAGE = {
     'button_box': None,
     'profile_box': None,
     'code_boxes': None,
-    'confidence': 0.88,
-    'reasoning': 'captcha challenge detected',
 }
 
 CREDENTIAL_ERROR_PAGE = {
@@ -133,8 +117,6 @@ CREDENTIAL_ERROR_PAGE = {
     'button_box': [150, 320, 350, 360],
     'profile_box': None,
     'code_boxes': None,
-    'confidence': 0.93,
-    'reasoning': 'login form with credential error message',
 }
 
 
@@ -346,8 +328,6 @@ class TestVLMExecutorRun:
                 'action': 'click',
                 'target_description': f'button_{i}',
                 'bounding_box': [100 + i, 200, 300 + i, 250],
-                'confidence': 0.8,
-                'reasoning': f'click button {i}',
             })
         responses = [SIGNED_IN] + click_responses
         vlm = _make_vlm(responses)
@@ -386,8 +366,6 @@ class TestVLMExecutorRun:
         need_human = {
             'state': 'need_human',
             'action': 'need_human',
-            'confidence': 0.5,
-            'reasoning': 'unexpected popup',
         }
         vlm = _make_vlm([SIGNED_IN, need_human])
         executor = VLMExecutor(vlm, settle_delay=0)
@@ -417,8 +395,6 @@ class TestVLMExecutorRun:
         done_with_date = {
             'state': 'confirmation',
             'action': 'done',
-            'confidence': 0.95,
-            'reasoning': 'cancelled',
             'billing_end_date': '2026-04-01',
         }
         vlm = _make_vlm([SIGNED_IN, done_with_date])
@@ -431,8 +407,6 @@ class TestVLMExecutorRun:
         done_no_date = {
             'state': 'confirmation',
             'action': 'done',
-            'confidence': 0.95,
-            'reasoning': 'cancelled',
             'billing_end_date': None,
         }
         vlm = _make_vlm([SIGNED_IN, done_no_date])
@@ -445,8 +419,6 @@ class TestVLMExecutorRun:
         scroll_down = {
             'state': 'account page',
             'action': 'scroll_down',
-            'confidence': 0.8,
-            'reasoning': 'need to scroll to find cancel',
         }
         vlm = _make_vlm([SIGNED_IN, scroll_down, CANCEL_DONE])
         executor = VLMExecutor(vlm, settle_delay=0)
@@ -458,8 +430,6 @@ class TestVLMExecutorRun:
             'state': 'dialog',
             'action': 'press_key',
             'key_to_press': 'enter',
-            'confidence': 0.85,
-            'reasoning': 'confirm dialog',
         }
         vlm = _make_vlm([SIGNED_IN, press_enter, CANCEL_DONE])
         executor = VLMExecutor(vlm, settle_delay=0)
@@ -502,8 +472,6 @@ class TestVLMExecutorRun:
             'action': 'type_text',
             'text_to_type': 'the email address',
             'target_description': 'email field',
-            'confidence': 0.9,
-            'reasoning': 'type email',
         }
         vlm = _make_vlm([SIGNED_IN, type_action, CANCEL_DONE])
         executor = VLMExecutor(vlm, settle_delay=0)
@@ -546,8 +514,6 @@ class TestSigninPageDispatch:
             'button_box': None,
             'profile_box': None,
             'code_boxes': None,
-            'confidence': 0.91,
-            'reasoning': 'password only',
         }
         vlm = _make_vlm([pass_only, SIGNED_IN, CANCEL_DONE])
         executor = VLMExecutor(vlm, settle_delay=0)
@@ -568,8 +534,6 @@ class TestSigninPageDispatch:
             'button_box': [200, 300, 400, 340],
             'profile_box': None,
             'code_boxes': None,
-            'confidence': 0.89,
-            'reasoning': 'sign in button only',
         }
         vlm = _make_vlm([button_only, SIGNED_IN, CANCEL_DONE])
         executor = VLMExecutor(vlm, settle_delay=0)
@@ -584,8 +548,6 @@ class TestSigninPageDispatch:
             'button_box': None,
             'profile_box': None,
             'code_boxes': None,
-            'confidence': 0.95,
-            'reasoning': 'page loading',
         }
         vlm = _make_vlm([spinner, SIGNED_IN, CANCEL_DONE])
         executor = VLMExecutor(vlm, settle_delay=0)
@@ -670,8 +632,6 @@ class TestAutoTypeAfterClick:
             'action': 'click',
             'target_description': 'email input field',
             'bounding_box': [100, 200, 400, 230],
-            'confidence': 0.9,
-            'reasoning': 'click email field',
         }
         vlm = _make_vlm([SIGNED_IN, click_email_field, CANCEL_DONE])
         executor = VLMExecutor(vlm, settle_delay=0)
@@ -687,8 +647,6 @@ class TestAutoTypeAfterClick:
             'action': 'click',
             'target_description': 'Cancel Membership button',
             'bounding_box': [100, 200, 300, 250],
-            'confidence': 0.9,
-            'reasoning': 'click cancel',
         }
         vlm = _make_vlm([SIGNED_IN, click_button, CANCEL_DONE])
         executor = VLMExecutor(vlm, settle_delay=0)
@@ -708,8 +666,6 @@ class TestCredentialCallback:
             'action': 'type_text',
             'text_to_type': 'the cvv',
             'target_description': 'CVV field',
-            'confidence': 0.9,
-            'reasoning': 'type cvv',
         }
         loop = asyncio.new_event_loop()
         calls = []
@@ -749,8 +705,6 @@ class TestCredentialCallback:
             'action': 'click',
             'target_description': 'CVV input field',
             'bounding_box': [100, 200, 300, 230],
-            'confidence': 0.9,
-            'reasoning': 'click cvv field',
         }
         loop = asyncio.new_event_loop()
         calls = []
@@ -789,15 +743,11 @@ class TestCredentialCallback:
             'state': 'payment',
             'action': 'type_text',
             'text_to_type': 'the cvv',
-            'confidence': 0.9,
-            'reasoning': 'type cvv again',
         }
         type_cvv_2 = {
             'state': 'payment retry',
             'action': 'type_text',
             'text_to_type': 'the cvv',
-            'confidence': 0.9,
-            'reasoning': 'type cvv again',
         }
         loop = asyncio.new_event_loop()
         calls = []
@@ -836,8 +786,6 @@ class TestCredentialCallback:
             'state': 'payment',
             'action': 'type_text',
             'text_to_type': 'the cvv',
-            'confidence': 0.9,
-            'reasoning': 'type cvv',
         }
         vlm = _make_vlm([SIGNED_IN, type_cvv, CANCEL_DONE])
         executor = VLMExecutor(vlm, settle_delay=0)
@@ -853,8 +801,6 @@ class TestCredentialCallback:
             'state': 'payment',
             'action': 'type_text',
             'text_to_type': 'the cvv',
-            'confidence': 0.9,
-            'reasoning': 'type cvv',
         }
         loop = asyncio.new_event_loop()
 
@@ -888,8 +834,6 @@ class TestCredentialCallback:
             'state': 'payment',
             'action': 'type_text',
             'text_to_type': 'the cvv',
-            'confidence': 0.9,
-            'reasoning': 'type cvv',
         }
         loop = asyncio.new_event_loop()
         calls = []
@@ -927,8 +871,6 @@ class TestCredentialCallback:
             'state': 'payment page',
             'action': 'type_text',
             'text_to_type': 'the cvv',
-            'confidence': 0.9,
-            'reasoning': 'type cvv',
         }
         # VLM returns type_cvv twice, then done.
         # Without the fix, agent would type '789' twice (corrupting the field).
@@ -969,16 +911,12 @@ class TestCredentialCallback:
             'state': 'payment page',
             'action': 'type_text',
             'text_to_type': 'the cvv',
-            'confidence': 0.9,
-            'reasoning': 'type cvv',
         }
         click_submit = {
             'state': 'payment page',
             'action': 'click',
             'target_description': 'Agree and Subscribe button',
             'bounding_box': [100, 400, 300, 440],
-            'confidence': 0.9,
-            'reasoning': 'submit payment',
         }
         # Sequence: sign-in, type_cvv (triggers callback), click_submit, done
         # The type_cvv adds one stuck entry. After credential receipt, stuck
@@ -1090,8 +1028,6 @@ class TestCursorRestore:
         scroll_action = {
             'state': 'page_scroll',
             'action': 'scroll_down',
-            'confidence': 0.8,
-            'reasoning': 'scrolling',
         }
         # click saves bbox -> restore fires in screenshot phase (after click) AND
         # in execution phase (before scroll) -> scroll clears bbox -> done (no restore)

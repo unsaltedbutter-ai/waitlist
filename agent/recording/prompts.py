@@ -160,8 +160,7 @@ You are a browser automation assistant helping cancel a {service} subscription.
         if plan_tier:
             tier_instruction = (
                 f'\n- Am I on a plan review/confirmation page showing a DIFFERENT plan than '
-                f'"{plan_tier}"? -> click "Change" or "Change Plan" to switch plans, '
-                f'set is_checkpoint to true'
+                f'"{plan_tier}"? -> click "Change" or "Change Plan" to switch plans'
                 f'\n- Am I on a plan selection page? -> click the "{plan_tier}" plan'
             )
 
