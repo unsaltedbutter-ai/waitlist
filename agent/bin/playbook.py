@@ -26,7 +26,7 @@ if _PROJECT_ROOT not in sys.path:
     sys.path.insert(0, _PROJECT_ROOT)
 
 
-SERVICES = ['netflix', 'hulu', 'disney', 'appletv', 'paramount', 'peacock', 'max']
+SERVICES = ['netflix', 'hulu', 'disney_plus', 'paramount', 'peacock', 'max']
 
 
 def _slugify_plan(plan: str) -> str:

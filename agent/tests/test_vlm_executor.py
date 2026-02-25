@@ -510,9 +510,9 @@ class TestVLMExecutorRun:
         result = executor.run('netflix', 'cancel', {'email': 'test@x.com', 'pass': 'p'})
         assert result.success
 
-    def test_all_seven_services(self):
-        """All 7 services are accepted."""
-        for service in ('netflix', 'hulu', 'disney', 'appletv',
+    def test_all_six_services(self):
+        """All 6 services are accepted."""
+        for service in ('netflix', 'hulu', 'disney_plus',
                         'paramount', 'peacock', 'max'):
             vlm = _make_vlm([SIGNED_IN, CANCEL_DONE])
             executor = VLMExecutor(vlm, settle_delay=0)

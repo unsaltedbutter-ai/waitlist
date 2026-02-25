@@ -197,8 +197,8 @@ describe("PUT /api/queue", () => {
 
   it("all supported services in queue -> success", async () => {
     const all = [
-      "netflix", "hulu", "disney_plus", "max",
-      "apple_tv", "paramount", "peacock",
+      "netflix", "hulu", "disney_plus",
+      "paramount", "peacock", "max",
     ];
     mockServices(all);
     mockCreds(all);

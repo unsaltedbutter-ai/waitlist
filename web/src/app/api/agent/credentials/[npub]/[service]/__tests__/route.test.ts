@@ -104,7 +104,7 @@ describe("GET /api/agent/credentials/[npub]/[service]", () => {
     mockActiveJob();
     mockCredentialsFound();
 
-    const res = await callGET("aabb".repeat(16), "apple_tv");
+    const res = await callGET("aabb".repeat(16), "disney_plus");
     expect(res.status).toBe(200);
 
     const data = await res.json();
@@ -289,7 +289,7 @@ describe("GET /api/agent/credentials/[npub]/[service]", () => {
     mockActiveJob();
     mockCredentialsFound();
 
-    const res = await callGET("aabb".repeat(16), "apple_tv");
+    const res = await callGET("aabb".repeat(16), "disney_plus");
     expect(res.status).toBe(200);
   });
 

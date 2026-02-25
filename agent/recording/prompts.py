@@ -52,7 +52,7 @@ except ImportError:
             'profile_selection': '',
             'notes': '',
         },
-        'disney': {
+        'disney_plus': {
             'login_url': 'https://www.example.com/login',
             'cancel_url': '',
             'account_url': 'https://www.example.com/account',
@@ -77,18 +77,6 @@ except ImportError:
             'notes': '',
         },
         'peacock': {
-            'login_url': 'https://www.example.com/login',
-            'cancel_url': '',
-            'account_url': 'https://www.example.com/account',
-            'signin_button': 'Sign In',
-            'email_field': 'Email',
-            'password_field': 'Password',
-            'cancel_button_labels': 'Cancel',
-            'resume_button_labels': 'Resume',
-            'profile_selection': '',
-            'notes': '',
-        },
-        'appletv': {
             'login_url': 'https://www.example.com/login',
             'cancel_url': '',
             'account_url': 'https://www.example.com/account',

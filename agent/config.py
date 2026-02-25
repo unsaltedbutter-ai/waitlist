@@ -16,8 +16,7 @@ VLM_MODEL = os.getenv('VLM_MODEL', 'qwen3-vl-32b')
 SERVICE_URLS: dict[str, str] = {
     'netflix': 'https://www.netflix.com/',
     'hulu': 'https://secure.hulu.com/account/login',
-    'disney': 'https://www.disneyplus.com/login',
-    'appletv': 'https://tv.apple.com/sign-in',
+    'disney_plus': 'https://www.disneyplus.com/login',
     'paramount': 'https://www.paramountplus.com/account/signin/',
     'peacock': 'https://www.peacocktv.com/signin',
     'max': 'https://play.max.com/login',
@@ -26,8 +25,7 @@ SERVICE_URLS: dict[str, str] = {
 ACCOUNT_URLS: dict[str, str] = {
     'netflix': 'https://www.netflix.com/account',
     'hulu': 'https://secure.hulu.com/account',
-    'disney': 'https://www.disneyplus.com/account',
-    'appletv': 'https://tv.apple.com/settings',
+    'disney_plus': 'https://www.disneyplus.com/account',
     'paramount': 'https://www.paramountplus.com/account/',
     'peacock': 'https://www.peacocktv.com/account',
     'max': 'https://play.max.com/account',

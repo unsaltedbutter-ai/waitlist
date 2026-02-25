@@ -228,8 +228,8 @@ class TestBuildResumePrompt:
 class TestServiceHints:
     """SERVICE_HINTS dict coverage."""
 
-    def test_all_seven_services_present(self) -> None:
-        expected = {'netflix', 'hulu', 'disney', 'paramount', 'peacock', 'appletv', 'max'}
+    def test_all_six_services_present(self) -> None:
+        expected = {'netflix', 'hulu', 'disney_plus', 'paramount', 'peacock', 'max'}
         assert expected == set(SERVICE_HINTS.keys())
 
     def test_each_service_has_required_keys(self) -> None:
