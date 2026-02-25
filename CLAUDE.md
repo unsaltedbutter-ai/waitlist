@@ -55,8 +55,7 @@ unsaltedbutter.ai/
 |   +-- web/                     <- Next.js app stubs (VPS)
 |-- web/                         <- Next.js app (BUILT)
 |-- agent/                       <- Python agent (BUILT)
-|-- orchestrator/                <- Python orchestrator (BUILT)
-|-- nostr-bot/                   <- Python Nostr bot (BUILT)
+|-- orchestrator/                <- Python orchestrator + Nostr bot (BUILT)
 +-- scripts/                     <- deployment + ops scripts
 ```
 

@@ -13,7 +13,6 @@ __pycache__/
 web/.env.local
 agent/.env
 orchestrator/.env
-nostr-bot/.env
 
 # Encryption key (NEVER commit)
 *.keyfile

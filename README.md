@@ -35,7 +35,6 @@ unsaltedbutter.ai/
 ├── web/                    Next.js app (VPS)
 ├── agent/                  Python browser agent (Mac Mini)
 ├── orchestrator/           Python orchestrator + Nostr bot (Mac Mini)
-├── nostr-bot/              Nostr DM bot (Mac Mini, runs inside orchestrator)
 ├── scripts/                Deployment, cron jobs, ops scripts
 ├── env-examples/           Template env files
 └── unsalted-butter-handoff/
@@ -61,7 +60,7 @@ unsaltedbutter.ai/
 
 Environment files live in `~/.unsaltedbutter/`:
 - `shared.env` (loaded by all components)
-- `orchestrator.env`, `nostr-bot.env`, `agent.env` (component overrides)
+- `orchestrator.env`, `agent.env` (component overrides)
 
 See `env-examples/` for templates.
 
