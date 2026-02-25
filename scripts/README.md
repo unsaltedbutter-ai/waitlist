@@ -204,7 +204,7 @@ ssh butter@<VPS_IP>
 
 ```bash
 ssh butter@<VPS_IP>
-~/unsaltedbutter/scripts/setup-offsite-backup.sh u547750 u547750.your-storagebox.de
+~/unsaltedbutter/scripts/setup-offsite-backup.sh uXXXXXX uXXXXXX.your-storagebox.de
 # Enter Storage Box password once (for SSH key install)
 ```
 
@@ -417,7 +417,7 @@ ls -lt ~/backups/pg_app_*.sql.gz | head -5
 
 ```bash
 rsync -az -e "ssh -p 23 -i ~/.ssh/storagebox_ed25519 -o BatchMode=yes" \
-  u547750@u547750.your-storagebox.de:backups/daily/ ~/backups-restore/
+  uXXXXXX@uXXXXXX.your-storagebox.de:backups/daily/ ~/backups-restore/
 ls -lt ~/backups-restore/pg_app_*.sql.gz | head -5
 ```
 
@@ -539,10 +539,10 @@ ssh butter@<NEW_IP>
 ```bash
 ssh butter@<NEW_IP>
 # Set up offsite backup SSH key
-~/unsaltedbutter/scripts/setup-offsite-backup.sh u547750 u547750.your-storagebox.de
+~/unsaltedbutter/scripts/setup-offsite-backup.sh uXXXXXX uXXXXXX.your-storagebox.de
 # Pull backups
 rsync -az -e "ssh -p 23 -i ~/.ssh/storagebox_ed25519 -o BatchMode=yes" \
-  u547750@u547750.your-storagebox.de:backups/daily/ ~/backups/
+  uXXXXXX@uXXXXXX.your-storagebox.de:backups/daily/ ~/backups/
 # Restore latest app PG
 DB_PASS=$(cat ~/.unsaltedbutter/db_password)
 LATEST=$(ls -t ~/backups/pg_app_*.sql.gz | head -1)
@@ -604,7 +604,7 @@ If local backups are missing, pull from offsite:
 
 ```bash
 rsync -az -e "ssh -p 23 -i ~/.ssh/storagebox_ed25519 -o BatchMode=yes" \
-  u547750@u547750.your-storagebox.de:backups/scb/ ~/scb-backups-restore/
+  uXXXXXX@uXXXXXX.your-storagebox.de:backups/scb/ ~/scb-backups-restore/
 ls -lt ~/scb-backups-restore/ | head -5
 ```
 

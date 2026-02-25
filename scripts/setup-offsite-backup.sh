@@ -11,13 +11,13 @@
 #
 # Usage:
 #   ./setup-offsite-backup.sh <username> <host>
-#   ./setup-offsite-backup.sh u547750 u547750.your-storagebox.de
+#   ./setup-offsite-backup.sh uXXXXXX uXXXXXX.your-storagebox.de
 # =============================================================================
 set -euo pipefail
 
 if [ $# -lt 2 ]; then
   echo "Usage: $0 <storagebox-user> <storagebox-host>"
-  echo "Example: $0 u547750 u547750.your-storagebox.de"
+  echo "Example: $0 uXXXXXX uXXXXXX.your-storagebox.de"
   exit 1
 fi
 

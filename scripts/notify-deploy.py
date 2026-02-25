@@ -30,10 +30,7 @@ async def send_dm(message: str) -> None:
         load_dotenv(env_file)
 
     nsec = os.environ["NOSTR_NSEC"]
-    npub = os.environ.get(
-        "OPERATOR_NPUB",
-        "***REDACTED***",
-    )
+    npub = os.environ["OPERATOR_NPUB"]
 
     keys = Keys.parse(nsec)
     signer = NostrSigner.keys(keys)

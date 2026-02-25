@@ -15,7 +15,7 @@
 #
 # Examples:
 #   ./lightning-send-sats.sh --invoice lnbc500u1p...
-#   ./lightning-send-sats.sh --address ray@phoenix.acinq.co --amount 100000
+#   ./lightning-send-sats.sh --address satoshi@example.com --amount 100000
 #   ./lightning-send-sats.sh --invoice lnbc... --fee-limit-percent 1 --timeout 30
 # =============================================================================
 set -euo pipefail

@@ -10,9 +10,13 @@ set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ALERT="$HOME/venvs/update-checker/bin/python $SCRIPT_DIR/nostr-alert.py"
 
-SB_USER="u547750"
-SB_HOST="u547750.your-storagebox.de"
-SB_PORT=23
+# Load backup config
+BACKUP_ENV="$HOME/.unsaltedbutter/backup.env"
+[ -f "$BACKUP_ENV" ] && set -a && . "$BACKUP_ENV" && set +a
+
+SB_USER="${OFFSITE_SB_USER:?Set OFFSITE_SB_USER in ~/.unsaltedbutter/backup.env}"
+SB_HOST="${OFFSITE_SB_HOST:?Set OFFSITE_SB_HOST in ~/.unsaltedbutter/backup.env}"
+SB_PORT="${OFFSITE_SB_PORT:-23}"
 SB_KEY="$HOME/.ssh/storagebox_ed25519"
 LOG="$HOME/logs/offsite-backup.log"
 

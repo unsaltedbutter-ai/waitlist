@@ -8,12 +8,11 @@
 # Prerequisites:
 #   - BTCPay admin account created at https://pay.unsaltedbutter.ai
 #   - A store created in the BTCPay UI
-#   - Email: info@unsaltedbutter.ai
 # =============================================================================
 set -euo pipefail
 
 BTCPAY_URL="https://pay.unsaltedbutter.ai"
-BTCPAY_EMAIL="info@unsaltedbutter.ai"
+read -rp "BTCPay admin email: " BTCPAY_EMAIL
 ENV_FILE="/home/butter/unsaltedbutter/web/.env.production"
 read -rsp "BTCPay password for ${BTCPAY_EMAIL}: " PASSWORD
 echo ""

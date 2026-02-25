@@ -1,5 +1,10 @@
 [
   {
+    "id": "why-trust",
+    "question": "Why should I trust you with my usernames and passwords?",
+    "answer": "Straight talk from one bitcoiner to another: I built this because I wanted it, and I use it myself. If you want to get to know me first, DM me on Nostr: npub197wnmww44hz60kdry7mme3mqsk7tx683yl26f0n5t29lhxad7lhq3kh3pt. \nFrom a technical perspective: your credentials are encrypted at rest with AES-256-GCM and destroyed immediately if you delete your account. They are never logged in plaintext. The codebase is being prepared for open source so you can verify that yourself. "
+  },
+  {
     "id": "how-contact",
     "question": "How can I talk to someone at UnsaltedButter?",
     "answer": "Either DM the UnsaltedButter bot (npub1hssdvydgqjx9y6ptlkt23sc5uptnqkc3q2r8j68zpdeyt9psl27s534rcr) or email me (info)."

@@ -17,7 +17,7 @@ TEST_EMAIL="webtest@test.unsaltedbutter.ai"
 INVITE_CODE=$(LC_ALL=C tr -dc 'A-Z0-9' </dev/urandom | head -c 12)
 
 if [ "${1:-}" = "--dev" ]; then
-    PSQL="psql -h 192.168.5.188 -U butter -d unsaltedbutter"
+    PSQL="psql -h ${DEV_PG_HOST:-localhost} -U butter -d unsaltedbutter"
     BASE_URL="http://localhost:3000"
 elif [ "${1:-}" = "--prod" ]; then
     PSQL="sudo -u postgres psql -d unsaltedbutter"

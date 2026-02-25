@@ -460,10 +460,7 @@ def format_message(
 
 async def send_nostr_dm(message: str) -> None:
     nsec = os.environ["NOSTR_NSEC"]
-    npub = os.environ.get(
-        "OPERATOR_NPUB",
-        "***REDACTED***",
-    )
+    npub = os.environ["OPERATOR_NPUB"]
 
     keys = Keys.parse(nsec)
     signer = NostrSigner.keys(keys)
