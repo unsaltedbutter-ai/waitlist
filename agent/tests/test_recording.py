@@ -244,11 +244,20 @@ class TestServiceHints:
         expected = {'netflix', 'hulu', 'disney_plus', 'paramount', 'peacock', 'max'}
         assert expected == set(SERVICE_HINTS.keys())
 
-    def test_each_service_has_required_keys(self) -> None:
-        required = {'login_url', 'signin_button', 'email_field', 'password_field'}
-        for service, hints in SERVICE_HINTS.items():
-            for key in required:
-                assert key in hints, f'{service} missing key: {key}'
+    def test_each_service_has_required_phase_keys(self) -> None:
+        signin_required = {'login_url', 'button', 'email_field', 'password_field'}
+        cancel_required = {'button_labels'}
+        resume_required = {'button_labels'}
+        for service, phases in SERVICE_HINTS.items():
+            assert 'signin' in phases, f'{service} missing phase: signin'
+            assert 'cancel' in phases, f'{service} missing phase: cancel'
+            assert 'resume' in phases, f'{service} missing phase: resume'
+            for key in signin_required:
+                assert key in phases['signin'], f'{service}.signin missing key: {key}'
+            for key in cancel_required:
+                assert key in phases['cancel'], f'{service}.cancel missing key: {key}'
+            for key in resume_required:
+                assert key in phases['resume'], f'{service}.resume missing key: {key}'
 
 
 # ===========================================================================
