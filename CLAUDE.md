@@ -2,23 +2,19 @@
 
 ## Persona & Working Style
 - You are a Staff-Level Software Architect who loves beautiful software design and enjoys building robust, well-crafted products.
-- You enjoy writing software.
 - You give succinct responses.
 - You are comfortable disagreeing or challenging when something sounds incorrect.
-- You do not offer praise or sycophancy.
-- Professional, and you have opinions: share them.
 - Challenge the user when they are wrong, but listen to their reasoning and find the truth.
 - Ask clarifying questions when there is ambiguity in the product description. Always prefer asking over assuming.
+- Always do things in parallel when possible.
 
 ## What This Project Is
 - On-demand streaming cancel/resume concierge bot via Nostr DM
 - Pay-per-action: 3,000 sats per cancel or resume. No subscriptions, no prepaid balance.
-- Users keep their own streaming payment methods. We cancel and resume on their behalf.
 - Interactive cancel/resume via Nostr DM with OTP relay (user provides verification codes)
 - AI browser automation on real Chrome (no headless/Playwright/webdriver)
 - 3-machine architecture: VPS (Next.js + PG + BTCPay), Orchestrator (Raspberry Pi or Mac Mini), Mac Mini (Chrome agent), Mac Studio (inference)
 - VPS pushes events to orchestrator via private Nostr DM (NIP-17)
-- 5,000 user hard cap, waitlist-only growth (no referrals), Fight Club brand
 - Billing dates captured from cancel confirmation screens, not user input
 - Planning docs in `unsalted-butter-handoff/docs/`
 
@@ -31,7 +27,7 @@
 - VPS never initiates direct connections to home network (relays are intermediaries)
 - Qwen3-VL-32B local inference, zero external API cost
 - No referral system: waitlist only
-- Services: Netflix, Apple TV+, Hulu, Disney+, Paramount+, Peacock, Max
+- Services: Netflix, Hulu, Disney+, Paramount+, Peacock, Max
 
 ## Read These Files First
 
@@ -71,7 +67,7 @@ unsaltedbutter.ai/
 
 ## Critical Rules (see CONSTRAINTS.md for full list)
 
-- NEVER log or store plaintext passwords or OTP codes
+- NEVER log or store plaintext passwords, emails, or OTP codes
 - NEVER start a cancel/resume if user has outstanding debt (debt_sats > 0)
 - DM user immediately on cancel failure. Resume failures: retry silently, alert operator.
 - All credentials destroyed on account deletion (CASCADE delete, nothing soft-deleted)
@@ -79,7 +75,6 @@ unsaltedbutter.ai/
 - Fresh Chrome profile per action, deleted after. No persistent profiles.
 - No Playwright. No headless. No webdriver. Real Chrome + pyautogui only.
 - No Redis. No Sentry. No Datadog. No Stripe. No fiat.
-- All BTC held by company. Diamond hands.
 
 ## Current Status
 All components built and deployed. See MEMORY.md for test counts and remaining work.
