@@ -111,6 +111,10 @@ def crop_browser_chrome(screenshot_b64: str) -> tuple[str, int]:
     scale = window.get_retina_scale()
     chrome_px = int(CHROME_HEIGHT_LOGICAL * scale)
 
+    # No stripping requested
+    if chrome_px <= 0:
+        return screenshot_b64, 0
+
     raw = base64.b64decode(screenshot_b64)
     img = Image.open(io.BytesIO(raw))
 
