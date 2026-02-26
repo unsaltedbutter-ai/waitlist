@@ -67,7 +67,12 @@ export const POST = withOperator(
       [status, id]
     );
 
-    // Write audit log
+    // Write audit trails
+    await query(
+      `INSERT INTO job_status_history (job_id, from_status, to_status, changed_by)
+       VALUES ($1, $2, $3, $4)`,
+      [id, previousStatus, status, "operator"]
+    );
     await query(
       `INSERT INTO operator_audit_log (action, target_type, target_id, detail)
        VALUES ($1, $2, $3, $4)`,

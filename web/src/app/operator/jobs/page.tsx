@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
+import { nip19 } from "nostr-tools";
 import { authFetch } from "@/lib/hooks/use-auth";
 import { getJobStatusConfig } from "@/lib/job-status";
 import {
@@ -46,6 +47,14 @@ interface PendingJob {
   status_updated_at: string;
   created_at: string;
   nostr_npub: string;
+}
+
+function hexToNpub(hex: string): string {
+  try {
+    return nip19.npubEncode(hex);
+  } catch {
+    return hex;
+  }
 }
 
 export default function JobsPage() {
@@ -156,13 +165,13 @@ export default function JobsPage() {
     setTimeout(() => setCopiedNpub(null), 2000);
   };
 
-  const cancelPendingJob = async (jobId: string) => {
+  const forceStatusPending = async (jobId: string, status: string, reason: string) => {
     setPendingCancellingId(jobId);
     try {
       const res = await authFetch(`/api/operator/jobs/${jobId}/force-status`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ status: "user_skip", reason: "Operator cancelled" }),
+        body: JSON.stringify({ status, reason }),
       });
       if (res.ok) {
         await fetchPendingJobs();
@@ -172,16 +181,15 @@ export default function JobsPage() {
     }
   };
 
-  const cancelJob = async (jobId: string) => {
+  const forceStatusLookup = async (jobId: string, status: string, reason: string) => {
     setCancellingId(jobId);
     try {
       const res = await authFetch(`/api/operator/jobs/${jobId}/force-status`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ status: "user_skip", reason: "Operator cancelled" }),
+        body: JSON.stringify({ status, reason }),
       });
       if (res.ok) {
-        // Refetch the lookup results
         await searchNpub();
       }
     } finally {
@@ -243,16 +251,21 @@ export default function JobsPage() {
                   return (
                     <tr key={j.id} className="border-b border-border/50">
                       <td className="px-3 py-2">
-                        <button
-                          type="button"
-                          onClick={() => copyNpub(j.nostr_npub)}
-                          className="font-mono text-xs text-foreground hover:text-accent cursor-pointer"
-                          title="Click to copy full npub"
-                        >
-                          {copiedNpub === j.nostr_npub
-                            ? "Copied!"
-                            : `${j.nostr_npub.slice(0, 12)}...`}
-                        </button>
+                        {(() => {
+                          const npub = hexToNpub(j.nostr_npub);
+                          return (
+                            <button
+                              type="button"
+                              onClick={() => copyNpub(npub)}
+                              className="font-mono text-xs text-foreground hover:text-accent cursor-pointer"
+                              title={npub}
+                            >
+                              {copiedNpub === npub
+                                ? "Copied!"
+                                : `${npub.slice(0, 12)}...${npub.slice(-6)}`}
+                            </button>
+                          );
+                        })()}
                       </td>
                       <td className={tdClass}>{j.service_id}</td>
                       <td className={tdMuted}>{j.action}</td>
@@ -264,19 +277,27 @@ export default function JobsPage() {
                         </span>
                       </td>
                       <td className={tdMuted}>{formatDate(j.created_at)}</td>
-                      <td className="px-3 py-2">
-                        {CANCELLABLE.has(j.status) ? (
+                      <td className="px-3 py-2 flex gap-1">
+                        {CANCELLABLE.has(j.status) && (
                           <button
                             type="button"
-                            onClick={() => cancelPendingJob(j.id)}
+                            onClick={() => forceStatusPending(j.id, "user_skip", "Operator cancelled")}
                             disabled={pendingCancellingId === j.id}
                             className="text-xs px-2 py-1 rounded border border-red-700/50 bg-red-900/20 text-red-400 hover:bg-red-900/40 disabled:opacity-50"
                           >
                             {pendingCancellingId === j.id ? "..." : "Cancel"}
                           </button>
-                        ) : INFLIGHT.has(j.status) ? (
-                          <span className="text-xs text-amber-400">inflight</span>
-                        ) : null}
+                        )}
+                        {INFLIGHT.has(j.status) && (
+                          <button
+                            type="button"
+                            onClick={() => forceStatusPending(j.id, "failed", "Operator forced fail")}
+                            disabled={pendingCancellingId === j.id}
+                            className="text-xs px-2 py-1 rounded border border-amber-700/50 bg-amber-900/20 text-amber-400 hover:bg-amber-900/40 disabled:opacity-50"
+                          >
+                            {pendingCancellingId === j.id ? "..." : "Fail"}
+                          </button>
+                        )}
                       </td>
                     </tr>
                   );
@@ -318,7 +339,7 @@ export default function JobsPage() {
             <div className="flex items-center gap-4 text-sm">
               <span className="text-muted">User:</span>
               <span className="text-foreground font-mono text-xs">
-                {lookupUser.nostr_npub.slice(0, 16)}...
+                {hexToNpub(lookupUser.nostr_npub).slice(0, 20)}...
               </span>
               {lookupUser.debt_sats > 0 && (
                 <span className="text-red-400 font-medium">
@@ -363,19 +384,27 @@ export default function JobsPage() {
                               : "N/A"}
                           </td>
                           <td className={tdMuted}>{formatDate(j.created_at)}</td>
-                          <td className="px-3 py-2">
-                            {CANCELLABLE.has(j.status) ? (
+                          <td className="px-3 py-2 flex gap-1">
+                            {CANCELLABLE.has(j.status) && (
                               <button
                                 type="button"
-                                onClick={() => cancelJob(j.id)}
+                                onClick={() => forceStatusLookup(j.id, "user_skip", "Operator cancelled")}
                                 disabled={cancellingId === j.id}
                                 className="text-xs px-2 py-1 rounded border border-red-700/50 bg-red-900/20 text-red-400 hover:bg-red-900/40 disabled:opacity-50"
                               >
                                 {cancellingId === j.id ? "..." : "Cancel"}
                               </button>
-                            ) : INFLIGHT.has(j.status) ? (
-                              <span className="text-xs text-amber-400">inflight</span>
-                            ) : null}
+                            )}
+                            {INFLIGHT.has(j.status) && (
+                              <button
+                                type="button"
+                                onClick={() => forceStatusLookup(j.id, "failed", "Operator forced fail")}
+                                disabled={cancellingId === j.id}
+                                className="text-xs px-2 py-1 rounded border border-amber-700/50 bg-amber-900/20 text-amber-400 hover:bg-amber-900/40 disabled:opacity-50"
+                              >
+                                {cancellingId === j.id ? "..." : "Fail"}
+                              </button>
+                            )}
                           </td>
                         </tr>
                       );

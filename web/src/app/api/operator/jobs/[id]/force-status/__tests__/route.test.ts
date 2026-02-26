@@ -55,7 +55,9 @@ describe("POST /api/operator/jobs/[id]/force-status", () => {
         },
       ])
     );
-    // 3. Audit log
+    // 3. Job status history
+    vi.mocked(query).mockResolvedValueOnce(mockQueryResult([]));
+    // 4. Operator audit log
     vi.mocked(query).mockResolvedValueOnce(mockQueryResult([]));
 
     const res = await POST(
@@ -66,8 +68,12 @@ describe("POST /api/operator/jobs/[id]/force-status", () => {
     const data = await res.json();
     expect(data.job.status).toBe("completed_paid");
 
-    // Verify audit log
-    const auditCall = vi.mocked(query).mock.calls[2];
+    // Verify job_status_history
+    const historyCall = vi.mocked(query).mock.calls[2];
+    expect(historyCall[1]).toEqual([JOB_ID, "active", "completed_paid", "operator"]);
+
+    // Verify operator_audit_log
+    const auditCall = vi.mocked(query).mock.calls[3];
     const detail = JSON.parse(auditCall[1]![3] as string);
     expect(detail.previous_status).toBe("active");
     expect(detail.new_status).toBe("completed_paid");
@@ -102,6 +108,7 @@ describe("POST /api/operator/jobs/[id]/force-status", () => {
           },
         ])
       );
+      vi.mocked(query).mockResolvedValueOnce(mockQueryResult([]));
       vi.mocked(query).mockResolvedValueOnce(mockQueryResult([]));
 
       const res = await POST(
