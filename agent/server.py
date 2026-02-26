@@ -124,6 +124,9 @@ class Agent:
         vlm_yx = os.environ.get(
             "VLM_COORD_YX", "",
         ).lower() in ("1", "true", "yes")
+        vlm_square_pad = os.environ.get(
+            "VLM_COORD_SQUARE_PAD", "",
+        ).lower() in ("1", "true", "yes")
 
         # Create VLM client
         if not vlm_url:
@@ -135,6 +138,7 @@ class Agent:
             max_image_width=vlm_max_width,
             coord_normalize=vlm_normalize,
             coord_yx=vlm_yx,
+            coord_square_pad=vlm_square_pad,
         )
         self._vlm_model = vlm_model
         log.info("VLM client: model=%s url=%s max_width=%d normalize=%s yx=%s",

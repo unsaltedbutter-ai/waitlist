@@ -87,6 +87,7 @@ def cmd_run(args):
         max_image_width=args.max_image_width,
         coord_normalize=args.coord_normalize,
         coord_yx=args.coord_yx,
+        coord_square_pad=args.coord_square_pad,
     )
 
     # Set up async event loop for OTP and credential callbacks
@@ -300,6 +301,8 @@ def main():
                        help='VLM returns 0-1000 normalized coords (env: VLM_COORD_NORMALIZE)')
     p_run.add_argument('--coord-yx', action='store_true', default=None, dest='coord_yx',
                        help='VLM returns coords in [y, x] order (env: VLM_COORD_YX)')
+    p_run.add_argument('--coord-square-pad', action='store_true', default=None, dest='coord_square_pad',
+                       help='Backend pads images to square before vision encoder (env: VLM_COORD_SQUARE_PAD)')
 
     args = parser.parse_args()
 
