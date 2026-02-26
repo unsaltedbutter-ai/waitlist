@@ -117,6 +117,13 @@ class Agent:
         vlm_url = os.environ.get("VLM_URL", "")
         vlm_key = os.environ.get("VLM_KEY", "")
         vlm_model = os.environ.get("VLM_MODEL", "qwen3-vl-32b")
+        vlm_max_width = int(os.environ.get("VLM_MAX_WIDTH", "960"))
+        vlm_normalize = os.environ.get(
+            "VLM_COORD_NORMALIZE", "",
+        ).lower() in ("1", "true", "yes")
+        vlm_yx = os.environ.get(
+            "VLM_COORD_YX", "",
+        ).lower() in ("1", "true", "yes")
 
         # Create VLM client
         if not vlm_url:
@@ -125,9 +132,14 @@ class Agent:
             base_url=vlm_url or "http://localhost:8080",
             api_key=vlm_key,
             model=vlm_model,
+            max_image_width=vlm_max_width,
+            coord_normalize=vlm_normalize,
+            coord_yx=vlm_yx,
         )
         self._vlm_model = vlm_model
-        log.info("VLM client: model=%s url=%s", vlm_model, vlm_url or "(not set)")
+        log.info("VLM client: model=%s url=%s max_width=%d normalize=%s yx=%s",
+                 vlm_model, vlm_url or "(not set)",
+                 vlm_max_width, vlm_normalize, vlm_yx)
 
         # Register routes
         self._app.router.add_post("/execute", self._handle_execute)
