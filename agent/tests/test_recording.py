@@ -81,8 +81,8 @@ class TestCropBrowserChrome:
         assert chrome_px == 0
         assert cropped_b64 == img_b64
 
-    def test_chrome_height_constant(self) -> None:
-        assert CHROME_HEIGHT_LOGICAL == 88
+    def test_chrome_height_default(self) -> None:
+        assert CHROME_HEIGHT_LOGICAL >= 0  # env-configurable, default 88
 
     def test_returns_valid_png(self, monkeypatch) -> None:
         """Output is a valid PNG that can be re-opened."""

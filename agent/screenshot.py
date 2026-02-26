@@ -19,7 +19,8 @@ from agent.input import window
 
 # Chrome's tab bar + address bar height in logical (non-Retina) pixels.
 # Physical pixel crop = int(CHROME_HEIGHT_LOGICAL * retina_scale).
-CHROME_HEIGHT_LOGICAL = 88
+# Set CHROME_HEIGHT env var to override (e.g. "0" to disable stripping).
+CHROME_HEIGHT_LOGICAL = int(os.getenv('CHROME_HEIGHT', '88'))
 
 
 def capture_window(window_id: int, output_path: str | None = None) -> str:
