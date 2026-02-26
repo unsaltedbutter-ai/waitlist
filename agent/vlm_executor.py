@@ -475,9 +475,11 @@ class VLMExecutor:
                 current_label = labels[prompt_idx]
 
                 try:
+                    vlm_t0 = time.monotonic()
                     response, scale_factor = self.vlm.analyze(
                         screenshot_b64, current_prompt,
                     )
+                    vlm_response_ms = round((time.monotonic() - vlm_t0) * 1000)
                     inference_count += 1
                 except Exception as exc:
                     log.warning('VLM error on iteration %d: %s', iteration, exc)
@@ -497,6 +499,10 @@ class VLMExecutor:
                                     'display_scale': coords._get_display_scale(),
                                     'chrome_offset_px': chrome_height_px,
                                     'vlm_scale_factor': scale_factor,
+                                    'vlm_max_width': self.vlm._max_image_width,
+                                    'vlm_coord_normalize': self.vlm._normalized_coords,
+                                    'vlm_coord_yx': self.vlm._coord_yx,
+                                    'vlm_response_ms': vlm_response_ms,
                                     'last_click_screen_bbox': last_click_screen_bbox,
                                 },
                                 sent_image_b64=sent_b64,

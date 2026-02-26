@@ -13,7 +13,7 @@ VLM_URL = os.getenv('VLM_URL', '')
 VLM_KEY = os.getenv('VLM_KEY', '')
 VLM_MODEL = os.getenv('VLM_MODEL', 'qwen3-vl-32b')
 VLM_MAX_WIDTH = int(os.getenv('VLM_MAX_WIDTH', '960'))
-VLM_COORD_NORMALIZE = os.getenv('VLM_COORD_NORMALIZE', '').lower() in ('1', 'true', 'yes')
+VLM_COORD_NORMALIZE = os.getenv('VLM_COORD_NORMALIZE', 'true').lower() in ('1', 'true', 'yes')
 VLM_COORD_YX = os.getenv('VLM_COORD_YX', '').lower() in ('1', 'true', 'yes')
 
 SERVICE_URLS: dict[str, str] = {

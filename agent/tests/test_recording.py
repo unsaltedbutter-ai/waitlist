@@ -380,6 +380,7 @@ class TestVLMClientAnalyze:
             base_url='https://api.example.com',
             api_key='test-key',
             model='test-model',
+            coord_normalize=False,
         ) as client:
             result, scale_factor = client.analyze(
                 screenshot_b64=_make_test_png_b64(),
@@ -488,6 +489,7 @@ class TestVLMClientAnalyze:
             api_key='test-key',
             model='test-model',
             max_image_width=1280,
+            coord_normalize=False,
         ) as client:
             result, scale_factor = client.analyze(
                 screenshot_b64=big_png,
