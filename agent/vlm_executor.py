@@ -194,20 +194,28 @@ def _infer_credential_from_target(target_desc: str) -> str | None:
 def _click_bbox(bbox, session, chrome_offset: int = 0) -> None:
     """Click inside a bbox with inset and center-biased Gaussian randomization.
 
+    Accepts [x1, y1, x2, y2] bounding box or [x, y] point coordinate.
     MUST be called while holding gui_lock.
     """
-    bw = bbox[2] - bbox[0]
-    bh = bbox[3] - bbox[1]
-    inset_x = bw * 0.10
-    inset_y = bh * 0.10
-    safe_x1 = bbox[0] + inset_x
-    safe_y1 = bbox[1] + inset_y
-    safe_x2 = bbox[2] - inset_x
-    safe_y2 = bbox[3] - inset_y
-    cx = (safe_x1 + safe_x2) / 2 + random.gauss(0, bw * 0.10)
-    cy = (safe_y1 + safe_y2) / 2 + random.gauss(0, bh * 0.10)
-    cx = max(safe_x1, min(cx, safe_x2))
-    cy = max(safe_y1, min(cy, safe_y2))
+    if len(bbox) == 2:
+        # Point coordinate: click with small Gaussian jitter
+        cx = bbox[0] + random.gauss(0, 3)
+        cy = bbox[1] + random.gauss(0, 3)
+    elif len(bbox) >= 4:
+        bw = bbox[2] - bbox[0]
+        bh = bbox[3] - bbox[1]
+        inset_x = bw * 0.10
+        inset_y = bh * 0.10
+        safe_x1 = bbox[0] + inset_x
+        safe_y1 = bbox[1] + inset_y
+        safe_x2 = bbox[2] - inset_x
+        safe_y2 = bbox[3] - inset_y
+        cx = (safe_x1 + safe_x2) / 2 + random.gauss(0, bw * 0.10)
+        cy = (safe_y1 + safe_y2) / 2 + random.gauss(0, bh * 0.10)
+        cx = max(safe_x1, min(cx, safe_x2))
+        cy = max(safe_y1, min(cy, safe_y2))
+    else:
+        raise ValueError(f'bbox must have 2 or 4 elements, got {len(bbox)}')
 
     sx, sy = coords.image_to_screen(cx, cy, session.bounds,
                                     chrome_offset=chrome_offset)
@@ -219,7 +227,11 @@ def _click_bbox(bbox, session, chrome_offset: int = 0) -> None:
 
 
 def _bbox_to_screen(bbox, session, chrome_offset: int = 0):
-    """Convert image-pixel bbox [x1,y1,x2,y2] to screen-point bbox."""
+    """Convert image-pixel bbox [x1,y1,x2,y2] or point [x,y] to screen coords."""
+    if len(bbox) == 2:
+        x, y = coords.image_to_screen(bbox[0], bbox[1], session.bounds,
+                                       chrome_offset=chrome_offset)
+        return (x, y, x, y)
     x1, y1 = coords.image_to_screen(bbox[0], bbox[1], session.bounds,
                                      chrome_offset=chrome_offset)
     x2, y2 = coords.image_to_screen(bbox[2], bbox[3], session.bounds,
