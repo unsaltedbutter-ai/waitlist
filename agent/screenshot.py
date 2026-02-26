@@ -19,7 +19,8 @@ from agent.input import window
 
 # Chrome's tab bar + address bar height in logical (non-Retina) pixels.
 # Physical pixel crop = int(CHROME_HEIGHT_LOGICAL * retina_scale).
-# Set CHROME_HEIGHT env var to override (e.g. "0" to disable stripping).
+# NOTE: This module-level default may be stale if dotenv loads after import.
+# crop_browser_chrome() re-reads os.environ at call time to pick up late values.
 CHROME_HEIGHT_LOGICAL = int(os.getenv('CHROME_HEIGHT', '88'))
 
 
@@ -108,8 +109,11 @@ def crop_browser_chrome(screenshot_b64: str) -> tuple[str, int]:
     """
     from PIL import Image
 
+    # Re-read at call time: dotenv loads agent.env after module import,
+    # so the module-level CHROME_HEIGHT_LOGICAL may still be the default.
+    chrome_logical = int(os.environ.get('CHROME_HEIGHT', '88'))
     scale = window.get_retina_scale()
-    chrome_px = int(CHROME_HEIGHT_LOGICAL * scale)
+    chrome_px = int(chrome_logical * scale)
 
     # No stripping requested
     if chrome_px <= 0:
