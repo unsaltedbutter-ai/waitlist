@@ -72,12 +72,19 @@ def _extract_json(raw: str) -> dict:
     raise ValueError(f"Could not extract JSON from VLM output: {text[:200]}")
 
 
-def _denormalize_bboxes(obj: dict | list, w: int, h: int) -> None:
+def _denormalize_bboxes(
+    obj: dict | list, w: int, h: int,
+    offset_x: float = 0.0, offset_y: float = 0.0,
+) -> None:
     """Recursively convert Qwen 0-1000 normalized bboxes to pixels in place.
 
     Walks the parsed JSON response and converts any 4-element numeric list
     (assumed to be [x1, y1, x2, y2] in Qwen's 0-1000 space) to absolute
     pixel coordinates.
+
+    When the inference backend pads images to square (e.g., MLX), pass
+    offset_x/offset_y to subtract the centered padding. In that case w and h
+    should both be the square side length, and offsets = (square - orig) / 2.
     """
     if isinstance(obj, dict):
         for key in obj:
@@ -85,17 +92,17 @@ def _denormalize_bboxes(obj: dict | list, w: int, h: int) -> None:
             if (isinstance(val, list) and len(val) == 4
                     and all(isinstance(v, (int, float)) for v in val)):
                 obj[key] = [
-                    val[0] * w / 1000,
-                    val[1] * h / 1000,
-                    val[2] * w / 1000,
-                    val[3] * h / 1000,
+                    val[0] * w / 1000 - offset_x,
+                    val[1] * h / 1000 - offset_y,
+                    val[2] * w / 1000 - offset_x,
+                    val[3] * h / 1000 - offset_y,
                 ]
             elif isinstance(val, (dict, list)):
-                _denormalize_bboxes(val, w, h)
+                _denormalize_bboxes(val, w, h, offset_x, offset_y)
     elif isinstance(obj, list):
         for item in obj:
             if isinstance(item, (dict, list)):
-                _denormalize_bboxes(item, w, h)
+                _denormalize_bboxes(item, w, h, offset_x, offset_y)
 
 
 def _swap_yx_bboxes(obj: dict | list) -> None:
@@ -136,16 +143,18 @@ class VLMClient:
         max_image_width: int | None = None,
         coord_normalize: bool | None = None,
         coord_yx: bool | None = None,
+        coord_square_pad: bool | None = None,
     ) -> None:
         self.base_url = base_url.rstrip('/')
         self.model = model
         self.max_tokens = max_tokens
         self.temperature = temperature
 
-        from agent.config import VLM_MAX_WIDTH, VLM_COORD_NORMALIZE, VLM_COORD_YX
+        from agent.config import VLM_MAX_WIDTH, VLM_COORD_NORMALIZE, VLM_COORD_YX, VLM_COORD_SQUARE_PAD
         self._max_image_width = max_image_width if max_image_width is not None else VLM_MAX_WIDTH
         self._normalized_coords = coord_normalize if coord_normalize is not None else VLM_COORD_NORMALIZE
         self._coord_yx = coord_yx if coord_yx is not None else VLM_COORD_YX
+        self._coord_square_pad = coord_square_pad if coord_square_pad is not None else VLM_COORD_SQUARE_PAD
 
         self._client = httpx.Client(
             base_url=self.base_url,
@@ -237,7 +246,15 @@ class VLMClient:
         # get consistent pixel coordinates regardless of model.
         if self._normalized_coords:
             w, h = sent_size
-            _denormalize_bboxes(parsed, w, h)
+            if self._coord_square_pad and w != h:
+                # Backend pads image to square before vision encoder.
+                # Model's 0-1000 coords are relative to the padded square.
+                s = max(w, h)
+                pad_x = (s - w) / 2
+                pad_y = (s - h) / 2
+                _denormalize_bboxes(parsed, s, s, pad_x, pad_y)
+            else:
+                _denormalize_bboxes(parsed, w, h)
 
         return parsed, scale_factor
 

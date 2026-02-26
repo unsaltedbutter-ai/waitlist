@@ -502,6 +502,7 @@ class VLMExecutor:
                                     'vlm_max_width': self.vlm._max_image_width,
                                     'vlm_coord_normalize': self.vlm._normalized_coords,
                                     'vlm_coord_yx': self.vlm._coord_yx,
+                                    'vlm_coord_square_pad': self.vlm._coord_square_pad,
                                     'vlm_response_ms': vlm_response_ms,
                                     'last_click_screen_bbox': last_click_screen_bbox,
                                 },

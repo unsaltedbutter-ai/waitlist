@@ -577,6 +577,102 @@ class TestVLMClientAnalyze:
 
         assert result['bounding_box'] == [100, 200, 300, 250]
 
+    def test_coord_square_pad_adjusts_for_padding(self, monkeypatch) -> None:
+        """coord_square_pad=True denormalizes relative to padded square, not sent dims."""
+        import httpx
+
+        # Simulate what MLX does: image is 200x100, padded to 200x200.
+        # Model sees element at center of original image: (100, 50) in img pixels.
+        # In padded-square 0-1000 space: x=500, y=(50+50)/200*1000=500
+        # where pad_top = (200-100)/2 = 50, so padded_y = 50+50 = 100, norm = 100/200*1000 = 500
+        # Without square_pad: 500/1000*100 = 50 (correct by coincidence for center)
+        # Better test: element at y=25 in image.
+        # padded_y = 25 + 50 = 75, norm_y = 75/200*1000 = 375
+        # Without square_pad: 375/1000*100 = 37.5 (WRONG, should be 25)
+        # With square_pad: 375/1000*200 - 50 = 75 - 50 = 25 (CORRECT)
+        mock_json = {
+            'choices': [{
+                'message': {
+                    'content': json.dumps({
+                        'state': 'page',
+                        'action': 'click',
+                        'bounding_box': [250, 375, 750, 625],
+                    }),
+                },
+            }],
+        }
+
+        def mock_post(self_client, url, **kwargs):
+            return TestVLMClientAnalyze._make_response(mock_json)
+
+        monkeypatch.setattr(httpx.Client, 'post', mock_post)
+
+        # 200x100 landscape image
+        test_png = _make_test_png_b64(width=200, height=100)
+        with VLMClient(
+            base_url='https://api.example.com',
+            api_key='test-key',
+            model='test-model',
+            coord_normalize=True,
+            coord_square_pad=True,
+        ) as client:
+            result, scale_factor = client.analyze(
+                screenshot_b64=test_png,
+                system_prompt='test prompt',
+            )
+
+        assert scale_factor == 1.0
+        bbox = result['bounding_box']
+        # s=200, pad_x=0, pad_y=50
+        # x1: 250/1000*200 - 0 = 50.0
+        # y1: 375/1000*200 - 50 = 75 - 50 = 25.0
+        # x2: 750/1000*200 - 0 = 150.0
+        # y2: 625/1000*200 - 50 = 125 - 50 = 75.0
+        assert abs(bbox[0] - 50.0) < 0.1
+        assert abs(bbox[1] - 25.0) < 0.1
+        assert abs(bbox[2] - 150.0) < 0.1
+        assert abs(bbox[3] - 75.0) < 0.1
+
+    def test_coord_square_pad_noop_for_square_image(self, monkeypatch) -> None:
+        """coord_square_pad=True has no effect when image is already square."""
+        import httpx
+
+        mock_json = {
+            'choices': [{
+                'message': {
+                    'content': json.dumps({
+                        'state': 'page',
+                        'action': 'click',
+                        'bounding_box': [321, 335, 666, 398],
+                    }),
+                },
+            }],
+        }
+
+        def mock_post(self_client, url, **kwargs):
+            return TestVLMClientAnalyze._make_response(mock_json)
+
+        monkeypatch.setattr(httpx.Client, 'post', mock_post)
+
+        # Square image: no padding needed
+        test_png = _make_test_png_b64(width=200, height=200)
+        with VLMClient(
+            base_url='https://api.example.com',
+            api_key='test-key',
+            model='test-model',
+            coord_normalize=True,
+            coord_square_pad=True,
+        ) as client:
+            result, _ = client.analyze(
+                screenshot_b64=test_png,
+                system_prompt='test prompt',
+            )
+
+        bbox = result['bounding_box']
+        # Same as regular denormalization: 321/1000*200 = 64.2, etc.
+        assert abs(bbox[0] - 64.2) < 0.1
+        assert abs(bbox[1] - 67.0) < 0.1
+
     def test_coord_yx_swaps_before_denorm(self, monkeypatch) -> None:
         """Both coord_yx and coord_normalize: swap [y,x,y,x] then denormalize."""
         import httpx
@@ -625,6 +721,7 @@ class TestVLMClientAnalyze:
         monkeypatch.setattr('agent.config.VLM_MAX_WIDTH', 800)
         monkeypatch.setattr('agent.config.VLM_COORD_NORMALIZE', True)
         monkeypatch.setattr('agent.config.VLM_COORD_YX', True)
+        monkeypatch.setattr('agent.config.VLM_COORD_SQUARE_PAD', True)
 
         client = VLMClient(
             base_url='https://api.example.com',
@@ -634,6 +731,7 @@ class TestVLMClientAnalyze:
         assert client._max_image_width == 800
         assert client._normalized_coords is True
         assert client._coord_yx is True
+        assert client._coord_square_pad is True
         client.close()
 
     def test_max_image_width_from_config(self, monkeypatch) -> None:
@@ -727,6 +825,18 @@ class TestDenormalizeBboxes:
         _denormalize_bboxes(obj, 1280, 800)
         assert obj['email_box'] == [128.0, 160.0, 640.0, 200.0]
         assert obj['code_boxes'][0]['box'] == [128.0, 240.0, 256.0, 320.0]
+
+    def test_with_offsets_for_square_padding(self) -> None:
+        """Offsets subtract padding from denormalized coords."""
+        # Simulate 1024x656 image padded to 1024x1024: pad_y = (1024-656)/2 = 184
+        obj = {'bounding_box': [500, 500, 1000, 1000]}
+        _denormalize_bboxes(obj, 1024, 1024, offset_x=0.0, offset_y=184.0)
+        # x1: 500/1000*1024 - 0 = 512.0
+        # y1: 500/1000*1024 - 184 = 512 - 184 = 328.0
+        assert abs(obj['bounding_box'][0] - 512.0) < 0.1
+        assert abs(obj['bounding_box'][1] - 328.0) < 0.1
+        assert abs(obj['bounding_box'][2] - 1024.0) < 0.1
+        assert abs(obj['bounding_box'][3] - 840.0) < 0.1
 
 
 # ===========================================================================
