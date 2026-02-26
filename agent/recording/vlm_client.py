@@ -1,7 +1,7 @@
 """OpenAI-compatible VLM client for playbook recording.
 
 Talks to any OpenAI-compatible vision API (Grok, OpenAI, local vLLM, etc.)
-via POST /v1/chat/completions with base64 image content.
+via POST /chat/completions with base64 image content.
 """
 
 from __future__ import annotations
@@ -121,7 +121,7 @@ def _swap_yx_bboxes(obj: dict | list) -> None:
 class VLMClient:
     """Minimal client for OpenAI-compatible vision APIs.
 
-    Sends base64 screenshots with system/user prompts to /v1/chat/completions
+    Sends base64 screenshots with system/user prompts to /chat/completions
     and parses the JSON response.
     """
 
@@ -137,10 +137,7 @@ class VLMClient:
         coord_normalize: bool | None = None,
         coord_yx: bool | None = None,
     ) -> None:
-        # Strip trailing /v1 so we can always append /v1/chat/completions
         self.base_url = base_url.rstrip('/')
-        if self.base_url.endswith('/v1'):
-            self.base_url = self.base_url[:-3]
         self.model = model
         self.max_tokens = max_tokens
         self.temperature = temperature
@@ -218,7 +215,7 @@ class VLMClient:
         }
 
         t0 = time.monotonic()
-        resp = self._client.post('/v1/chat/completions', json=payload)
+        resp = self._client.post('/chat/completions', json=payload)
         self.last_inference_ms = int((time.monotonic() - t0) * 1000)
         if resp.status_code != 200:
             body = resp.text[:500]

@@ -298,22 +298,22 @@ class TestExtractJson:
 class TestVLMClientInit:
     """VLMClient construction (no HTTP calls)."""
 
-    def test_strips_trailing_v1_and_slash(self) -> None:
+    def test_strips_trailing_slash(self) -> None:
         client = VLMClient(
             base_url='https://api.example.com/v1/',
             api_key='test-key',
             model='test-model',
         )
-        assert client.base_url == 'https://api.example.com'
+        assert client.base_url == 'https://api.example.com/v1'
         client.close()
 
-    def test_strips_trailing_v1(self) -> None:
+    def test_preserves_v1_in_url(self) -> None:
         client = VLMClient(
             base_url='https://api.example.com/v1',
             api_key='test-key',
             model='test-model',
         )
-        assert client.base_url == 'https://api.example.com'
+        assert client.base_url == 'https://api.example.com/v1'
         client.close()
 
     def test_preserves_base_url_without_v1(self) -> None:
