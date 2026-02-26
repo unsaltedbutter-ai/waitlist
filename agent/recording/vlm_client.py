@@ -98,18 +98,32 @@ def _denormalize_bboxes(obj: dict | list, w: int, h: int) -> None:
                 _denormalize_bboxes(item, w, h)
 
 
+def _swap_yx_bboxes(obj: dict | list) -> None:
+    """Recursively swap [y1, x1, y2, x2] -> [x1, y1, x2, y2] in place.
+
+    Walks the parsed JSON response and swaps indices 0<->1 and 2<->3 in any
+    4-element numeric list (assumed to be a bounding box).
+    """
+    if isinstance(obj, dict):
+        for key in obj:
+            val = obj[key]
+            if (isinstance(val, list) and len(val) == 4
+                    and all(isinstance(v, (int, float)) for v in val)):
+                obj[key] = [val[1], val[0], val[3], val[2]]
+            elif isinstance(val, (dict, list)):
+                _swap_yx_bboxes(val)
+    elif isinstance(obj, list):
+        for item in obj:
+            if isinstance(item, (dict, list)):
+                _swap_yx_bboxes(item)
+
+
 class VLMClient:
     """Minimal client for OpenAI-compatible vision APIs.
 
     Sends base64 screenshots with system/user prompts to /v1/chat/completions
     and parses the JSON response.
     """
-
-    # Max pixel width for screenshots sent to the VLM.  1280px is a good
-    # balance: large enough for UI element detection, small enough for fast
-    # transfer and fewer visual tokens (~1,200 vs ~4,700 at 2560px).
-    # JPEG at quality 85 keeps payloads under ~150KB.
-    MAX_IMAGE_WIDTH = 1280
 
     def __init__(
         self,
@@ -119,15 +133,23 @@ class VLMClient:
         max_tokens: int = 2048,
         temperature: float = 0.0,
         timeout: float = 60.0,
+        max_image_width: int | None = None,
+        coord_normalize: bool | None = None,
+        coord_yx: bool | None = None,
     ) -> None:
         # Strip trailing /v1 so we can always append /v1/chat/completions
         self.base_url = base_url.rstrip('/')
         if self.base_url.endswith('/v1'):
             self.base_url = self.base_url[:-3]
         self.model = model
-        self._normalized_coords = 'qwen' in model.lower()
         self.max_tokens = max_tokens
         self.temperature = temperature
+
+        from agent.config import VLM_MAX_WIDTH, VLM_COORD_NORMALIZE, VLM_COORD_YX
+        self._max_image_width = max_image_width if max_image_width is not None else VLM_MAX_WIDTH
+        self._normalized_coords = coord_normalize if coord_normalize is not None else VLM_COORD_NORMALIZE
+        self._coord_yx = coord_yx if coord_yx is not None else VLM_COORD_YX
+
         self._client = httpx.Client(
             base_url=self.base_url,
             headers={
@@ -209,9 +231,13 @@ class VLMClient:
 
         parsed = _extract_json(raw_text)
 
-        # Qwen-VL models return bounding boxes in 0-1000 normalized coords.
-        # Recursively convert ALL bbox-like fields to absolute pixels so
-        # callers get consistent pixel coordinates regardless of model.
+        # Swap [y,x,y,x] -> [x,y,x,y] before denormalization so that
+        # width/height multipliers are applied to the correct indices.
+        if self._coord_yx:
+            _swap_yx_bboxes(parsed)
+
+        # Convert 0-1000 normalized coords to absolute pixels so callers
+        # get consistent pixel coordinates regardless of model.
         if self._normalized_coords:
             w, h = sent_size
             _denormalize_bboxes(parsed, w, h)
@@ -219,7 +245,7 @@ class VLMClient:
         return parsed, scale_factor
 
     def _resize_if_needed(self, screenshot_b64: str) -> tuple[str, float, tuple[int, int]]:
-        """Downscale a base64 PNG to JPEG at MAX_IMAGE_WIDTH if wider.
+        """Downscale a base64 PNG to JPEG at _max_image_width if wider.
 
         Returns (base64_jpeg, scale_factor, (sent_width, sent_height)) where
         scale_factor is original_width / sent_width (1.0 if no resize needed).
@@ -228,9 +254,9 @@ class VLMClient:
         img = Image.open(io.BytesIO(raw))
 
         scale_factor = 1.0
-        if img.width > self.MAX_IMAGE_WIDTH:
-            scale_factor = img.width / self.MAX_IMAGE_WIDTH
-            new_size = (self.MAX_IMAGE_WIDTH, int(img.height / scale_factor))
+        if img.width > self._max_image_width:
+            scale_factor = img.width / self._max_image_width
+            new_size = (self._max_image_width, int(img.height / scale_factor))
             img = img.resize(new_size, Image.LANCZOS)
             log.debug('Resized screenshot %dx%d -> %dx%d (scale_factor=%.3f)',
                        int(new_size[0] * scale_factor), int(new_size[1] * scale_factor),

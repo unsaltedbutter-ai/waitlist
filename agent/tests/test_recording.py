@@ -37,7 +37,7 @@ _skip_without_private = pytest.mark.skipif(
     not _HAS_PRIVATE_PROMPTS,
     reason='unsaltedbutter-prompts not installed (service-specific content)',
 )
-from agent.recording.vlm_client import VLMClient, _denormalize_bboxes, _extract_json
+from agent.recording.vlm_client import VLMClient, _denormalize_bboxes, _extract_json, _swap_yx_bboxes
 from agent.screenshot import CHROME_HEIGHT_LOGICAL, crop_browser_chrome
 
 
@@ -452,7 +452,7 @@ class TestVLMClientAnalyze:
         assert '200x100' in text_part['text']
 
     def test_oversized_image_returns_scale_factor(self, monkeypatch) -> None:
-        """Verify that an image wider than MAX_IMAGE_WIDTH returns a scale factor > 1."""
+        """Verify that an image wider than max_image_width returns a scale factor > 1."""
         import httpx
 
         mock_json = {
@@ -472,12 +472,13 @@ class TestVLMClientAnalyze:
 
         monkeypatch.setattr(httpx.Client, 'post', mock_post)
 
-        # 2560px wide image, MAX_IMAGE_WIDTH is 1280 -> scale_factor = 2.0
+        # 2560px wide, max_image_width=1280 -> scale_factor = 2.0
         big_png = _make_test_png_b64(width=2560, height=1440)
         with VLMClient(
             base_url='https://api.example.com',
             api_key='test-key',
             model='test-model',
+            max_image_width=1280,
         ) as client:
             result, scale_factor = client.analyze(
                 screenshot_b64=big_png,
@@ -488,8 +489,8 @@ class TestVLMClientAnalyze:
         # VLM returns coords in resized space; caller is responsible for scaling
         assert result['bounding_box'] == [100, 50, 200, 80]
 
-    def test_qwen_model_denormalizes_bbox(self, monkeypatch) -> None:
-        """Qwen-VL models return 0-1000 normalized coords; should convert to pixels."""
+    def test_coord_normalize_denormalizes_bbox(self, monkeypatch) -> None:
+        """coord_normalize=True converts 0-1000 coords to pixels (model name irrelevant)."""
         import httpx
 
         mock_json = {
@@ -509,12 +510,13 @@ class TestVLMClientAnalyze:
 
         monkeypatch.setattr(httpx.Client, 'post', mock_post)
 
-        # 200x100 image (won't be resized), model name contains 'qwen'
+        # 200x100 image (won't be resized), non-qwen model name with coord_normalize=True
         test_png = _make_test_png_b64(width=200, height=100)
         with VLMClient(
             base_url='https://api.example.com',
             api_key='test-key',
-            model='qwen/qwen3-vl-32b-instruct',
+            model='some-proxy-model',
+            coord_normalize=True,
         ) as client:
             result, scale_factor = client.analyze(
                 screenshot_b64=test_png,
@@ -529,8 +531,8 @@ class TestVLMClientAnalyze:
         assert abs(bbox[2] - 133.2) < 0.1
         assert abs(bbox[3] - 39.8) < 0.1
 
-    def test_non_qwen_model_preserves_bbox(self, monkeypatch) -> None:
-        """Non-Qwen models return absolute pixel coords; should not convert."""
+    def test_default_preserves_bbox(self, monkeypatch) -> None:
+        """Without coord_normalize, even a qwen model name preserves pixel coords."""
         import httpx
 
         mock_json = {
@@ -554,7 +556,8 @@ class TestVLMClientAnalyze:
         with VLMClient(
             base_url='https://api.example.com',
             api_key='test-key',
-            model='grok-2-vision',
+            model='qwen/qwen3-vl-32b-instruct',
+            coord_normalize=False,
         ) as client:
             result, _scale = client.analyze(
                 screenshot_b64=test_png,
@@ -562,6 +565,98 @@ class TestVLMClientAnalyze:
             )
 
         assert result['bounding_box'] == [100, 200, 300, 250]
+
+    def test_coord_yx_swaps_before_denorm(self, monkeypatch) -> None:
+        """Both coord_yx and coord_normalize: swap [y,x,y,x] then denormalize."""
+        import httpx
+
+        # VLM returns [y1, x1, y2, x2] in 0-1000 space
+        mock_json = {
+            'choices': [{
+                'message': {
+                    'content': json.dumps({
+                        'state': 'page',
+                        'action': 'click',
+                        'bounding_box': [335, 321, 398, 666],
+                    }),
+                },
+            }],
+        }
+
+        def mock_post(self_client, url, **kwargs):
+            return TestVLMClientAnalyze._make_response(mock_json)
+
+        monkeypatch.setattr(httpx.Client, 'post', mock_post)
+
+        test_png = _make_test_png_b64(width=200, height=100)
+        with VLMClient(
+            base_url='https://api.example.com',
+            api_key='test-key',
+            model='some-model',
+            coord_normalize=True,
+            coord_yx=True,
+        ) as client:
+            result, scale_factor = client.analyze(
+                screenshot_b64=test_png,
+                system_prompt='test prompt',
+            )
+
+        assert scale_factor == 1.0
+        # After swap: [321, 335, 666, 398], then denorm: 321/1000*200=64.2, etc.
+        bbox = result['bounding_box']
+        assert abs(bbox[0] - 64.2) < 0.1
+        assert abs(bbox[1] - 33.5) < 0.1
+        assert abs(bbox[2] - 133.2) < 0.1
+        assert abs(bbox[3] - 39.8) < 0.1
+
+    def test_config_fallback(self, monkeypatch) -> None:
+        """VLMClient picks up config module values when params not passed."""
+        monkeypatch.setattr('agent.config.VLM_MAX_WIDTH', 800)
+        monkeypatch.setattr('agent.config.VLM_COORD_NORMALIZE', True)
+        monkeypatch.setattr('agent.config.VLM_COORD_YX', True)
+
+        client = VLMClient(
+            base_url='https://api.example.com',
+            api_key='test-key',
+            model='test-model',
+        )
+        assert client._max_image_width == 800
+        assert client._normalized_coords is True
+        assert client._coord_yx is True
+        client.close()
+
+    def test_max_image_width_from_config(self, monkeypatch) -> None:
+        """VLM_MAX_WIDTH config controls resize threshold."""
+        import httpx
+
+        monkeypatch.setattr('agent.config.VLM_MAX_WIDTH', 800)
+
+        mock_json = {
+            'choices': [{
+                'message': {
+                    'content': json.dumps({'action': 'done'}),
+                },
+            }],
+        }
+
+        def mock_post(self_client, url, **kwargs):
+            return TestVLMClientAnalyze._make_response(mock_json)
+
+        monkeypatch.setattr(httpx.Client, 'post', mock_post)
+
+        # 1600px wide, config max=800 -> scale_factor = 2.0
+        big_png = _make_test_png_b64(width=1600, height=900)
+        with VLMClient(
+            base_url='https://api.example.com',
+            api_key='test-key',
+            model='test-model',
+        ) as client:
+            _, scale_factor = client.analyze(
+                screenshot_b64=big_png,
+                system_prompt='test prompt',
+            )
+
+        assert scale_factor == 2.0
 
 
 # ===========================================================================
@@ -621,5 +716,50 @@ class TestDenormalizeBboxes:
         _denormalize_bboxes(obj, 1280, 800)
         assert obj['email_box'] == [128.0, 160.0, 640.0, 200.0]
         assert obj['code_boxes'][0]['box'] == [128.0, 240.0, 256.0, 320.0]
+
+
+# ===========================================================================
+# YX bbox swap tests
+# ===========================================================================
+
+
+class TestSwapYxBboxes:
+    """Recursive [y1, x1, y2, x2] -> [x1, y1, x2, y2] swap."""
+
+    def test_top_level_swap(self) -> None:
+        obj = {'bounding_box': [10, 20, 30, 40]}
+        _swap_yx_bboxes(obj)
+        assert obj['bounding_box'] == [20, 10, 40, 30]
+
+    def test_nested_dicts(self) -> None:
+        obj = {
+            'code_boxes': [
+                {'label': 'c1', 'box': [100, 200, 300, 400]},
+            ],
+        }
+        _swap_yx_bboxes(obj)
+        assert obj['code_boxes'][0]['box'] == [200, 100, 400, 300]
+
+    def test_nested_lists(self) -> None:
+        obj = {
+            'actions': [
+                {'action': 'click', 'box': [10, 20, 30, 40]},
+                {'action': 'click', 'box': [50, 60, 70, 80]},
+            ],
+        }
+        _swap_yx_bboxes(obj)
+        assert obj['actions'][0]['box'] == [20, 10, 40, 30]
+        assert obj['actions'][1]['box'] == [60, 50, 80, 70]
+
+    def test_non_bbox_lists_untouched(self) -> None:
+        obj = {
+            'tags': ['a', 'b', 'c', 'd'],
+            'pair': [1, 2],
+            'confidence': 0.95,
+        }
+        _swap_yx_bboxes(obj)
+        assert obj['tags'] == ['a', 'b', 'c', 'd']
+        assert obj['pair'] == [1, 2]
+        assert obj['confidence'] == 0.95
 
 

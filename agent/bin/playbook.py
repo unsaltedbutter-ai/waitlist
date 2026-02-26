@@ -84,6 +84,9 @@ def cmd_run(args):
         base_url=args.vlm_url,
         api_key=args.vlm_key,
         model=args.vlm_model,
+        max_image_width=args.max_image_width,
+        coord_normalize=args.coord_normalize,
+        coord_yx=args.coord_yx,
     )
 
     # Set up async event loop for OTP and credential callbacks
@@ -291,6 +294,12 @@ def main():
                        help='Seconds to wait after each action (default: 2.5)')
     p_run.add_argument('--profile', choices=['fast', 'normal', 'cautious'], default=None,
                        help='Human behavior preset (default: normal)')
+    p_run.add_argument('--max-image-width', type=int, default=None, dest='max_image_width',
+                       help='Max pixel width for screenshots sent to VLM (env: VLM_MAX_WIDTH)')
+    p_run.add_argument('--coord-normalize', action='store_true', default=None, dest='coord_normalize',
+                       help='VLM returns 0-1000 normalized coords (env: VLM_COORD_NORMALIZE)')
+    p_run.add_argument('--coord-yx', action='store_true', default=None, dest='coord_yx',
+                       help='VLM returns coords in [y, x] order (env: VLM_COORD_YX)')
 
     args = parser.parse_args()
 
