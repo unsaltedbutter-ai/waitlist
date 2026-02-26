@@ -150,11 +150,12 @@ class VLMClient:
         self.max_tokens = max_tokens
         self.temperature = temperature
 
-        from agent.config import VLM_MAX_WIDTH, VLM_COORD_NORMALIZE, VLM_COORD_YX, VLM_COORD_SQUARE_PAD
-        self._max_image_width = max_image_width if max_image_width is not None else VLM_MAX_WIDTH
-        self._normalized_coords = coord_normalize if coord_normalize is not None else VLM_COORD_NORMALIZE
-        self._coord_yx = coord_yx if coord_yx is not None else VLM_COORD_YX
-        self._coord_square_pad = coord_square_pad if coord_square_pad is not None else VLM_COORD_SQUARE_PAD
+        from agent.config import get_vlm_config
+        _defaults = get_vlm_config()
+        self._max_image_width = max_image_width if max_image_width is not None else _defaults['max_width']
+        self._normalized_coords = coord_normalize if coord_normalize is not None else _defaults['coord_normalize']
+        self._coord_yx = coord_yx if coord_yx is not None else _defaults['coord_yx']
+        self._coord_square_pad = coord_square_pad if coord_square_pad is not None else _defaults['coord_square_pad']
 
         self._client = httpx.Client(
             base_url=self.base_url,

@@ -112,38 +112,23 @@ class Agent:
         self._loop = asyncio.get_running_loop()
         self._http_client = httpx.AsyncClient(timeout=30.0)
 
-        # Read VLM config fresh from env (dotenv runs before start(), but
-        # after module imports, so module-level constants are stale).
-        vlm_url = os.environ.get("VLM_URL", "")
-        vlm_key = os.environ.get("VLM_KEY", "")
-        vlm_model = os.environ.get("VLM_MODEL", "qwen3-vl-32b")
-        vlm_max_width = int(os.environ.get("VLM_MAX_WIDTH", "960"))
-        vlm_normalize = os.environ.get(
-            "VLM_COORD_NORMALIZE", "",
-        ).lower() in ("1", "true", "yes")
-        vlm_yx = os.environ.get(
-            "VLM_COORD_YX", "",
-        ).lower() in ("1", "true", "yes")
-        vlm_square_pad = os.environ.get(
-            "VLM_COORD_SQUARE_PAD", "",
-        ).lower() in ("1", "true", "yes")
+        # VLMClient reads VLM_* env vars at construction time via
+        # get_vlm_config(), so no manual os.environ reads needed here.
+        from agent.config import get_vlm_config
+        vlm_cfg = get_vlm_config()
 
-        # Create VLM client
-        if not vlm_url:
+        if not vlm_cfg['url']:
             log.warning("VLM_URL not set; jobs will fail until configured")
         self._vlm = VLMClient(
-            base_url=vlm_url or "http://localhost:8080",
-            api_key=vlm_key,
-            model=vlm_model,
-            max_image_width=vlm_max_width,
-            coord_normalize=vlm_normalize,
-            coord_yx=vlm_yx,
-            coord_square_pad=vlm_square_pad,
+            base_url=vlm_cfg['url'] or "http://localhost:8080",
+            api_key=vlm_cfg['key'],
+            model=vlm_cfg['model'],
         )
-        self._vlm_model = vlm_model
-        log.info("VLM client: model=%s url=%s max_width=%d normalize=%s yx=%s",
-                 vlm_model, vlm_url or "(not set)",
-                 vlm_max_width, vlm_normalize, vlm_yx)
+        self._vlm_model = vlm_cfg['model']
+        log.info("VLM client: model=%s url=%s max_width=%d normalize=%s yx=%s square_pad=%s",
+                 vlm_cfg['model'], vlm_cfg['url'] or "(not set)",
+                 vlm_cfg['max_width'], vlm_cfg['coord_normalize'],
+                 vlm_cfg['coord_yx'], vlm_cfg['coord_square_pad'])
 
         # Register routes
         self._app.router.add_post("/execute", self._handle_execute)

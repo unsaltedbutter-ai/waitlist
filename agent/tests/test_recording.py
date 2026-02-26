@@ -717,11 +717,14 @@ class TestVLMClientAnalyze:
         assert abs(bbox[3] - 39.8) < 0.1
 
     def test_config_fallback(self, monkeypatch) -> None:
-        """VLMClient picks up config module values when params not passed."""
-        monkeypatch.setattr('agent.config.VLM_MAX_WIDTH', 800)
-        monkeypatch.setattr('agent.config.VLM_COORD_NORMALIZE', True)
-        monkeypatch.setattr('agent.config.VLM_COORD_YX', True)
-        monkeypatch.setattr('agent.config.VLM_COORD_SQUARE_PAD', True)
+        """VLMClient picks up env values via get_vlm_config when params not passed."""
+        monkeypatch.setattr('agent.config.get_vlm_config', lambda: {
+            'url': '', 'key': '', 'model': 'qwen3-vl-32b',
+            'max_width': 800,
+            'coord_normalize': True,
+            'coord_yx': True,
+            'coord_square_pad': True,
+        })
 
         client = VLMClient(
             base_url='https://api.example.com',
@@ -738,7 +741,13 @@ class TestVLMClientAnalyze:
         """VLM_MAX_WIDTH config controls resize threshold."""
         import httpx
 
-        monkeypatch.setattr('agent.config.VLM_MAX_WIDTH', 800)
+        monkeypatch.setattr('agent.config.get_vlm_config', lambda: {
+            'url': '', 'key': '', 'model': 'qwen3-vl-32b',
+            'max_width': 800,
+            'coord_normalize': False,
+            'coord_yx': False,
+            'coord_square_pad': False,
+        })
 
         mock_json = {
             'choices': [{
