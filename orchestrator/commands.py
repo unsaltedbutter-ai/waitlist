@@ -217,8 +217,8 @@ class CommandRouter:
 
         if status_code == 200:
             job_id = data.get("job_id")
-            queue_pos = data.get("queue_position", 1)
-            if queue_pos <= 1:
+            can_start = self._job_manager.agent_slot_available()
+            if can_start:
                 await self._send_dm(
                     sender_npub,
                     messages.action_starting(service_id, action),
@@ -228,6 +228,7 @@ class CommandRouter:
                 if job_id:
                     self._job_manager.mark_immediate(job_id)
             else:
+                queue_pos = data.get("queue_position", 1)
                 await self._send_dm(
                     sender_npub,
                     messages.queued(service_id, action, queue_pos),

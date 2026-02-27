@@ -44,6 +44,11 @@ def _make_router(
     config = config or FakeConfig()
     send_dm = send_dm or AsyncMock()
 
+    # Sync methods on JobManager need MagicMock, not AsyncMock
+    from unittest.mock import MagicMock
+    job_manager.agent_slot_available = MagicMock(return_value=True)
+    job_manager.mark_immediate = MagicMock()
+
     # Default session.get_state to IDLE
     session.get_state.return_value = IDLE
 
@@ -443,13 +448,14 @@ async def test_idle_snooze_without_active_job():
 
 @pytest.mark.asyncio
 async def test_cancel_known_service_queued():
-    """'cancel netflix' with queue > 1 should send queued message."""
+    """No agent slot: sends queued message with ETA."""
     router, deps = _make_router()
     deps["api"].get_user.return_value = {"debt_sats": 0}
     deps["api"].create_on_demand_job.return_value = {
         "status_code": 200,
         "data": {"job_id": "job-2", "queue_position": 3},
     }
+    deps["job_manager"].agent_slot_available.return_value = False
 
     await router.handle_dm(ALICE, "cancel netflix")
 
@@ -466,14 +472,15 @@ async def test_cancel_known_service_queued():
 
 
 @pytest.mark.asyncio
-async def test_cancel_known_service_no_queue():
-    """'cancel netflix' with queue_position=1 bypasses outreach."""
+async def test_cancel_known_service_immediate():
+    """Agent slot available: bypasses outreach, dispatches immediately."""
     router, deps = _make_router()
     deps["api"].get_user.return_value = {"debt_sats": 0}
     deps["api"].create_on_demand_job.return_value = {
         "status_code": 200,
         "data": {"job_id": "job-2", "queue_position": 1},
     }
+    deps["job_manager"].agent_slot_available.return_value = True
 
     await router.handle_dm(ALICE, "cancel netflix")
 
