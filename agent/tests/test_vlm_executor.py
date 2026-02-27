@@ -520,8 +520,9 @@ class TestSigninPageDispatch:
         result = executor.run('netflix', 'cancel', {'email': 'a@b.com', 'pass': 'x'})
         assert result.success
 
-    def test_profile_select(self):
-        vlm = _make_vlm([PROFILE_SELECT_PAGE, SIGNED_IN, CANCEL_DONE])
+    def test_profile_select_skips_to_cancel(self):
+        """profile_select is treated as signed_in, skipping directly to cancel."""
+        vlm = _make_vlm([PROFILE_SELECT_PAGE, CANCEL_DONE])
         executor = VLMExecutor(vlm, settle_delay=0)
         result = executor.run('netflix', 'cancel', {'email': 'a', 'pass': 'b'})
         assert result.success
@@ -1299,8 +1300,8 @@ class TestAccountNavigation:
                         if u == 'https://www.paramountplus.com/account/']
         assert len(account_navs) == 1
 
-    def test_resume_does_not_navigate_to_account(self, monkeypatch):
-        """Resume flows skip the direct account navigation."""
+    def test_resume_navigates_to_account(self, monkeypatch):
+        """Resume flows navigate directly to account page after sign-in."""
         nav_calls = []
         monkeypatch.setattr('agent.vlm_executor.browser.navigate',
                             lambda s, url, **kw: nav_calls.append(url))
@@ -1312,7 +1313,7 @@ class TestAccountNavigation:
         result = executor.run('netflix', 'resume', {'email': 'a', 'pass': 'b'})
         assert result.success
         account_navs = [u for u in nav_calls if 'account' in u.lower()]
-        assert len(account_navs) == 0
+        assert len(account_navs) == 1
 
     def test_signin_stuck_no_account_nav(self, monkeypatch):
         """Stuck during sign-in does NOT trigger account navigation."""

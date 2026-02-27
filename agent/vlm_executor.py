@@ -559,17 +559,16 @@ class VLMExecutor:
                             log.info('Job %s: sign-in complete, moving to %s',
                                      job_id, labels[prompt_idx])
 
-                            # On cancel flows, navigate directly to the
-                            # account page instead of letting the VLM
-                            # click through menus. Saves inference calls.
-                            if action == 'cancel':
-                                account_url = ACCOUNT_URLS.get(service)
-                                if account_url:
-                                    browser.navigate(session, account_url)
-                                    used_account_fallback = True
-                                    step_count += 1
-                                    log.info('Job %s: navigated to %s',
-                                             job_id, account_url)
+                            # Navigate directly to the account page
+                            # instead of letting the VLM click through
+                            # menus. Saves inference calls and bandwidth.
+                            account_url = ACCOUNT_URLS.get(service)
+                            if account_url:
+                                browser.navigate(session, account_url)
+                                used_account_fallback = True
+                                step_count += 1
+                                log.info('Job %s: navigated to %s',
+                                         job_id, account_url)
 
                             continue
                         else:
@@ -872,7 +871,7 @@ class VLMExecutor:
         if page_type == 'credential_error':
             return 'credential_invalid'
 
-        if page_type == 'signed_in':
+        if page_type in ('signed_in', 'profile_select'):
             return 'done'
 
         if page_type == 'spinner':
@@ -926,12 +925,6 @@ class VLMExecutor:
                     if act_type in ('click', 'dismiss') and pt:
                         _click_bbox(pt, session, chrome_offset=chrome_offset)
                         time.sleep(0.5)
-            return 'continue'
-
-        if page_type == 'profile_select' and profile_pt:
-            with gui_lock:
-                focus_window_by_pid(session.pid)
-                _click_bbox(profile_pt, session, chrome_offset=chrome_offset)
             return 'continue'
 
         if page_type == 'button_only' and button_pt:
