@@ -910,6 +910,8 @@ class VLMExecutor:
                 else:
                     time.sleep(0.2)
                     keyboard.press_key('enter')
+            # Settle outside gui_lock: OTP verification takes time
+            time.sleep(self.settle_delay * 2)
             return 'continue'
 
         # Unknown state with recovery actions
