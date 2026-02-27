@@ -42,7 +42,7 @@ def get_vlm_config() -> dict:
     }
 
 SERVICE_URLS: dict[str, str] = {
-    'netflix': 'https://www.netflix.com/login',
+    'netflix': 'https://www.netflix.com/',
     'hulu': 'https://secure.hulu.com/account/login',
     'disney_plus': 'https://www.disneyplus.com/login',
     'paramount': 'https://www.paramountplus.com/account/signin/',
