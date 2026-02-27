@@ -549,6 +549,7 @@ class VLMExecutor:
                         response, scale_factor, session,
                         screenshot_b64, chrome_height_px,
                         credentials, job_id,
+                        service=service,
                     )
                     step_count += 1
 
@@ -835,6 +836,7 @@ class VLMExecutor:
         chrome_offset: int,
         credentials: dict[str, str],
         job_id: str,
+        service: str = '',
     ) -> str:
         """Handle a sign-in page classification response.
 
@@ -929,11 +931,36 @@ class VLMExecutor:
                         time.sleep(0.5)
             return 'continue'
 
-        if page_type == 'button_only' and button_pt:
-            with gui_lock:
-                focus_window_by_pid(session.pid)
-                _click_bbox(button_pt, session, chrome_offset=chrome_offset)
-            return 'continue'
+        if page_type == 'button_only':
+            # Netflix: VLM consistently classifies homepage as button_only,
+            # missing the hero email field. The button_point targets the nav
+            # "Sign In" link which leads to OTP. Override: click the hero
+            # email field directly using approximate content-area position.
+            if service == 'netflix' and credentials.get('email'):
+                content_w = session.bounds.get('width', 1280)
+                content_h = session.bounds.get('height', 900) - chrome_offset
+                hero_email_pt = [int(content_w * 0.41), int(content_h * 0.63)]
+                log.info('Netflix button_only override: clicking hero email '
+                         'at %s (content %dx%d)', hero_email_pt,
+                         content_w, content_h)
+                with gui_lock:
+                    focus_window_by_pid(session.pid)
+                    _click_bbox(hero_email_pt, session,
+                                chrome_offset=chrome_offset)
+                    time.sleep(0.3)
+                    keyboard.hotkey('command', 'a')
+                    time.sleep(0.1)
+                    _enter_credential(credentials['email'])
+                    time.sleep(0.2)
+                    keyboard.press_key('enter')
+                    time.sleep(1.0)
+                return 'continue'
+
+            if button_pt:
+                with gui_lock:
+                    focus_window_by_pid(session.pid)
+                    _click_bbox(button_pt, session, chrome_offset=chrome_offset)
+                return 'continue'
 
         if page_type == 'user_pass' and email_pt:
             with gui_lock:

@@ -538,6 +538,23 @@ class TestSigninPageDispatch:
         }
         vlm = _make_vlm([button_only, SIGNED_IN, CANCEL_DONE])
         executor = VLMExecutor(vlm, settle_delay=0)
+        result = executor.run('hulu', 'cancel', {'email': 'a', 'pass': 'b'})
+        assert result.success
+
+    def test_netflix_button_only_uses_hero_email(self):
+        """Netflix button_only override: types email in hero field instead
+        of clicking the VLM's button_point (which targets the nav Sign In link
+        that leads to OTP)."""
+        button_only = {
+            'page_type': 'button_only',
+            'email_point': None,
+            'password_point': None,
+            'button_point': [1073, 48],  # nav "Sign In" link
+            'profile_point': None,
+            'code_points': None,
+        }
+        vlm = _make_vlm([button_only, SIGNED_IN, CANCEL_DONE])
+        executor = VLMExecutor(vlm, settle_delay=0)
         result = executor.run('netflix', 'cancel', {'email': 'a', 'pass': 'b'})
         assert result.success
 
