@@ -124,8 +124,8 @@ def create_session(width: int = 1280, height: int = 900) -> BrowserSession:
         window.resize_window_by_drag('Google Chrome', width, height, fast=True)
         time.sleep(0.2)
 
-        # Zoom out to 80% so more content (including Cancel buttons)
-        # is visible above the fold. Cmd+minus twice = 80%.
+        # Zoom out to 80% (2 steps). Account page navigation adds
+        # 2 more steps for 67% total, bringing Cancel above the fold.
         keyboard.hotkey('command', '-')
         time.sleep(0.05)
         keyboard.hotkey('command', '-')
@@ -144,11 +144,7 @@ def create_session(width: int = 1280, height: int = 900) -> BrowserSession:
 
 
 def zoom_out(session: BrowserSession, steps: int = 2) -> None:
-    """Zoom out the browser by pressing Cmd+minus `steps` times.
-
-    Must be called after navigating to a real URL, not on about:blank,
-    because Chrome resets zoom per-origin on navigation.
-    """
+    """Zoom out the browser by pressing Cmd+minus `steps` times."""
     with gui_lock:
         window.focus_window_by_pid(session.pid)
         for i in range(steps):
