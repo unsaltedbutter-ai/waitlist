@@ -1001,13 +1001,11 @@ class VLMExecutor:
                         keyboard.hotkey('command', 'v')
                         time.sleep(0.15)
 
-                # Submit: click button if available, else Enter
+                # Submit: always press Enter after filling fields.
+                # More reliable than clicking button_pt, which the VLM
+                # can misidentify (e.g. "Sign up" instead of "Sign In").
                 time.sleep(0.2)
-                if button_pt:
-                    _click_bbox(button_pt, session,
-                                chrome_offset=chrome_offset)
-                else:
-                    keyboard.press_key('enter')
+                keyboard.press_key('enter')
             time.sleep(self.settle_delay)
             return 'continue'
 
