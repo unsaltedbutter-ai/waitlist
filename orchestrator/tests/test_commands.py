@@ -459,7 +459,7 @@ async def test_cancel_known_service_queued():
     deps["send_dm"].assert_awaited_once()
     msg = deps["send_dm"].call_args[0][1]
     assert "Netflix" in msg
-    assert "queue" in msg.lower()
+    assert "4 minutes" in msg
     deps["job_manager"].poll_and_claim.assert_awaited_once()
 
 
@@ -478,8 +478,11 @@ async def test_cancel_known_service_no_queue():
     deps["api"].create_on_demand_job.assert_awaited_once_with(
         ALICE, "netflix", "cancel"
     )
-    # No queued DM sent, only poll_and_claim triggers outreach
-    deps["send_dm"].assert_not_awaited()
+    # Immediate start: sends action_starting DM
+    deps["send_dm"].assert_awaited_once()
+    msg = deps["send_dm"].call_args[0][1]
+    assert "Cancelling" in msg
+    assert "OTP" in msg
     deps["job_manager"].poll_and_claim.assert_awaited_once()
 
 

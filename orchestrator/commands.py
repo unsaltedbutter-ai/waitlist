@@ -217,9 +217,15 @@ class CommandRouter:
 
         if status_code == 200:
             queue_pos = data.get("queue_position", 1)
-            if queue_pos > 1:
+            if queue_pos <= 1:
                 await self._send_dm(
-                    sender_npub, messages.queued(service_id, action)
+                    sender_npub,
+                    messages.action_starting(service_id, action),
+                )
+            else:
+                await self._send_dm(
+                    sender_npub,
+                    messages.queued(service_id, action, queue_pos),
                 )
             # Immediately try to claim so the user doesn't wait for the
             # next VPS push or heartbeat cycle.

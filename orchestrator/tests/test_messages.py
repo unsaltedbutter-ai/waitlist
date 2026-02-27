@@ -10,6 +10,7 @@ import pytest
 from messages import (
     SERVICE_DISPLAY,
     action_failed_cancel,
+    action_starting,
     action_failed_resume,
     action_success_cancel,
     action_success_resume,
@@ -325,10 +326,21 @@ class TestMisc:
         assert "netflix" in msg
 
     def test_queued(self) -> None:
-        msg = queued("netflix", "cancel")
+        msg = queued("netflix", "cancel", queue_pos=3)
         assert "Netflix" in msg
-        assert "cancel" in msg
-        assert "queue" in msg
+        assert "cancelling" in msg
+        assert "4 minutes" in msg
+
+    def test_action_starting(self) -> None:
+        msg = action_starting("netflix", "cancel")
+        assert "Cancelling" in msg
+        assert "Netflix" in msg
+        assert "OTP" in msg
+
+    def test_action_starting_resume(self) -> None:
+        msg = action_starting("hulu", "resume")
+        assert "Resuming" in msg
+        assert "Hulu" in msg
 
     def test_no_credentials(self) -> None:
         msg = no_credentials("netflix", "https://unsaltedbutter.ai")

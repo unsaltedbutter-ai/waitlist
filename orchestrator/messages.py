@@ -312,9 +312,24 @@ def unknown_service(service_input: str) -> str:
     )
 
 
-def queued(service_id: str, action: str) -> str:
+def action_starting(service_id: str, action: str) -> str:
+    """Immediate acknowledgement when job can start right away."""
     name = display_name(service_id)
-    return f"Your {action} {name} job is in the queue. I'll ask when it's your turn."
+    verb = "Cancelling" if action == "cancel" else "Resuming"
+    return (
+        f"{verb} {name}\n"
+        f"Please be prepared to DM us OTP information."
+    )
+
+
+def queued(service_id: str, action: str, queue_pos: int = 2) -> str:
+    name = display_name(service_id)
+    verb = "cancelling" if action == "cancel" else "resuming"
+    eta_minutes = (queue_pos - 1) * 2
+    return (
+        f"We'll start {verb} {name} in around {eta_minutes} minutes.\n"
+        f"We'll ping you when we're ready to start."
+    )
 
 
 def no_credentials(service_id: str, base_url: str) -> str:
