@@ -58,6 +58,14 @@ PRE_LOGIN_SCROLL: dict[str, int] = {
     'netflix': 3,
 }
 
+# Zoom-out steps after navigating to the account page. Default is 2 (80%).
+# Only override for services that need more zoom to get the cancel/resume
+# button above the fold.
+ACCOUNT_ZOOM_DEFAULT = 2
+ACCOUNT_ZOOM_STEPS: dict[str, int] = {
+    'netflix': 4,  # 67%: Cancel Membership is buried below the fold
+}
+
 ACCOUNT_URLS: dict[str, str] = {
     'netflix': 'https://www.netflix.com/account',
     'hulu': 'https://secure.hulu.com/account',
