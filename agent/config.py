@@ -84,6 +84,7 @@ SCREENSHOT_DIR = Path('/tmp/ub-screenshots')
 STEP_TIMEOUT = 60.0
 TOTAL_EXECUTION_TIMEOUT = 300.0
 PAGE_LOAD_WAIT = 2.5
+SETTLE_DELAY = float(os.getenv('SETTLE_DELAY', '2.5'))
 
 # --- Recording ---
 RECORD_DWELL_THRESHOLD_SEC = 3.0

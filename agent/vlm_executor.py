@@ -34,7 +34,7 @@ from typing import Callable
 
 from agent import browser
 from agent import screenshot as ss
-from agent.config import ACCOUNT_URLS, SERVICE_URLS
+from agent.config import ACCOUNT_URLS, SETTLE_DELAY, SERVICE_URLS
 from agent.debug_trace import DebugTrace
 from agent.gui_lock import gui_lock
 from agent.input import coords, keyboard, mouse, scroll as scroll_mod
@@ -302,7 +302,7 @@ class VLMExecutor:
         otp_callback: Callable | None = None,
         credential_callback: Callable | None = None,
         loop: asyncio.AbstractEventLoop | None = None,
-        settle_delay: float = 2.5,
+        settle_delay: float | None = None,
         max_steps: int = 60,
         debug: bool = True,
     ) -> None:
@@ -311,7 +311,7 @@ class VLMExecutor:
         self._otp_callback = otp_callback
         self._credential_callback = credential_callback
         self._loop = loop
-        self.settle_delay = settle_delay
+        self.settle_delay = settle_delay if settle_delay is not None else SETTLE_DELAY
         self.max_steps = max_steps
         self._debug = debug
 
@@ -689,7 +689,7 @@ class VLMExecutor:
                         with gui_lock:
                             focus_window_by_pid(session.pid)
                             keyboard.press_key('return')
-                        time.sleep(1.0)
+                        time.sleep(self.settle_delay)
                         used_account_fallback = True
                         stuck.reset()
                         last_click_screen_bbox = None
@@ -944,7 +944,8 @@ class VLMExecutor:
                     pt = scale(act.get('point'))
                     if act_type in ('click', 'dismiss') and pt:
                         _click_bbox(pt, session, chrome_offset=chrome_offset)
-                        time.sleep(0.5)
+                        time.sleep(0.3)
+            time.sleep(self.settle_delay)
             return 'continue'
 
         if page_type == 'button_only' and button_pt:
@@ -987,13 +988,11 @@ class VLMExecutor:
                         time.sleep(0.15)
                     time.sleep(0.2)
                     keyboard.press_key('enter')
-                    time.sleep(1.0)
                 elif email_pasted and not password_pt:
                     # No password field found: multi-step login. Submit
                     # email to advance to the next page (likely pass_only).
                     time.sleep(0.2)
                     keyboard.press_key('enter')
-                    time.sleep(1.0)
                 elif not email_pasted and password_pt:
                     # Email entry failed; try tabbing to password
                     time.sleep(0.2)
@@ -1006,11 +1005,10 @@ class VLMExecutor:
                         _enter_credential(pass_val)
                     time.sleep(0.2)
                     keyboard.press_key('enter')
-                    time.sleep(1.0)
                 else:
                     # Neither worked; let next step retry
                     log.warning('user_pass: email paste failed and no password_point')
-                    time.sleep(0.5)
+            time.sleep(self.settle_delay)
             return 'continue'
 
         if page_type == 'user_only' and email_pt:
@@ -1025,7 +1023,7 @@ class VLMExecutor:
                     _enter_credential(email_val)
                 time.sleep(0.2)
                 keyboard.press_key('enter')
-                time.sleep(1.0)
+            time.sleep(self.settle_delay)
             return 'continue'
 
         if page_type == 'pass_only' and password_pt:
@@ -1040,7 +1038,7 @@ class VLMExecutor:
                     _enter_credential(pass_val)
                 time.sleep(0.2)
                 keyboard.press_key('enter')
-                time.sleep(1.0)
+            time.sleep(self.settle_delay)
             return 'continue'
 
         # Fallback
