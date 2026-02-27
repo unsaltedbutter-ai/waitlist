@@ -75,6 +75,18 @@ ACCOUNT_URLS: dict[str, str] = {
     'max': 'https://play.max.com/account',
 }
 
+# Whether to navigate directly to the account URL after sign-in.
+# Set to False for services that redirect back to a profile picker
+# or otherwise block direct account URL access.
+ACCOUNT_URL_JUMP: dict[str, bool] = {
+    'netflix': True,
+    'hulu': True,
+    'disney_plus': False,
+    'paramount': True,
+    'peacock': True,
+    'max': True,
+}
+
 # --- Paths ---
 
 def _resolve_playbook_dir() -> Path:

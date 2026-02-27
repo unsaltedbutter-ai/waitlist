@@ -36,8 +36,8 @@ from typing import Callable
 from agent import browser
 from agent import screenshot as ss
 from agent.config import (
-    ACCOUNT_URLS, ACCOUNT_ZOOM_DEFAULT, ACCOUNT_ZOOM_STEPS,
-    PRE_LOGIN_SCROLL, SERVICE_URLS,
+    ACCOUNT_URL_JUMP, ACCOUNT_URLS, ACCOUNT_ZOOM_DEFAULT,
+    ACCOUNT_ZOOM_STEPS, PRE_LOGIN_SCROLL, SERVICE_URLS,
 )
 from agent.debug_trace import DebugTrace
 from agent.gui_lock import gui_lock
@@ -597,7 +597,7 @@ class VLMExecutor:
                             # instead of letting the VLM click through
                             # menus. Saves inference calls and bandwidth.
                             account_url = ACCOUNT_URLS.get(service)
-                            if account_url:
+                            if account_url and ACCOUNT_URL_JUMP.get(service, True):
                                 browser.navigate(session, account_url)
                                 zoom = ACCOUNT_ZOOM_STEPS.get(service, ACCOUNT_ZOOM_DEFAULT)
                                 if zoom:
