@@ -7,6 +7,7 @@
   --muted: #6b7280;
   --surface: #141414;
   --border: #262626;
+  --purple: #b389ff;
 }
 
 @theme inline {
@@ -16,6 +17,7 @@
   --color-muted: var(--muted);
   --color-surface: var(--surface);
   --color-border: var(--border);
+  --color-purple: var(--purple);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
 }

@@ -6,44 +6,20 @@ import type { EnrichedQueueItem } from "@/lib/types";
 import { JobStatusIndicator } from "@/components/job-status-indicator";
 import { AccessDateLine } from "@/components/access-date-line";
 import { QueueItemOverflowMenu } from "@/components/queue-item-overflow-menu";
-import { ActionConfirmPanel } from "@/components/action-confirm-panel";
 import { ServiceCredentialForm } from "@/components/service-credential-form";
-import { ACTION_STYLES } from "@/lib/constants";
 
 export interface SortableQueueItemProps {
   item: EnrichedQueueItem;
   pinned?: boolean;
-  expandedPanel: "credentials" | "confirm-action" | "remove" | null;
-  /** When set, the confirm-action panel uses this action instead of the primary action.
-   *  This supports the overflow menu escape hatch (e.g., user picks "Request cancel"
-   *  even though the primary button would show "Resume"). */
-  overrideAction?: "cancel" | "resume";
-  onExpandPanel: (panel: "credentials" | "confirm-action" | "remove" | null, action?: "cancel" | "resume") => void;
+  expandedPanel: "credentials" | "remove" | null;
+  onExpandPanel: (panel: "credentials" | "remove" | null) => void;
   onUpdateCredentials: (data: { serviceId: string; email: string; password: string }) => Promise<void>;
-  onRequestAction: (serviceId: string, action: "cancel" | "resume") => Promise<void>;
   onRemoveService: (serviceId: string) => Promise<void>;
   credentialEmail?: string;
   credentialLoading?: boolean;
   credentialError?: boolean;
   updatingCredentials?: boolean;
-  requestingAction?: boolean;
   removingService?: boolean;
-  userDebtSats?: number;
-  actionError?: string;
-}
-
-// ---------------------------------------------------------------------------
-// Action button decision tree
-// ---------------------------------------------------------------------------
-
-type PrimaryAction = "cancel" | "resume";
-
-export function getPrimaryAction(item: EnrichedQueueItem): PrimaryAction {
-  if (item.last_completed_action === "cancel") {
-    return "resume";
-  }
-  // last_completed_action is "resume", null, or there is no history
-  return "cancel";
 }
 
 // ---------------------------------------------------------------------------
@@ -54,19 +30,14 @@ export function SortableQueueItem({
   item,
   pinned,
   expandedPanel,
-  overrideAction,
   onExpandPanel,
   onUpdateCredentials,
-  onRequestAction,
   onRemoveService,
   credentialEmail,
   credentialLoading,
   credentialError,
   updatingCredentials,
-  requestingAction,
   removingService,
-  userDebtSats,
-  actionError,
 }: SortableQueueItemProps) {
   const {
     attributes,
@@ -84,11 +55,6 @@ export function SortableQueueItem({
   };
 
   const hasActive = item.active_job_id !== null;
-  const primaryAction = getPrimaryAction(item);
-  const debtBlocked = (userDebtSats ?? 0) > 0;
-
-  // The action to use in the confirm panel: override (from overflow) or primary
-  const confirmAction: "cancel" | "resume" = overrideAction ?? primaryAction;
 
   // ---------------------------------------------------------------------------
   // Secondary line content
@@ -107,38 +73,6 @@ export function SortableQueueItem({
       <div className="mt-0.5">
         <AccessDateLine accessEndDate={item.last_access_end_date} />
       </div>
-    );
-  }
-
-  // ---------------------------------------------------------------------------
-  // Action button or status indicator (right side, desktop only)
-  // ---------------------------------------------------------------------------
-
-  function renderActionArea() {
-    if (hasActive) {
-      // Status shown on secondary line; nothing on the right
-      return null;
-    }
-
-    if (debtBlocked) {
-      return (
-        <span className="text-xs text-muted/50 shrink-0">
-          Clear balance first
-        </span>
-      );
-    }
-
-    const isCancel = primaryAction === "cancel";
-    return (
-      <button
-        type="button"
-        onClick={() => onExpandPanel("confirm-action")}
-        className={`text-xs font-medium px-2.5 py-1 rounded border shrink-0 transition-colors ${
-          isCancel ? ACTION_STYLES.cancel : ACTION_STYLES.resume
-        }`}
-      >
-        {isCancel ? "Cancel" : "Resume"}
-      </button>
     );
   }
 
@@ -184,45 +118,13 @@ export function SortableQueueItem({
           {renderSecondaryLine()}
         </div>
 
-        {/* Action button area (desktop) */}
-        <div className="hidden sm:flex items-center shrink-0">
-          {renderActionArea()}
-        </div>
-
         {/* Overflow menu */}
         <QueueItemOverflowMenu
           onUpdateCredentials={() => onExpandPanel("credentials")}
-          onRequestCancel={() => onExpandPanel("confirm-action", "cancel")}
-          onRequestResume={() => onExpandPanel("confirm-action", "resume")}
           onRemoveService={() => onExpandPanel("remove")}
           hasActiveJob={hasActive}
         />
       </div>
-
-      {/* Mobile action button (below primary row, above panels) */}
-      {!hasActive && !debtBlocked && !expandedPanel && (
-        <div className="sm:hidden px-4 pb-3">
-          {(() => {
-            const isCancel = primaryAction === "cancel";
-            return (
-              <button
-                type="button"
-                onClick={() => onExpandPanel("confirm-action")}
-                className={`w-full text-xs font-medium px-2.5 py-1.5 rounded border transition-colors ${
-                  isCancel ? ACTION_STYLES.cancel : ACTION_STYLES.resume
-                }`}
-              >
-                {isCancel ? "Cancel subscription" : "Resume subscription"}
-              </button>
-            );
-          })()}
-        </div>
-      )}
-      {!hasActive && debtBlocked && !expandedPanel && (
-        <div className="sm:hidden px-4 pb-3">
-          <span className="text-xs text-muted/50">Clear balance first</span>
-        </div>
-      )}
 
       {/* Expandable panels */}
       {expandedPanel === "credentials" && (
@@ -245,18 +147,6 @@ export function SortableQueueItem({
             </>
           )}
         </div>
-      )}
-
-      {expandedPanel === "confirm-action" && (
-        <ActionConfirmPanel
-          serviceName={item.service_name}
-          action={confirmAction}
-          planName={item.plan_name}
-          onConfirm={() => onRequestAction(item.service_id, confirmAction)}
-          onCancel={() => onExpandPanel(null)}
-          loading={requestingAction}
-          error={actionError}
-        />
       )}
 
       {expandedPanel === "remove" && (

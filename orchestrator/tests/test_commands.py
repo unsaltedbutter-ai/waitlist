@@ -27,6 +27,7 @@ OPERATOR = "npub1operator"
 class FakeConfig:
     base_url: str = "https://unsaltedbutter.ai"
     operator_pubkey: str = OPERATOR
+    action_price_sats: int = 3000
 
 
 def _make_router(
@@ -49,8 +50,9 @@ def _make_router(
     job_manager.agent_slot_available = MagicMock(return_value=True)
     job_manager.mark_immediate = MagicMock()
 
-    # Default session.get_state to IDLE
+    # Default session.get_state to IDLE, get_current_job to None
     session.get_state.return_value = IDLE
+    session.get_current_job.return_value = None
 
     router = CommandRouter(
         api=api,

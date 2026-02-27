@@ -2,10 +2,9 @@
 
 import { useState, useEffect, useRef, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import { BotChip } from "@/components/bot-chip";
 
 const TOKEN_KEY = "ub_token";
-const BOT_NPUB = process.env.NEXT_PUBLIC_NOSTR_BOT_NPUB ?? "npub1hssdvydgqjx9y6ptlkt23sc5uptnqkc3q2r8j68zpdeyt9psl27s534rcr";
-const BOT_NAME = process.env.NEXT_PUBLIC_NOSTR_BOT_NAME ?? "UnsaltedButter Bot";
 
 export default function LoginPage() {
   return (
@@ -21,14 +20,10 @@ function LoginForm() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
-  // OTP state
   const [otpCode, setOtpCode] = useState("");
-  const [npubCopied, setNpubCopied] = useState(false);
   const autoSubmitted = useRef(false);
 
-  // Format OTP input as XXXXXX-XXXXXX
   function handleOtpChange(value: string) {
-    // Strip non-digits
     const digits = value.replace(/\D/g, "").slice(0, 12);
     if (digits.length > 6) {
       setOtpCode(`${digits.slice(0, 6)}-${digits.slice(6)}`);
@@ -37,7 +32,6 @@ function LoginForm() {
     }
   }
 
-  // Auto-fill and auto-submit from ?code= query param
   useEffect(() => {
     if (autoSubmitted.current) return;
     const code = searchParams.get("code");
@@ -49,12 +43,10 @@ function LoginForm() {
     autoSubmitted.current = true;
   }, [searchParams]);
 
-  // Auto-submit after code is populated from URL
   useEffect(() => {
     if (!autoSubmitted.current) return;
     if (otpCode.replace("-", "").length !== 12) return;
     if (loading) return;
-    // Submit on next tick so React finishes rendering
     const id = setTimeout(() => {
       handleOtpSubmit(new Event("submit") as unknown as React.FormEvent);
     }, 0);
@@ -134,65 +126,49 @@ function LoginForm() {
   }
 
   return (
-    <main className="min-h-screen flex items-center justify-center px-4">
-      <div className="max-w-lg w-full">
-        <div className="mb-10 text-center">
-          <h1 className="text-4xl font-bold tracking-tight text-foreground mb-2">
-            Sign in
-          </h1>
-          <p className="text-muted">
-            Welcome back.
+    <main className="min-h-screen flex items-center justify-center px-4 py-10">
+      <div className="max-w-sm w-full text-center">
+        <h1 className="text-4xl sm:text-5xl font-bold tracking-tight text-white mb-2">
+          Sign in
+        </h1>
+        <p className="text-base text-muted mb-10">Welcome back.</p>
+
+        <form onSubmit={handleOtpSubmit} className="space-y-4 mb-10">
+          <input
+            type="text"
+            inputMode="numeric"
+            required
+            value={otpCode}
+            onChange={(e) => handleOtpChange(e.target.value)}
+            placeholder="XXXXXX-XXXXXX"
+            maxLength={13}
+            autoFocus
+            className="w-full py-4 px-5 bg-surface border border-border rounded-xl text-foreground text-center text-lg font-mono tracking-[3px] placeholder:text-muted/40 focus:outline-none focus:border-accent/40 transition-colors"
+          />
+
+          <button
+            type="submit"
+            disabled={loading || otpCode.replace("-", "").length !== 12}
+            className="w-full py-4 px-4 bg-accent text-background font-semibold text-base rounded-xl hover:shadow-[0_6px_24px_rgba(245,158,11,0.3)] hover:-translate-y-px active:translate-y-0 transition-all disabled:opacity-50"
+          >
+            {loading ? "Verifying..." : "Sign in"}
+          </button>
+        </form>
+
+        {error && <p className="text-red-400 text-sm mb-6">{error}</p>}
+
+        <div className="leading-loose mb-9 space-y-1">
+          <p className="text-base text-muted">
+            Just DM <span className="text-foreground font-semibold">login</span>
           </p>
+          <p className="text-base text-muted">
+            to your friendly <BotChip />
+          </p>
+          <p className="text-base text-muted">for your login code.</p>
         </div>
 
-        <div className="space-y-6">
-          <form onSubmit={handleOtpSubmit} className="space-y-6">
-            <div>
-              <input
-                type="text"
-                inputMode="numeric"
-                required
-                value={otpCode}
-                onChange={(e) => handleOtpChange(e.target.value)}
-                placeholder="XXXXXX-XXXXXX"
-                maxLength={13}
-                autoFocus
-                className="w-full py-3 px-4 bg-surface border border-border rounded text-foreground text-center text-lg font-mono tracking-widest placeholder:text-muted/50 focus:outline-none focus:border-accent"
-              />
-            </div>
-
-            <button
-              type="submit"
-              disabled={loading || otpCode.replace("-", "").length !== 12}
-              className="w-full py-3 px-4 bg-accent text-background font-semibold rounded hover:bg-accent/90 transition-colors disabled:opacity-50"
-            >
-              {loading ? "Verifying..." : "Sign in"}
-            </button>
-          </form>
-
-          <div className="text-sm text-muted leading-relaxed text-center">
-            <p>Just DM <span className="text-foreground font-medium">login</span></p>
-            <p>to your friendly <span className="text-foreground font-medium">{BOT_NAME}</span></p>
-            <p>for your login code.</p>
-          </div>
-
-          {BOT_NPUB && (
-            <p className="text-center text-xs text-muted">
-              <button
-                type="button"
-                onClick={() => {
-                  navigator.clipboard.writeText(BOT_NPUB);
-                  setNpubCopied(true);
-                  setTimeout(() => setNpubCopied(false), 2000);
-                }}
-                className="font-mono text-muted hover:text-foreground transition-colors break-all"
-              >
-                {npubCopied ? "Copied!" : BOT_NPUB}
-              </button>
-            </p>
-          )}
-
-          <p className="text-center text-xs text-muted">
+        <div className="flex flex-col items-center gap-3">
+          <p className="text-sm text-muted/50">
             Have a Nostr extension?{" "}
             <button
               type="button"
@@ -203,16 +179,13 @@ function LoginForm() {
               Sign in with NIP-07
             </button>
           </p>
-        </div>
-
-        <p className="text-center text-xs text-muted">
-          <a href="/faq" className="hover:text-foreground transition-colors">
+          <a
+            href="/faq"
+            className="text-sm text-muted/50 hover:text-muted transition-colors"
+          >
             FAQ
           </a>
-        </p>
-
-        {/* Error */}
-        {error && <p className="text-red-400 text-sm mt-4">{error}</p>}
+        </div>
       </div>
     </main>
   );

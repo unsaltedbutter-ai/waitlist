@@ -102,7 +102,7 @@ def test_load_defaults(env: None) -> None:
     assert cfg.timer_tick_seconds == 60
     assert cfg.log_level == "INFO"
     assert cfg.bot_name == "UnsaltedButter Bot"
-    assert "3k sats" in cfg.bot_about
+    assert "Pay-per-action" in cfg.bot_about
     assert cfg.bot_picture == "https://unsaltedbutter.ai/butter-bot.png"
     assert cfg.bot_lud16 == ""
 

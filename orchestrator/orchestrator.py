@@ -8,6 +8,7 @@ graceful shutdown on SIGINT/SIGTERM.
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import json
 import logging
 import signal
@@ -166,6 +167,19 @@ async def run(config: Config) -> None:
     # -- API client --
     api = ApiClient(config.api_base_url, config.hmac_secret)
     await api.start()
+
+    # -- Fetch action price from VPS DB (falls back to env/default) --
+    fetched_price = await api.fetch_action_price()
+    if fetched_price is not None and fetched_price != config.action_price_sats:
+        log.info(
+            "Action price from VPS: %d sats (env default: %d)",
+            fetched_price, config.action_price_sats,
+        )
+        config = dataclasses.replace(config, action_price_sats=fetched_price)
+    elif fetched_price is not None:
+        log.info("Action price: %d sats (matches VPS)", config.action_price_sats)
+    else:
+        log.info("Action price: %d sats (VPS unreachable, using env/default)", config.action_price_sats)
 
     # -- Agent client --
     agent_client = AgentClient(config.agent_url)

@@ -1,8 +1,31 @@
 import Link from "next/link";
 import faqData from "@/data/faq.json";
+import { query } from "@/lib/db";
 import { FaqAccordion } from "./faq-accordion";
 
-export default function FaqPage() {
+export const dynamic = "force-dynamic";
+
+async function getActionPrice(): Promise<number> {
+  try {
+    const res = await query(
+      "SELECT value FROM operator_settings WHERE key = 'action_price_sats'"
+    );
+    const parsed = Number(res.rows[0]?.value);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : 3000;
+  } catch {
+    return 3000;
+  }
+}
+
+export default async function FaqPage() {
+  const priceSats = await getActionPrice();
+  const priceFormatted = priceSats.toLocaleString("en-US");
+
+  const items = faqData.map((item) => ({
+    ...item,
+    answer: item.answer.replace(/3,000 sats/g, `${priceFormatted} sats`),
+  }));
+
   return (
     <main className="min-h-screen flex items-center justify-center px-4 py-16">
       <div className="max-w-xl w-full">
@@ -15,7 +38,7 @@ export default function FaqPage() {
           </p>
         </div>
 
-        <FaqAccordion items={faqData} />
+        <FaqAccordion items={items} />
 
         <div className="text-center mt-10">
           <Link

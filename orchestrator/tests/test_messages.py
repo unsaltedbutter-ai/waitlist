@@ -226,14 +226,18 @@ class TestResult:
 
 
 class TestPayment:
-    def test_invoice_formatting(self) -> None:
-        msg = invoice(3000, "lnbc3000...")
-        assert "3,000 sats" in msg
-        assert "lnbc3000..." in msg
+    def test_invoice_returns_two_messages(self) -> None:
+        parts = invoice(3000, "lnbc3000...")
+        assert isinstance(parts, list)
+        assert len(parts) == 2
+        assert "3,000 sats" in parts[0]
+        assert "Zap" in parts[0]
+        assert parts[1] == "lnbc3000..."
 
     def test_invoice_large_amount(self) -> None:
-        msg = invoice(1_000_000, "lnbc1m...")
-        assert "1,000,000 sats" in msg
+        parts = invoice(1_000_000, "lnbc1m...")
+        assert "1,000,000 sats" in parts[0]
+        assert parts[1] == "lnbc1m..."
 
     def test_payment_received(self) -> None:
         msg = payment_received(3000)
@@ -269,13 +273,27 @@ class TestMisc:
         assert "cancel" in msg
         assert "resume" in msg
         assert "status" in msg
-        assert "queue" in msg
-        assert "help" in msg
+        assert "login" in msg
+        assert "queue" not in msg
+        assert "help" not in msg
         assert "3,000 sats" in msg
 
-    def test_busy(self) -> None:
+    def test_help_text_custom_price(self) -> None:
+        msg = help_text(action_price_sats=5000)
+        assert "5,000 sats" in msg
+        assert "3,000" not in msg
+
+    def test_busy_generic(self) -> None:
         msg = busy()
-        assert "active task" in msg
+        assert "finish" in msg.lower()
+
+    def test_busy_with_job(self) -> None:
+        msg = busy("netflix", "cancel")
+        assert "cancelling Netflix" in msg
+
+    def test_busy_resume(self) -> None:
+        msg = busy("hulu", "resume")
+        assert "resuming Hulu" in msg
 
     def test_waitlist_added(self) -> None:
         assert "waitlist" in waitlist_added().lower()
@@ -291,11 +309,10 @@ class TestMisc:
         result = login_code("123456789012", "https://unsaltedbutter.ai")
         assert isinstance(result, list)
         assert len(result) == 2
-        # First message is the formatted code
+        # First message is the formatted code only
         assert result[0] == "123456-789012"
-        # Second message has instructions
-        assert "15 minutes" in result[1]
-        assert "https://unsaltedbutter.ai/login?code=123456-789012" in result[1]
+        # Second message is the URL with code only
+        assert result[1] == "https://unsaltedbutter.ai/login?code=123456-789012"
 
     def test_not_registered(self) -> None:
         msg = not_registered("https://unsaltedbutter.ai")

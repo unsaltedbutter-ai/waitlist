@@ -486,3 +486,46 @@ async def test_heartbeat_without_job_ids_omits_key(
 
     sent_body = json.loads(route.calls[0].request.content)
     assert "job_ids" not in sent_body
+
+
+# -- Pricing -----------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_fetch_action_price_success(
+    client: ApiClient, respx_mock: respx.MockRouter,
+) -> None:
+    respx_mock.get(f"{BASE_URL}/api/pricing").mock(
+        return_value=httpx.Response(200, json={"action_price_sats": 5000})
+    )
+    price = await client.fetch_action_price()
+    assert price == 5000
+
+
+@pytest.mark.asyncio
+async def test_fetch_action_price_fallback_on_error(
+    client: ApiClient, respx_mock: respx.MockRouter,
+) -> None:
+    respx_mock.get(f"{BASE_URL}/api/pricing").mock(
+        return_value=httpx.Response(500)
+    )
+    price = await client.fetch_action_price()
+    assert price is None
+
+
+@pytest.mark.asyncio
+async def test_fetch_action_price_fallback_on_invalid(
+    client: ApiClient, respx_mock: respx.MockRouter,
+) -> None:
+    respx_mock.get(f"{BASE_URL}/api/pricing").mock(
+        return_value=httpx.Response(200, json={"action_price_sats": -1})
+    )
+    price = await client.fetch_action_price()
+    assert price is None
+
+
+@pytest.mark.asyncio
+async def test_fetch_action_price_not_started() -> None:
+    c = ApiClient(BASE_URL, HMAC_SECRET)
+    price = await c.fetch_action_price()
+    assert price is None

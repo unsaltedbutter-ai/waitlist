@@ -45,7 +45,6 @@ export function QueueSection({
   queue,
   setQueue,
   allServices,
-  userDebtSats,
   error,
   setError,
   onRefresh,
@@ -59,8 +58,7 @@ export function QueueSection({
   // Expanded panel state (only one panel open at a time across all items).
   const [expandedPanel, setExpandedPanel] = useState<{
     serviceId: string;
-    panel: "credentials" | "confirm-action" | "remove";
-    action?: "cancel" | "resume";
+    panel: "credentials" | "remove";
   } | null>(null);
 
   // Credential cache (lazy fetch)
@@ -68,10 +66,6 @@ export function QueueSection({
   const [credentialLoading, setCredentialLoading] = useState(false);
   const [credentialError, setCredentialError] = useState(false);
   const [updatingCredentials, setUpdatingCredentials] = useState(false);
-
-  // Action request state
-  const [requestingAction, setRequestingAction] = useState(false);
-  const [actionError, setActionError] = useState("");
 
   // Remove state
   const [removingService, setRemovingService] = useState(false);
@@ -115,10 +109,8 @@ export function QueueSection({
 
   function handleExpandPanel(
     serviceId: string,
-    panel: "credentials" | "confirm-action" | "remove" | null,
-    action?: "cancel" | "resume"
+    panel: "credentials" | "remove" | null,
   ) {
-    setActionError("");
     if (panel === null) {
       setExpandedPanel(null);
       return;
@@ -127,7 +119,7 @@ export function QueueSection({
     if (panel === "credentials") {
       fetchCredentials();
     }
-    setExpandedPanel({ serviceId, panel, action });
+    setExpandedPanel({ serviceId, panel });
   }
 
   // ---------- Drag and drop ----------
@@ -181,8 +173,6 @@ export function QueueSection({
 
       const order = fullReordered.map((q) => q.service_id);
 
-      // If a PUT is already in flight, queue this order (replacing any
-      // previously queued order). Only the final state matters.
       if (reorderInFlightRef.current) {
         pendingReorderRef.current = { order, rollback: previousQueue };
         return;
@@ -198,7 +188,6 @@ export function QueueSection({
         setQueue(previousQueue);
         setError("Failed to save queue order. Please try again.");
       }
-      // Flush any order that was queued while this PUT was in flight
       await flushReorder();
     },
     [queue, pinnedItems, sortableItems, flushReorder, setQueue, setError]
@@ -211,7 +200,6 @@ export function QueueSection({
     setError("");
 
     try {
-      // 1. Save credentials
       const credRes = await authFetch("/api/credentials", {
         method: "POST",
         body: JSON.stringify({
@@ -226,7 +214,6 @@ export function QueueSection({
         throw new Error(credData.error || "Failed to save credentials.");
       }
 
-      // 2. Update queue with the new service appended, preserving existing plans
       const newOrder = [...queue.map((q) => q.service_id), data.serviceId];
       const plansMap: Record<string, string> = {};
       for (const q of queue) {
@@ -246,10 +233,7 @@ export function QueueSection({
         throw new Error(queueData.error || "Failed to update queue.");
       }
 
-      // 3. Invalidate credential cache (new cred was added)
       setCredentialCache(null);
-
-      // 4. Refresh and close panel
       setShowAddPanel(false);
       setSelectedAddService(null);
       setSelectedAddPlan(null);
@@ -280,50 +264,12 @@ export function QueueSection({
         throw new Error(resData.error || "Failed to update credentials.");
       }
 
-      // Invalidate cache and close panel
       setCredentialCache(null);
       setExpandedPanel(null);
     } catch (err) {
-      throw err; // Let the ServiceCredentialForm display the error
+      throw err;
     } finally {
       setUpdatingCredentials(false);
-    }
-  }
-
-  // ---------- Request action (cancel/resume) ----------
-
-  async function handleRequestAction(serviceId: string, action: "cancel" | "resume") {
-    setRequestingAction(true);
-    setActionError("");
-
-    try {
-      const res = await authFetch("/api/on-demand", {
-        method: "POST",
-        body: JSON.stringify({ serviceId, action }),
-      });
-
-      if (res.ok) {
-        setExpandedPanel(null);
-        await onRefresh();
-        return;
-      }
-
-      const data = await res.json();
-      if (res.status === 403) {
-        if (data.debt_sats) {
-          setActionError(`Outstanding balance of ${data.debt_sats.toLocaleString()} sats. Clear it first.`);
-        } else {
-          setActionError(data.error || "Action blocked.");
-        }
-      } else if (res.status === 409) {
-        setActionError("A cancel or resume is already in progress for this service.");
-      } else {
-        setActionError(data.error || "Something went wrong. Try again or use the Nostr bot.");
-      }
-    } catch {
-      setActionError("Something went wrong. Try again or use the Nostr bot.");
-    } finally {
-      setRequestingAction(false);
     }
   }
 
@@ -371,19 +317,14 @@ export function QueueSection({
         item={item}
         pinned={pinned}
         expandedPanel={currentPanel}
-        overrideAction={isExpanded ? expandedPanel!.action : undefined}
-        onExpandPanel={(panel, action) => handleExpandPanel(item.service_id, panel, action)}
+        onExpandPanel={(panel) => handleExpandPanel(item.service_id, panel)}
         onUpdateCredentials={handleUpdateCredentials}
-        onRequestAction={handleRequestAction}
         onRemoveService={handleRemoveService}
         credentialEmail={getCredentialEmail(item.service_id)}
         credentialLoading={credentialLoading && isExpanded && currentPanel === "credentials"}
         credentialError={credentialError && isExpanded && currentPanel === "credentials"}
         updatingCredentials={updatingCredentials}
-        requestingAction={requestingAction}
         removingService={removingService}
-        userDebtSats={userDebtSats}
-        actionError={isExpanded && currentPanel === "confirm-action" ? actionError : undefined}
       />
     );
   }
@@ -392,8 +333,8 @@ export function QueueSection({
 
   return (
     <section className="bg-surface border border-border rounded p-6">
-      <div className="flex items-center justify-between mb-4">
-        <h2 className="text-sm font-medium text-muted">
+      <div className="flex items-center justify-between mb-1">
+        <h2 className="text-xs font-semibold text-muted/50 uppercase tracking-wider">
           Your queue
         </h2>
         {availableToAdd.length > 0 && (
@@ -404,12 +345,15 @@ export function QueueSection({
               setSelectedAddService(null);
               setSelectedAddPlan(null);
             }}
-            className="text-xs font-medium text-accent hover:text-accent/80 transition-colors"
+            className="text-xs font-semibold text-accent hover:text-accent/80 transition-colors"
           >
             {showAddPanel ? "Cancel" : "+ Add service"}
           </button>
         )}
       </div>
+      <p className="text-sm text-muted/50 mb-5">
+        Your rotation order. When you cancel one, we&apos;ll suggest the next.
+      </p>
 
       {/* Add service panel */}
       {showAddPanel && (() => {
@@ -432,7 +376,6 @@ export function QueueSection({
                     onClick={() => {
                       setSelectedAddService(svc.serviceId);
                       setSelectedAddPlan(null);
-                      // Auto-select plan for single-plan services
                       if (svc.plans.length === 1) {
                         setSelectedAddPlan(svc.plans[0].id);
                       }
@@ -501,10 +444,8 @@ export function QueueSection({
         </p>
       ) : (
         <div className="space-y-2">
-          {/* Pinned items (active jobs) */}
           {pinnedItems.map((item) => renderQueueItem(item, true))}
 
-          {/* Sortable items (no active job) */}
           {sortableItems.length > 0 && (
             <DndContext
               sensors={sensors}
@@ -524,8 +465,8 @@ export function QueueSection({
         </div>
       )}
 
-      <p className="text-xs text-muted/60 mt-4">
-        Drag to reorder queued services. We&apos;ll use this order to remind you when it is time to rotate.
+      <p className="text-xs text-muted/50 mt-4">
+        Drag to reorder. We&apos;ll use this order when suggesting your next service.
       </p>
     </section>
   );

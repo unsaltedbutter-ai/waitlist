@@ -250,6 +250,28 @@ class ApiClient:
         resp.raise_for_status()
         return resp.json()
 
+    # -- Pricing -------------------------------------------------------------
+
+    async def fetch_action_price(self) -> int | None:
+        """Fetch action_price_sats from VPS /api/pricing (public, no HMAC).
+
+        Returns the price in sats, or None on failure.
+        """
+        if self._client is None:
+            return None
+        try:
+            resp = await self._client.get(
+                f"{self._base_url}/api/pricing", timeout=10.0
+            )
+            if resp.status_code == 200:
+                data = resp.json()
+                price = data.get("action_price_sats")
+                if isinstance(price, int) and price > 0:
+                    return price
+        except Exception:
+            log.warning("Failed to fetch action price from VPS")
+        return None
+
     # -- Heartbeat -----------------------------------------------------------
 
     async def heartbeat(

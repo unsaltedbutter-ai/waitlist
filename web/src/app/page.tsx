@@ -1,9 +1,7 @@
 "use client";
 
 import { useState } from "react";
-
-const BOT_NPUB = process.env.NEXT_PUBLIC_NOSTR_BOT_NPUB ?? "npub1hssdvydgqjx9y6ptlkt23sc5uptnqkc3q2r8j68zpdeyt9psl27s534rcr";
-const BOT_NAME = process.env.NEXT_PUBLIC_NOSTR_BOT_NAME ?? "UnsaltedButter Bot";
+import { BotChip } from "@/components/bot-chip";
 
 export default function WaitlistPage() {
   const [npub, setNpub] = useState("");
@@ -12,7 +10,6 @@ export default function WaitlistPage() {
   >("idle");
   const [autoInvited, setAutoInvited] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
-  const [npubCopied, setNpubCopied] = useState(false);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -52,7 +49,7 @@ export default function WaitlistPage() {
   if (status === "success") {
     return (
       <main className="min-h-screen flex items-center justify-center px-4">
-        <div className="max-w-lg w-full text-center">
+        <div className="max-w-md w-full text-center">
           {autoInvited ? (
             <>
               <h1 className="text-3xl font-bold mb-4 text-foreground">
@@ -87,19 +84,14 @@ export default function WaitlistPage() {
 
   return (
     <main className="min-h-screen flex items-center justify-center px-4 py-16">
-      <div className="max-w-lg w-full">
-        {/* Header */}
-        <div className="mb-12 text-center">
-          <h1 className="text-4xl font-bold tracking-tight mb-4 text-foreground">
-            Not watching? Stop paying.
-          </h1>
-        </div>
+      <div className="max-w-md w-full text-center">
+        <h1 className="text-4xl sm:text-5xl font-bold tracking-tight mb-12 text-white leading-tight">
+          Not watching?<br />Stop paying.
+        </h1>
 
-        {/* Form */}
-        <form onSubmit={handleSubmit} className="space-y-6">
-          {/* npub input */}
-          <div>
-            <label className="block text-sm font-medium text-muted mb-2">
+        <form onSubmit={handleSubmit} className="space-y-4 mb-12">
+          <div className="text-left">
+            <label className="block text-xs font-semibold text-muted/70 uppercase tracking-wider mb-2">
               Your Nostr npub
             </label>
             <input
@@ -108,51 +100,39 @@ export default function WaitlistPage() {
               value={npub}
               onChange={(e) => setNpub(e.target.value)}
               placeholder="npub1..."
-              className="w-full py-3 px-4 bg-surface border border-border rounded text-foreground placeholder:text-muted/50 focus:outline-none focus:border-accent"
+              className="w-full py-4 px-5 bg-surface border border-border rounded-xl text-foreground text-base placeholder:text-muted/40 focus:outline-none focus:border-accent/40 transition-colors"
             />
           </div>
 
-          {/* Error */}
           {status === "error" && (
             <p className="text-red-400 text-sm">{errorMsg}</p>
           )}
 
-          {/* Submit */}
           <button
             type="submit"
             disabled={status === "submitting"}
-            className="w-full py-3 px-4 bg-accent text-background font-semibold rounded hover:bg-accent/90 transition-colors disabled:opacity-50"
+            className="w-full py-4 px-4 bg-accent text-background font-semibold text-base rounded-xl hover:shadow-[0_6px_24px_rgba(245,158,11,0.3)] hover:-translate-y-px active:translate-y-0 transition-all disabled:opacity-50"
           >
             {status === "submitting" ? "Submitting..." : "Get on the list"}
           </button>
-
-          <div className="text-sm text-muted leading-relaxed text-center">
-            <p>Just DM <span className="text-foreground font-medium">waitlist</span></p>
-            <p>to your friendly <span className="text-foreground font-medium">{BOT_NAME}</span></p>
-            <p>to get in the line.</p>
-          </div>
-
-          {BOT_NPUB && (
-            <p className="text-center text-xs text-muted">
-              <button
-                type="button"
-                onClick={() => {
-                  navigator.clipboard.writeText(BOT_NPUB);
-                  setNpubCopied(true);
-                  setTimeout(() => setNpubCopied(false), 2000);
-                }}
-                className="font-mono text-muted hover:text-foreground transition-colors break-all"
-              >
-                {npubCopied ? "Copied!" : BOT_NPUB}
-              </button>
-            </p>
-          )}
         </form>
 
-        {/* Footer */}
-        <div className="text-center text-xs mt-12 space-y-2">
-          <p className="text-muted/60">Invite only. Bitcoin only.</p>
+        <div className="leading-relaxed mb-8 space-y-1">
+          <p className="text-base text-muted">
+            Just DM <span className="text-foreground font-semibold">waitlist</span>
+          </p>
+          <p className="text-base text-muted">
+            to your friendly <BotChip />
+          </p>
+          <p className="text-base text-muted">to get in the line.</p>
         </div>
+
+        <a
+          href="/faq"
+          className="text-sm text-muted/50 hover:text-muted transition-colors"
+        >
+          FAQ
+        </a>
       </div>
     </main>
   );

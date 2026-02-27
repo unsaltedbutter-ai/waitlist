@@ -120,6 +120,13 @@ class Session:
             return IDLE
         return session["state"]
 
+    async def get_current_job(self, user_npub: str) -> dict | None:
+        """Return the job associated with the user's active session, or None."""
+        session = await self._db.get_session(user_npub)
+        if session is None or not session.get("job_id"):
+            return None
+        return await self._db.get_job(session["job_id"])
+
     async def is_busy(self, user_npub: str) -> bool:
         """Check if user has an active (non-IDLE) session."""
         state = await self.get_state(user_npub)
@@ -463,13 +470,11 @@ class Session:
                     **update_kwargs,
                 )
 
-                # Send invoice DM
-                await self._send_dm(
-                    user_npub,
-                    messages.invoice(
-                        invoice_data["amount_sats"], invoice_data["bolt11"]
-                    ),
-                )
+                # Send invoice DMs (two separate messages for easy copy)
+                for part in messages.invoice(
+                    invoice_data["amount_sats"], invoice_data["bolt11"]
+                ):
+                    await self._send_dm(user_npub, part)
 
                 # Transition session to INVOICE_SENT
                 await self._db.upsert_session(

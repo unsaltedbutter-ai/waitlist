@@ -21,19 +21,15 @@ interface RecentJobsSectionProps {
 export function RecentJobsSection({ jobs, jobsError }: RecentJobsSectionProps) {
   return (
     <section className="bg-surface border border-border rounded p-6">
-      <h2 className="text-sm font-medium text-muted mb-4">
+      <h2 className="text-xs font-semibold text-muted/50 uppercase tracking-wider mb-5">
         Recent jobs
       </h2>
-
-      <p className="text-xs text-muted/60 mb-4">
-        When you request a cancel or resume, it will show up here. Each cancel or resume costs 3,000 sats.
-      </p>
 
       {jobsError && (
         <p className="text-amber-400 text-sm">Could not load recent jobs.</p>
       )}
 
-      {jobs.length > 0 && (
+      {jobs.length > 0 ? (
         <>
           {/* Desktop table (hidden on small screens) */}
           <div className="hidden sm:block overflow-x-auto">
@@ -92,7 +88,11 @@ export function RecentJobsSection({ jobs, jobsError }: RecentJobsSectionProps) {
             ))}
           </div>
         </>
-      )}
+      ) : !jobsError ? (
+        <p className="text-sm text-muted/50 text-center py-6">
+          No jobs yet. Send a DM to cancel or resume a service.
+        </p>
+      ) : null}
     </section>
   );
 }

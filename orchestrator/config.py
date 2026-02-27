@@ -133,7 +133,7 @@ class Config:
             bot_name=os.environ.get("BOT_NAME", "UnsaltedButter Bot").strip(),
             bot_about=os.environ.get(
                 "BOT_ABOUT",
-                "DM me to manage your streaming services. Pay-per-action, 3k sats.",
+                "DM me to manage your streaming services. Pay-per-action.",
             ).strip(),
             bot_picture=os.environ.get("BOT_PICTURE", "https://unsaltedbutter.ai/butter-bot.png").strip(),
             bot_lud16=os.environ.get("BOT_LUD16", "").strip(),

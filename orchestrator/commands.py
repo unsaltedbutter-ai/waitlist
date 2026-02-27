@@ -82,7 +82,9 @@ class CommandRouter:
                 stripped = normalized.replace(" ", "").replace("-", "")
                 await self._session.handle_otp_input(sender_npub, stripped)
             else:
-                await self._send_dm(sender_npub, messages.busy())
+                await self._send_dm(
+                    sender_npub, await self._busy_message(sender_npub)
+                )
             return
 
         # AWAITING_CREDENTIAL: forward user's reply as credential value
@@ -92,7 +94,9 @@ class CommandRouter:
                     sender_npub, normalized,
                 )
             else:
-                await self._send_dm(sender_npub, messages.busy())
+                await self._send_dm(
+                    sender_npub, await self._busy_message(sender_npub)
+                )
             return
 
         # OTP_CONFIRM: user confirming or declining OTP availability
@@ -109,12 +113,16 @@ class CommandRouter:
             elif lower in ("no", "cancel", "n"):
                 await self._session.handle_otp_confirm_no(sender_npub)
             else:
-                await self._send_dm(sender_npub, messages.busy())
+                await self._send_dm(
+                    sender_npub, await self._busy_message(sender_npub)
+                )
             return
 
         # EXECUTING or INVOICE_SENT: user is in a non-interactive wait state
         if state in (EXECUTING, INVOICE_SENT):
-            await self._send_dm(sender_npub, messages.busy())
+            await self._send_dm(
+                sender_npub, await self._busy_message(sender_npub)
+            )
             return
 
         # IDLE: parse command
@@ -139,7 +147,7 @@ class CommandRouter:
         elif lower == "queue":
             await self._cmd_queue(sender_npub)
         elif lower == "help":
-            await self._send_dm(sender_npub, messages.help_text())
+            await self._send_dm(sender_npub, messages.help_text(self._config.action_price_sats))
         elif lower == "login":
             await self._cmd_login(sender_npub)
         elif lower == "waitlist":
@@ -147,7 +155,7 @@ class CommandRouter:
         elif lower == "invites":
             await self._cmd_invites(sender_npub)
         else:
-            await self._send_dm(sender_npub, messages.help_text())
+            await self._send_dm(sender_npub, messages.help_text(self._config.action_price_sats))
 
     # ------------------------------------------------------------------
     # Command handlers
@@ -157,7 +165,7 @@ class CommandRouter:
         """User says 'yes' to outreach. Find active job and start session."""
         job = await self._job_manager.get_active_job_for_user(sender_npub)
         if job is None:
-            await self._send_dm(sender_npub, messages.help_text())
+            await self._send_dm(sender_npub, messages.help_text(self._config.action_price_sats))
             return
         await self._session.handle_yes(sender_npub, job["id"])
 
@@ -165,7 +173,7 @@ class CommandRouter:
         """User says 'skip' to outreach."""
         job = await self._job_manager.get_active_job_for_user(sender_npub)
         if job is None:
-            await self._send_dm(sender_npub, messages.help_text())
+            await self._send_dm(sender_npub, messages.help_text(self._config.action_price_sats))
             return
         await self._job_manager.handle_skip(sender_npub, job["id"])
 
@@ -173,7 +181,7 @@ class CommandRouter:
         """User says 'snooze' to outreach."""
         job = await self._job_manager.get_active_job_for_user(sender_npub)
         if job is None:
-            await self._send_dm(sender_npub, messages.help_text())
+            await self._send_dm(sender_npub, messages.help_text(self._config.action_price_sats))
             return
         await self._job_manager.handle_snooze(sender_npub, job["id"])
 
@@ -363,7 +371,7 @@ class CommandRouter:
     async def _cmd_invites(self, sender_npub: str) -> None:
         """Operator only: send pending invite DMs."""
         if not self._is_operator(sender_npub):
-            await self._send_dm(sender_npub, messages.help_text())
+            await self._send_dm(sender_npub, messages.help_text(self._config.action_price_sats))
             return
 
         try:
@@ -433,6 +441,13 @@ class CommandRouter:
                 sender_npub,
                 messages.not_registered(self._config.base_url),
             )
+
+    async def _busy_message(self, sender_npub: str) -> str:
+        """Build a contextual busy message for the user."""
+        job = await self._session.get_current_job(sender_npub)
+        if job and isinstance(job, dict):
+            return messages.busy(job.get("service_id"), job.get("action"))
+        return messages.busy()
 
     def _is_otp_like(self, text: str) -> bool:
         """Check if text looks like an OTP or CVV code (3-8 digits, with optional spaces/dashes)."""

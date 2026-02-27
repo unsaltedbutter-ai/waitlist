@@ -195,9 +195,12 @@ def action_failed_resume(service_id: str) -> str:
 # ---------------------------------------------------------------------------
 
 
-def invoice(amount_sats: int, bolt11: str) -> str:
-    """Invoice message after work completes."""
-    return f"{amount_sats:,} sats please.\n{bolt11}"
+def invoice(amount_sats: int, bolt11: str) -> list[str]:
+    """Invoice messages after work completes. Returns TWO messages."""
+    return [
+        f"Zap me {amount_sats:,} sats, or use this invoice:",
+        bolt11,
+    ]
 
 
 def payment_received(amount_sats: int) -> str:
@@ -240,23 +243,26 @@ def welcome(services: list[str]) -> str:
     )
 
 
-def help_text() -> str:
+def help_text(action_price_sats: int = 3000) -> str:
     """Help message."""
     return (
         "Commands:\n"
         "  cancel [service]: request a cancel (e.g. cancel netflix)\n"
         "  resume [service]: request a resume (e.g. resume hulu)\n"
-        "  status: your active jobs, queue, and debt\n"
-        "  queue: your rotation queue order\n"
-        "  help: this message\n"
+        "  status: your active jobs and balance\n"
+        "  login: get a login code for the website\n"
         "\n"
-        "3,000 sats per action, billed after completion."
+        f"{action_price_sats:,} sats per action, billed after completion."
     )
 
 
-def busy() -> str:
+def busy(service_id: str | None = None, action: str | None = None) -> str:
     """User has an active task, can't start another."""
-    return "You have an active task. Finish it first."
+    if service_id and action:
+        name = display_name(service_id)
+        verb = "cancelling" if action == "cancel" else "resuming"
+        return f"One thing at a time. Let's finish {verb} {name}."
+    return "Let me finish the job I just started for you."
 
 
 def waitlist_added() -> str:
@@ -272,11 +278,11 @@ def waitlist_invited(base_url: str) -> str:
 
 
 def login_code(code: str, base_url: str) -> list[str]:
-    """Login OTP code. Returns TWO messages (code first, instructions second)."""
+    """Login OTP code. Returns TWO messages: code only, then URL with code."""
     formatted = f"{code[:6]}-{code[6:]}"
     return [
         formatted,
-        f"Use your login code within 15 minutes.\n\nOr use this link:\n\n{base_url}/login?code={formatted}",
+        f"{base_url}/login?code={formatted}",
     ]
 
 

@@ -22,6 +22,7 @@ import {
   StepIndicator,
   SortableItem,
   PasswordToggle,
+  ServiceIcon,
   type QueueItem,
 } from "./_components";
 
@@ -58,14 +59,10 @@ export default function OnboardingPage() {
   // Step 2 state: services + credentials
   const [services, setServices] = useState<ServiceOption[]>([]);
   const [serviceGroups, setServiceGroups] = useState<ServiceGroup[]>([]);
-  const [selectedServiceIds, setSelectedServiceIds] = useState<Set<string>>(new Set());
   const [selectedPlans, setSelectedPlans] = useState<Record<string, string>>({});
-  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
+  const [expandedCards, setExpandedCards] = useState<Set<string>>(new Set());
   const [creds, setCreds] = useState<Record<string, { email: string; password: string }>>({});
-  const [useSameCreds, setUseSameCreds] = useState(false);
-  const [sharedCreds, setSharedCreds] = useState({ email: "", password: "" });
-  const [showPasswords, setShowPasswords] = useState(false);
-  const [credentialMode, setCredentialMode] = useState<"later" | "now">("later");
+  const [showPasswords, setShowPasswords] = useState<Record<string, boolean>>({});
 
   // Step 3 state: queue order
   const [queue, setQueue] = useState<QueueItem[]>([]);
@@ -105,40 +102,15 @@ export default function OnboardingPage() {
 
   // --- Helpers ---
 
-  function toggleAccordion(serviceId: string) {
-    setExpandedGroups((prev) => {
-      const next = new Set(prev);
-      if (next.has(serviceId)) {
-        next.delete(serviceId);
-      } else {
-        next.add(serviceId);
-      }
-      return next;
-    });
-  }
+  const selectedServiceIds = Object.keys(selectedPlans);
 
-  function toggleService(serviceId: string) {
-    setSelectedServiceIds((prev) => {
+  function toggleCard(serviceId: string) {
+    setExpandedCards((prev) => {
       const next = new Set(prev);
       if (next.has(serviceId)) {
         next.delete(serviceId);
-        setCreds((c) => {
-          const n = { ...c };
-          delete n[serviceId];
-          return n;
-        });
-        setSelectedPlans((p) => {
-          const n = { ...p };
-          delete n[serviceId];
-          return n;
-        });
       } else {
         next.add(serviceId);
-        // Auto-select single plan for services with only one option
-        const group = serviceGroups.find((g) => g.serviceId === serviceId);
-        if (group && group.plans.length === 1) {
-          setSelectedPlans((p) => ({ ...p, [serviceId]: group.plans[0].id }));
-        }
       }
       return next;
     });
@@ -147,6 +119,7 @@ export default function OnboardingPage() {
   function selectPlan(serviceId: string, planId: string) {
     setSelectedPlans((prev) => {
       if (prev[serviceId] === planId) {
+        // Deselect: remove the plan (deselects the service)
         const next = { ...prev };
         delete next[serviceId];
         return next;
@@ -177,101 +150,61 @@ export default function OnboardingPage() {
     }));
   }
 
-  function getCredsFor(serviceId: string): { email: string; password: string } {
-    if (useSameCreds) return sharedCreds;
-    return creds[serviceId] ?? { email: "", password: "" };
+  function formatPrice(cents: number): string {
+    return `$${(cents / 100).toFixed(2)}`;
   }
 
-  const selectedIds = Array.from(selectedServiceIds);
-
   const canSaveStep2 = (() => {
-    if (credentialMode === "later") return true;
-    if (selectedIds.length === 0) return true;
-    if (useSameCreds) {
-      return !!sharedCreds.email && !!sharedCreds.password;
-    }
-    return selectedIds.every((sid) => {
+    if (selectedServiceIds.length === 0) return true; // allow skip
+    return selectedServiceIds.every((sid) => {
       const c = creds[sid];
       return c?.email && c?.password;
     });
   })();
 
   // =====================================================================
-  // Step 1: How it works
+  // Step 1: Before you start
   // =====================================================================
 
   function renderStep1() {
     return (
       <div className="space-y-8">
-        <div>
-          <h1 className="text-4xl font-bold tracking-tight text-foreground mb-4">
-            Before you start
-          </h1>
+        <h1 className="text-3xl sm:text-4xl font-bold tracking-tight text-white">
+          Before you start
+        </h1>
+
+        <div className="flex flex-col gap-4">
+          <div className="flex gap-3.5 items-start text-base text-muted leading-relaxed">
+            <svg className="w-5 h-5 mt-0.5 shrink-0 text-accent opacity-80" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+            <span>We cancel &amp; resume subscriptions on your behalf, charged per transaction.</span>
+          </div>
+          <div className="flex gap-3.5 items-start text-base text-muted leading-relaxed">
+            <svg className="w-5 h-5 mt-0.5 shrink-0 text-accent opacity-80" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+            <span>Your credentials are encrypted and destroyed when you delete your account. We never share your data.</span>
+          </div>
+          <div className="flex gap-3.5 items-start text-base text-muted leading-relaxed">
+            <svg className="w-5 h-5 mt-0.5 shrink-0 text-accent opacity-80" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+            <span>Using UnsaltedButter may violate a streaming service&apos;s Terms of Service. Accounts could be suspended at their discretion.</span>
+          </div>
+          <div className="flex gap-3.5 items-start text-base text-muted leading-relaxed">
+            <svg className="w-5 h-5 mt-0.5 shrink-0 text-accent opacity-80" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+            <span>You&apos;re responsible for verifying your subscriptions. We can&apos;t guarantee every action will succeed.</span>
+          </div>
         </div>
 
-        <div className="bg-surface border border-border rounded p-6 space-y-4">
-          <h3 className="text-lg font-semibold text-foreground">
-            How it works
-          </h3>
-          <ul className="space-y-3 text-sm text-muted leading-relaxed">
-            <li className="flex gap-2">
-              <span className="text-muted/60 shrink-0">&bull;</span>
-              <span>
-                We cancel and resume subscriptions for you, when you ask.
-              </span>
-            </li>
-            <li className="flex gap-2">
-              <span className="text-muted/60 shrink-0">&bull;</span>
-              <span>
-                We charge you per transaction.
-              </span>
-            </li>
-            <li className="flex gap-2">
-              <span className="text-muted/60 shrink-0">&bull;</span>
-              <span>
-                Your credentials are encrypted and destroyed immediately when you delete your account.
-              </span>
-            </li>
-            <li className="flex gap-2">
-              <span className="text-muted/60 shrink-0">&bull;</span>
-              <span>
-                We do not share your data with anyone.
-              </span>
-            </li>
-          </ul>
-        </div>
-
-        <div className="bg-amber-950/40 border border-amber-700/50 rounded p-5 space-y-3">
-          <p className="text-amber-400 font-semibold text-sm">
-            Understand the risks
+        <div className="bg-accent/10 border border-accent/30 rounded-xl p-5">
+          <p className="text-xs font-semibold text-accent uppercase tracking-wider mb-2">
+            Heads up
           </p>
-          <p className="text-amber-200/70 text-sm leading-relaxed">
-            Using UnsaltedButter to manage your streaming accounts may violate
-            those services&apos; Terms of Service. Streaming providers could
-            suspend or terminate your account at their discretion.
-          </p>
-          <p className="text-amber-200/70 text-sm leading-relaxed">
-            UnsaltedButter is not liable for any action a streaming service
-            takes against your account (including suspension,
-            termination, or loss of content) as a result of using this service.
-          </p>
-        </div>
-
-        <div className="bg-surface border-2 border-amber-500 rounded p-5">
-          <p className="text-foreground text-sm leading-relaxed font-bold">
-            You remain responsible for your own subscriptions.
-          </p>
-          <p className="text-muted text-sm mt-2 leading-relaxed">
-            UnsaltedButter acts on your instructions but does not guarantee that
-            every cancel or resume will succeed. Check your streaming accounts
-            periodically to verify.
+          <p className="text-sm text-muted leading-relaxed">
+            UnsaltedButter is not liable for any action a streaming provider takes against your account, including suspension or loss of content.
           </p>
         </div>
 
         <button
           type="button"
           onClick={() => setStep(2)}
-          className="w-full py-3 px-4 bg-accent text-background font-semibold rounded hover:bg-accent/90 transition-colors"
+          className="w-full py-4 px-4 bg-accent text-background font-semibold text-base rounded-xl hover:shadow-[0_6px_24px_rgba(245,158,11,0.3)] hover:-translate-y-px active:translate-y-0 transition-all"
         >
           Continue
         </button>
@@ -286,37 +219,27 @@ export default function OnboardingPage() {
   async function saveCredentials() {
     setError("");
 
-    // "Later" mode: skip credentials entirely, go to queue step.
-    // Clear queue so previously-entered selections don't leak through.
-    if (credentialMode === "later") {
+    // If no services selected, skip to queue step
+    if (selectedServiceIds.length === 0) {
       setQueue([]);
       setStep(3);
       return;
     }
 
-    // If services are selected, validate credentials are filled in
-    if (selectedIds.length > 0) {
-      if (useSameCreds) {
-        if (!sharedCreds.email || !sharedCreds.password) {
-          setError("Enter the shared email and password.");
-          return;
-        }
-      } else {
-        for (const sid of selectedIds) {
-          const c = creds[sid];
-          if (!c?.email || !c?.password) {
-            const svc = services.find((s) => s.service_id === sid);
-            setError(`Enter credentials for ${svc?.service_name ?? sid}.`);
-            return;
-          }
-        }
+    // Validate credentials are filled in
+    for (const sid of selectedServiceIds) {
+      const c = creds[sid];
+      if (!c?.email || !c?.password) {
+        const svc = services.find((s) => s.service_id === sid);
+        setError(`Enter credentials for ${svc?.service_name ?? sid}.`);
+        return;
       }
     }
 
     setSubmitting(true);
     try {
-      for (const sid of selectedIds) {
-        const c = getCredsFor(sid);
+      for (const sid of selectedServiceIds) {
+        const c = creds[sid] ?? { email: "", password: "" };
 
         const res = await authFetch("/api/credentials", {
           method: "POST",
@@ -337,18 +260,16 @@ export default function OnboardingPage() {
       }
 
       // Build queue from selected services
-      if (selectedIds.length > 0) {
-        const savedQueue: QueueItem[] = selectedIds.map((sid) => {
-          const svc = services.find((s) => s.service_id === sid)!;
-          const plan = getSelectedPlanForService(sid);
-          return {
-            serviceId: sid,
-            serviceName: svc.service_name,
-            planName: plan?.display_name,
-          };
-        });
-        setQueue(savedQueue);
-      }
+      const savedQueue: QueueItem[] = selectedServiceIds.map((sid) => {
+        const svc = services.find((s) => s.service_id === sid)!;
+        const plan = getSelectedPlanForService(sid);
+        return {
+          serviceId: sid,
+          serviceName: svc.service_name,
+          planName: plan?.display_name,
+        };
+      });
+      setQueue(savedQueue);
 
       setSubmitting(false);
       setStep(3);
@@ -364,251 +285,190 @@ export default function OnboardingPage() {
         <button
           type="button"
           onClick={() => setStep(1)}
-          className="text-sm text-muted hover:text-foreground transition-colors"
+          className="inline-flex items-center gap-1.5 text-sm text-muted hover:text-foreground transition-colors"
         >
-          &larr; Back
+          <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+          Back
         </button>
+
         <div>
-          <h1 className="text-4xl font-bold tracking-tight text-foreground mb-3">
+          <h1 className="text-3xl sm:text-4xl font-bold tracking-tight text-white mb-3">
             Add your services
           </h1>
-          <p className="text-muted leading-relaxed text-sm">
-            Select the streaming services you want us to manage.
+          <p className="text-base text-muted leading-relaxed">
+            Select the streaming services you want us to manage, pick your plan, and add your login.
           </p>
         </div>
 
-        {/* Credential mode toggle */}
-        <div className="rounded-lg border border-border bg-surface p-1 flex">
-          <button
-            type="button"
-            onClick={() => setCredentialMode("later")}
-            className={`flex-1 py-2 px-3 rounded-md text-sm font-medium transition-colors ${
-              credentialMode === "later"
-                ? "bg-accent text-background"
-                : "text-muted hover:text-foreground"
-            }`}
-          >
-            Add Credentials Later
-          </button>
-          <button
-            type="button"
-            onClick={() => setCredentialMode("now")}
-            className={`flex-1 py-2 px-3 rounded-md text-sm font-medium transition-colors ${
-              credentialMode === "now"
-                ? "bg-accent text-background"
-                : "text-muted hover:text-foreground"
-            }`}
-          >
-            Add Credentials Now
-          </button>
+        {/* Trust banner */}
+        <div className="flex items-start gap-3 bg-green-500/8 border border-green-500/20 rounded-xl p-4">
+          <svg className="w-4.5 h-4.5 mt-0.5 shrink-0 text-green-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+          <p className="text-sm text-muted leading-relaxed">
+            Your credentials are <span className="text-foreground font-medium">encrypted at rest</span> and only used when you explicitly ask us to act. We never share or access them otherwise.
+          </p>
         </div>
 
-        {credentialMode === "later" ? (
-          <>
-            <p className="text-sm text-muted leading-relaxed">
-              You can add services later from your dashboard.
-            </p>
+        {/* Service cards */}
+        <div className="flex flex-col gap-2.5">
+          {services.map((svc) => {
+            const group = getGroupForService(svc.service_id);
+            const isExpanded = expandedCards.has(svc.service_id);
+            const selectedPlan = getSelectedPlanForService(svc.service_id);
+            const isSelected = !!selectedPlan;
+            const hasCreds = !!(creds[svc.service_id]?.email && creds[svc.service_id]?.password);
 
-            {error && <p className="text-red-400 text-sm">{error}</p>}
-
-            <button
-              type="button"
-              onClick={saveCredentials}
-              disabled={submitting}
-              className="w-full py-3 px-4 rounded-lg font-medium text-sm transition-colors bg-accent text-background hover:bg-accent/90 disabled:bg-accent/20 disabled:text-accent/40 disabled:cursor-not-allowed"
-            >
-              Continue
-            </button>
-          </>
-        ) : (
-          <>
-            {/* Credentials callout */}
-            <div className="border-l-4 border-amber-500 bg-amber-500/[0.08] rounded-r-lg px-5 py-4">
-              <p className="text-amber-200 text-sm font-medium leading-relaxed">
-                Provide the email and password you use to log in to each service. We'll only use them when you explicitly ask us to, otherwise they stay encrypted.
-              </p>
-            </div>
-
-            {/* Same credentials toggle */}
-            <div className="space-y-3">
-              <label className="flex items-center gap-3 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={useSameCreds}
-                  onChange={(e) => setUseSameCreds(e.target.checked)}
-                  className="w-4 h-4 rounded border-border bg-surface text-accent accent-amber-500"
-                />
-                <span className="text-sm text-foreground font-medium">
-                  Use the same credentials for every service
-                </span>
-              </label>
-
-              {useSameCreds && (
-                <div className="grid grid-cols-2 gap-3">
-                  <input
-                    type="email"
-                    value={sharedCreds.email}
-                    onChange={(e) =>
-                      setSharedCreds((prev) => ({ ...prev, email: e.target.value }))
-                    }
-                    placeholder="Login email"
-                    className="py-2.5 px-3 bg-surface border border-border rounded-lg text-foreground placeholder:text-muted/50 text-sm focus:outline-none focus:border-amber-500/60 focus:ring-1 focus:ring-amber-500/20 transition-colors"
-                  />
-                  <div className="relative">
-                    <input
-                      type={showPasswords ? "text" : "password"}
-                      value={sharedCreds.password}
-                      onChange={(e) =>
-                        setSharedCreds((prev) => ({
-                          ...prev,
-                          password: e.target.value,
-                        }))
-                      }
-                      placeholder="Password"
-                      className="w-full py-2.5 px-3 pr-10 bg-surface border border-border rounded-lg text-foreground placeholder:text-muted/50 text-sm focus:outline-none focus:border-amber-500/60 focus:ring-1 focus:ring-amber-500/20 transition-colors"
-                    />
-                    <PasswordToggle visible={showPasswords} onToggle={() => setShowPasswords((p) => !p)} />
+            return (
+              <div
+                key={svc.service_id}
+                className={`border rounded-xl overflow-hidden transition-colors ${
+                  isSelected
+                    ? "border-accent/30"
+                    : "border-border"
+                } ${!isSelected && !isExpanded ? "opacity-70" : ""}`}
+              >
+                {/* Card header */}
+                <button
+                  type="button"
+                  onClick={() => toggleCard(svc.service_id)}
+                  className="flex items-center justify-between w-full px-4 py-3.5 bg-surface hover:bg-surface/80 transition-colors"
+                >
+                  <div className="flex items-center gap-3">
+                    <ServiceIcon serviceId={svc.service_id} />
+                    <span className="font-semibold text-foreground text-base">
+                      {svc.service_name}
+                    </span>
                   </div>
-                </div>
-              )}
-            </div>
-
-            {/* Service accordion */}
-            <div className="space-y-2">
-              {services.map((svc) => {
-                const isSelected = selectedServiceIds.has(svc.service_id);
-                const isExpanded = expandedGroups.has(svc.service_id);
-                const group = getGroupForService(svc.service_id);
-                const selectedPlan = getSelectedPlanForService(svc.service_id);
-                const hasMultiplePlans = group && group.plans.length > 1;
-
-                return (
-                  <div key={svc.service_id}>
-                    {/* Service header */}
-                    <button
-                      type="button"
-                      onClick={() => {
-                        if (hasMultiplePlans) {
-                          toggleAccordion(svc.service_id);
-                        } else {
-                          toggleService(svc.service_id);
-                        }
-                      }}
-                      className={`flex items-center justify-between w-full px-4 py-3 rounded-lg border text-sm transition-colors ${
-                        isSelected
-                          ? "bg-surface border-accent/60"
-                          : "bg-surface border-border hover:border-amber-500/40"
-                      }`}
-                    >
-                      <span className="font-medium text-foreground">
-                        {svc.service_name}
+                  <div className="flex items-center gap-2.5">
+                    {isSelected && selectedPlan ? (
+                      <span className="text-xs text-accent bg-accent/10 px-2.5 py-1 rounded-md font-medium">
+                        {selectedPlan.display_name} &middot; {formatPrice(selectedPlan.monthly_price_cents)}
                       </span>
-                      {isSelected && selectedPlan ? (
-                        <span className="flex items-center gap-2 text-accent text-xs">
-                          {!useSameCreds && (!creds[svc.service_id]?.email || !creds[svc.service_id]?.password) && (
-                            <span className="w-2 h-2 rounded-full bg-amber-500 shrink-0" title="Needs credentials" />
-                          )}
-                          {selectedPlan.display_name} - ${(selectedPlan.monthly_price_cents / 100).toFixed(2)}/mo
-                        </span>
-                      ) : isSelected ? (
-                        <span className="flex items-center gap-2 text-accent text-xs">
-                          {!useSameCreds && (!creds[svc.service_id]?.email || !creds[svc.service_id]?.password) && (
-                            <span className="w-2 h-2 rounded-full bg-amber-500 shrink-0" title="Needs credentials" />
-                          )}
-                          Selected
-                        </span>
-                      ) : hasMultiplePlans ? (
-                        <span className="text-muted/60 text-xs">
-                          {group.plans.length} plans
-                        </span>
-                      ) : null}
-                    </button>
+                    ) : group && group.plans.length > 0 ? (
+                      <span className="text-xs text-muted/50 bg-white/4 px-2.5 py-1 rounded-md">
+                        {group.plans.length} plan{group.plans.length > 1 ? "s" : ""}
+                      </span>
+                    ) : null}
+                    <svg
+                      className={`w-4.5 h-4.5 text-muted/40 transition-transform duration-200 ${
+                        isExpanded ? "rotate-180" : ""
+                      }`}
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    >
+                      <polyline points="6 9 12 15 18 9" />
+                    </svg>
+                  </div>
+                </button>
 
-                    {/* Expanded: plan options */}
-                    {isExpanded && hasMultiplePlans && (
-                      <div className="mt-1 ml-8 space-y-1">
-                        {group.plans.map((plan) => {
-                          const isPlanSelected = selectedPlans[svc.service_id] === plan.id;
-                          return (
-                            <button
-                              key={plan.id}
-                              type="button"
-                              onClick={() => {
-                                if (!isSelected) {
-                                  toggleService(svc.service_id);
-                                }
-                                selectPlan(svc.service_id, plan.id);
-                              }}
-                              className={`w-full flex items-center justify-between py-2 px-3 rounded text-sm border transition-colors ${
-                                isPlanSelected
-                                  ? "bg-accent/10 text-accent border-accent/40"
-                                  : "bg-surface text-muted border-border hover:border-muted"
-                              }`}
-                            >
-                              <span>{plan.display_name}</span>
-                              <span className={isPlanSelected ? "text-accent" : "text-muted/60"}>
-                                ${(plan.monthly_price_cents / 100).toFixed(2)}/mo
-                              </span>
-                            </button>
-                          );
-                        })}
-                      </div>
-                    )}
+                {/* Card body (expanded) */}
+                {isExpanded && group && (
+                  <div className="px-4 pb-4 bg-surface space-y-4">
+                    {/* Plan selector */}
+                    <div className="space-y-1.5">
+                      <span className="text-xs font-semibold text-muted/50 uppercase tracking-wider">
+                        Select your plan
+                      </span>
+                      {group.plans.map((plan) => {
+                        const isPlanSelected = selectedPlans[svc.service_id] === plan.id;
+                        return (
+                          <button
+                            key={plan.id}
+                            type="button"
+                            onClick={() => selectPlan(svc.service_id, plan.id)}
+                            className={`w-full flex items-center justify-between py-2.5 px-3.5 rounded-lg border text-sm transition-colors ${
+                              isPlanSelected
+                                ? "border-accent bg-accent/10"
+                                : "border-border hover:border-white/15"
+                            }`}
+                          >
+                            <span className={isPlanSelected ? "text-foreground" : "text-muted"}>
+                              {plan.display_name}
+                            </span>
+                            <span className={`font-semibold ${isPlanSelected ? "text-accent" : "text-muted/40"}`}>
+                              {formatPrice(plan.monthly_price_cents)}/mo
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
 
-                    {/* Credentials inputs */}
-                    {isSelected && !useSameCreds && (
-                      <div className="grid grid-cols-2 gap-3 mt-1 ml-8 pb-2">
-                        <input
-                          type="email"
-                          value={creds[svc.service_id]?.email ?? ""}
-                          onChange={(e) =>
-                            updateCred(svc.service_id, "email", e.target.value)
-                          }
-                          placeholder="Login email"
-                          className="py-2.5 px-3 bg-surface border border-border rounded-lg text-foreground placeholder:text-muted/50 text-sm focus:outline-none focus:border-amber-500/60 focus:ring-1 focus:ring-amber-500/20 transition-colors"
-                        />
-                        <div className="relative">
+                    {/* Credential fields */}
+                    {isSelected && (
+                      <div className="flex gap-2.5">
+                        <div className="flex-1">
                           <input
-                            type={showPasswords ? "text" : "password"}
-                            value={creds[svc.service_id]?.password ?? ""}
-                            onChange={(e) =>
-                              updateCred(svc.service_id, "password", e.target.value)
-                            }
-                            placeholder="Password"
-                            className="w-full py-2.5 px-3 pr-10 bg-surface border border-border rounded-lg text-foreground placeholder:text-muted/50 text-sm focus:outline-none focus:border-amber-500/60 focus:ring-1 focus:ring-amber-500/20 transition-colors"
+                            type="email"
+                            value={creds[svc.service_id]?.email ?? ""}
+                            onChange={(e) => updateCred(svc.service_id, "email", e.target.value)}
+                            placeholder="Email"
+                            className="w-full py-3 px-3.5 bg-background border border-border rounded-lg text-foreground placeholder:text-muted/40 text-sm focus:outline-none focus:border-accent/50 transition-colors"
                           />
-                          <PasswordToggle visible={showPasswords} onToggle={() => setShowPasswords((p) => !p)} />
+                        </div>
+                        <div className="flex-1 relative">
+                          <input
+                            type={showPasswords[svc.service_id] ? "text" : "password"}
+                            value={creds[svc.service_id]?.password ?? ""}
+                            onChange={(e) => updateCred(svc.service_id, "password", e.target.value)}
+                            placeholder="Password"
+                            className="w-full py-3 px-3.5 pr-10 bg-background border border-border rounded-lg text-foreground placeholder:text-muted/40 text-sm focus:outline-none focus:border-accent/50 transition-colors"
+                          />
+                          <PasswordToggle
+                            visible={!!showPasswords[svc.service_id]}
+                            onToggle={() =>
+                              setShowPasswords((prev) => ({
+                                ...prev,
+                                [svc.service_id]: !prev[svc.service_id],
+                              }))
+                            }
+                          />
                         </div>
                       </div>
                     )}
+
+                    {/* Status indicator */}
+                    {isSelected && hasCreds && (
+                      <p className="text-xs text-green-400/70 flex items-center gap-1.5">
+                        <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+                        Ready
+                      </p>
+                    )}
                   </div>
-                );
-              })}
-            </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
 
-            {error && <p className="text-red-400 text-sm">{error}</p>}
+        {error && <p className="text-red-400 text-sm">{error}</p>}
 
-            <button
-              type="button"
-              onClick={saveCredentials}
-              disabled={submitting || !canSaveStep2}
-              className="w-full py-3 px-4 rounded-lg font-medium text-sm transition-colors bg-accent text-background hover:bg-accent/90 disabled:bg-accent/20 disabled:text-accent/40 disabled:cursor-not-allowed"
-            >
-              {submitting ? "Saving..." : selectedIds.length === 0 ? "Skip for now" : "Save credentials"}
-            </button>
+        <button
+          type="button"
+          onClick={saveCredentials}
+          disabled={submitting || !canSaveStep2}
+          className="w-full py-4 px-4 bg-accent text-background font-semibold text-base rounded-xl hover:shadow-[0_6px_24px_rgba(245,158,11,0.3)] hover:-translate-y-px active:translate-y-0 transition-all disabled:opacity-30 disabled:hover:shadow-none disabled:hover:translate-y-0 disabled:cursor-not-allowed"
+        >
+          {submitting ? "Saving..." : selectedServiceIds.length === 0 ? "Skip for now" : (
+            <span className="inline-flex items-center justify-center gap-2">
+              <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+              Save credentials
+            </span>
+          )}
+        </button>
 
-            {selectedIds.length === 0 && (
-              <p className="text-xs text-muted/60 text-center -mt-3">
-                You can add services later from your dashboard.
-              </p>
-            )}
+        {selectedServiceIds.length === 0 && (
+          <p className="text-xs text-muted/50 text-center -mt-3">
+            You can add services later from your dashboard.
+          </p>
+        )}
 
-            {selectedIds.length > 0 && !canSaveStep2 && (
-              <p className="text-xs text-muted/60 text-center -mt-3">
-                Provide credentials for each selected service to continue.
-              </p>
-            )}
-          </>
+        {selectedServiceIds.length > 0 && !canSaveStep2 && (
+          <p className="text-xs text-muted/50 text-center -mt-3">
+            Provide credentials for each selected service to continue.
+          </p>
         )}
       </div>
     );
@@ -690,24 +550,36 @@ export default function OnboardingPage() {
     const hasQueue = queue.length > 1;
 
     return (
-      <div className="space-y-8">
+      <div className="space-y-6">
         <button
           type="button"
           onClick={() => setStep(2)}
-          className="text-sm text-muted hover:text-foreground transition-colors"
+          className="inline-flex items-center gap-1.5 text-sm text-muted hover:text-foreground transition-colors"
         >
-          &larr; Back
+          <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+          Back
         </button>
+
         <div>
-          <h1 className="text-4xl font-bold tracking-tight text-foreground mb-4">
+          <h1 className="text-3xl sm:text-4xl font-bold tracking-tight text-white mb-3">
             {hasQueue ? "Arrange your queue" : "Your queue"}
           </h1>
-          <p className="text-muted leading-relaxed text-sm">
+          <p className="text-base text-muted leading-relaxed">
             {hasQueue
-              ? "When you cancel one service, we suggest resuming the next one in line. Drag to set the order."
+              ? "Set the order you'd like to rotate through your services. Drag to reorder."
               : "When you cancel a service, we suggest resuming the next one in your queue. Add services from your dashboard and arrange them in the order you want us to follow."}
           </p>
         </div>
+
+        {/* How it works explainer */}
+        {hasQueue && (
+          <div className="flex items-start gap-3.5 bg-accent/10 border border-accent/30 rounded-xl p-4">
+            <svg className="w-5 h-5 mt-0.5 shrink-0 text-accent opacity-80" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>
+            <p className="text-sm text-muted leading-relaxed">
+              <span className="text-foreground font-medium">How this works:</span> When you cancel a service, we&apos;ll suggest resuming the next one in line, so you always have something to watch without paying for everything at once.
+            </p>
+          </div>
+        )}
 
         {hasQueue ? (
           <>
@@ -720,7 +592,7 @@ export default function OnboardingPage() {
                 items={queue.map((q) => q.serviceId)}
                 strategy={verticalListSortingStrategy}
               >
-                <div className="space-y-2">
+                <div className="space-y-2.5">
                   {queue.map((item, index) => (
                     <SortableItem
                       key={item.serviceId}
@@ -736,28 +608,46 @@ export default function OnboardingPage() {
                         if (index === queue.length - 1) return;
                         setQueue((prev) => arrayMove(prev, index, index + 1));
                       }}
+                      statusBadge={
+                        index === 0 ? (
+                          <span className="text-xs font-semibold uppercase tracking-wider px-2 py-0.5 rounded-md bg-green-500/12 text-green-400">
+                            Active
+                          </span>
+                        ) : index === 1 ? (
+                          <span className="text-xs font-semibold uppercase tracking-wider px-2 py-0.5 rounded-md bg-white/5 text-muted/50">
+                            Next up
+                          </span>
+                        ) : (
+                          <span className="text-xs font-semibold uppercase tracking-wider px-2 py-0.5 rounded-md bg-white/5 text-muted/50">
+                            Queued
+                          </span>
+                        )
+                      }
                     />
                   ))}
                 </div>
               </SortableContext>
             </DndContext>
 
-            <p className="text-xs text-muted/60">
-              You can reorder this anytime from the dashboard.
+            <p className="text-xs text-muted/50">
+              You can reorder this anytime from your dashboard.
             </p>
           </>
         ) : queue.length === 1 ? (
-          <div className="border border-border rounded-lg px-4 py-3 bg-surface">
+          <div className="border border-border rounded-xl px-4 py-3 bg-surface">
             <span className="text-sm text-foreground font-medium">{queue[0].serviceName}</span>
             {queue[0].planName && (
               <span className="text-xs text-muted ml-2">{queue[0].planName}</span>
             )}
           </div>
         ) : (
-          <div className="border border-dashed border-border rounded-lg px-4 py-6 text-center">
+          <div className="border border-dashed border-border rounded-xl px-4 py-6 text-center">
             <p className="text-sm text-muted">No services added yet.</p>
           </div>
         )}
+
+        {/* Divider */}
+        <div className="h-px bg-border" />
 
         {/* Authorization */}
         <label className="flex items-start gap-3 cursor-pointer">
@@ -765,12 +655,11 @@ export default function OnboardingPage() {
             type="checkbox"
             checked={authorized}
             onChange={(e) => setAuthorized(e.target.checked)}
-            className="w-4 h-4 mt-0.5 rounded border-border bg-surface text-accent accent-amber-500"
+            className="mt-0.5 w-5 h-5 rounded-md border-2 border-white/20 bg-transparent appearance-none checked:bg-accent checked:border-accent cursor-pointer shrink-0 relative
+              after:content-[''] after:absolute after:left-[5px] after:top-[1px] after:w-[6px] after:h-[11px] after:border-background after:border-r-[2.5px] after:border-b-[2.5px] after:rotate-45 after:opacity-0 checked:after:opacity-100"
           />
-          <span className="text-sm text-foreground leading-relaxed">
-            I authorize UnsaltedButter to act on my behalf, including
-            cancelling and resuming subscriptions using
-            the credentials I provided.
+          <span className="text-sm text-muted leading-relaxed">
+            I authorize <span className="text-foreground font-medium">UnsaltedButter</span> to act on my behalf, including cancelling and resuming subscriptions using the credentials I provided.
           </span>
         </label>
 
@@ -780,7 +669,7 @@ export default function OnboardingPage() {
           type="button"
           onClick={handleFinish}
           disabled={submitting || !authorized}
-          className="w-full py-3 px-4 bg-accent text-background font-semibold rounded hover:bg-accent/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          className="w-full py-4 px-4 bg-accent text-background font-semibold text-base rounded-xl hover:shadow-[0_6px_24px_rgba(245,158,11,0.3)] hover:-translate-y-px active:translate-y-0 transition-all disabled:opacity-30 disabled:hover:shadow-none disabled:hover:translate-y-0 disabled:cursor-not-allowed"
         >
           {submitting ? "Finishing..." : "Authorize & finish"}
         </button>
@@ -790,7 +679,7 @@ export default function OnboardingPage() {
 
   return (
     <main className="min-h-screen bg-background">
-      <div className="max-w-lg mx-auto px-4 py-12">
+      <div className="max-w-md mx-auto px-5 py-12">
         <StepIndicator current={step} />
         {step === 1 && renderStep1()}
         {step === 2 && renderStep2()}

@@ -627,12 +627,14 @@ async def test_result_success_cancel(deps):
     assert job["amount_sats"] == 3000
     assert job["access_end_date"] == "2026-03-15"
 
-    # User got two DMs: success + invoice
-    assert send_dm.await_count == 2
+    # User got three DMs: success + invoice intro + bolt11
+    assert send_dm.await_count == 3
     success_msg = send_dm.call_args_list[0][0][1]
-    invoice_msg = send_dm.call_args_list[1][0][1]
+    invoice_intro = send_dm.call_args_list[1][0][1]
+    bolt11_msg = send_dm.call_args_list[2][0][1]
     assert "cancelled" in success_msg.lower() or "Netflix" in success_msg
-    assert "3,000" in invoice_msg or "lnbc" in invoice_msg
+    assert "3,000" in invoice_intro
+    assert "lnbc" in bolt11_msg
 
 
 @pytest.mark.asyncio

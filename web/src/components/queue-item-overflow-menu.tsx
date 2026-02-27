@@ -4,16 +4,12 @@ import { useState, useEffect, useRef } from "react";
 
 interface QueueItemOverflowMenuProps {
   onUpdateCredentials: () => void;
-  onRequestCancel: () => void;
-  onRequestResume: () => void;
   onRemoveService?: () => void;
   hasActiveJob: boolean;
 }
 
 export function QueueItemOverflowMenu({
   onUpdateCredentials,
-  onRequestCancel,
-  onRequestResume,
   onRemoveService,
   hasActiveJob,
 }: QueueItemOverflowMenuProps) {
@@ -73,26 +69,8 @@ export function QueueItemOverflowMenu({
             onClick={() => handleAction(onUpdateCredentials)}
             className="w-full text-left px-3 py-2 text-sm text-foreground hover:bg-border/30 transition-colors"
           >
-            Update credentials
+            Change credentials
           </button>
-          {!hasActiveJob && (
-            <>
-              <button
-                type="button"
-                onClick={() => handleAction(onRequestCancel)}
-                className="w-full text-left px-3 py-2 text-sm text-amber-400 hover:bg-border/30 transition-colors"
-              >
-                Request cancel
-              </button>
-              <button
-                type="button"
-                onClick={() => handleAction(onRequestResume)}
-                className="w-full text-left px-3 py-2 text-sm text-blue-400 hover:bg-border/30 transition-colors"
-              >
-                Request resume
-              </button>
-            </>
-          )}
           {onRemoveService && !hasActiveJob && (
             <>
               <div className="border-t border-border my-1" />
