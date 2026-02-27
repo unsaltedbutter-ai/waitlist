@@ -661,6 +661,16 @@ class VLMExecutor:
                 text_to_type = response.get('text_to_type', '')
                 key_to_press = response.get('key_to_press', '')
 
+                # The VLM returns a "completed" boolean indicating whether
+                # the cancel/resume already succeeded. Smaller models may
+                # still pick a click action (e.g. survey "Done" button)
+                # even when they correctly identify completion. Trust the
+                # structured boolean over the action choice.
+                if response.get('completed') and vlm_action != 'done':
+                    log.info('Job %s: VLM reported completed=true but action=%s, overriding to done',
+                             job_id, vlm_action)
+                    vlm_action = 'done'
+
                 if vlm_action == 'done':
                     billing_date = response.get('billing_end_date')
                     log.info('Job %s: flow complete (billing_date=%s)',
@@ -890,14 +900,7 @@ class VLMExecutor:
         button_pt = scale(response.get('button_point'))
         profile_pt = scale(response.get('profile_point'))
 
-        # Scale code_points list
-        raw_code_points = response.get('code_points') or []
-        code_points = []
-        for cp in raw_code_points:
-            if isinstance(cp, dict) and cp.get('point'):
-                scaled_pt = scale(cp['point'])
-                if scaled_pt:
-                    code_points.append({'label': cp.get('label', ''), 'point': scaled_pt})
+        code_pt = scale(response.get('code_point'))
 
         log.debug('Sign-in page_type=%s, email=%s, pass=%s, button=%s',
                   page_type, email_pt, password_pt, button_pt)
@@ -919,8 +922,9 @@ class VLMExecutor:
             return 'need_human'
 
         # Code entry: request OTP OUTSIDE gui_lock, then enter code inside lock
-        if page_type in ('email_code_single', 'email_code_multi',
-                         'phone_code_single', 'phone_code_multi'):
+        if page_type in ('verification_code', 'email_code_single',
+                         'email_code_multi', 'phone_code_single',
+                         'phone_code_multi'):
             # OTP wait: no GUI lock held (other jobs can use GUI freely)
             code = self._request_otp(job_id, service)
             if not code:
@@ -931,9 +935,8 @@ class VLMExecutor:
                 focus_window_by_pid(session.pid)
                 _clipboard_copy(code)
 
-                if code_points:
-                    pt = code_points[0]['point']
-                    _click_bbox(pt, session, chrome_offset=chrome_offset)
+                if code_pt:
+                    _click_bbox(code_pt, session, chrome_offset=chrome_offset)
                     time.sleep(0.5)
                 keyboard.hotkey('command', 'v')
                 time.sleep(0.3)
