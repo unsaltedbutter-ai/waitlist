@@ -216,12 +216,17 @@ class CommandRouter:
         data = result["data"]
 
         if status_code == 200:
+            job_id = data.get("job_id")
             queue_pos = data.get("queue_position", 1)
             if queue_pos <= 1:
                 await self._send_dm(
                     sender_npub,
                     messages.action_starting(service_id, action),
                 )
+                # Skip outreach: user just asked for this, go straight
+                # to execution after poll_and_claim claims the job.
+                if job_id:
+                    self._job_manager.mark_immediate(job_id)
             else:
                 await self._send_dm(
                     sender_npub,

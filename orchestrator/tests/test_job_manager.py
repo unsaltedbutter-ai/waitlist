@@ -505,10 +505,10 @@ async def test_request_dispatch_no_slot_queues(deps):
     # Added to dispatch queue
     assert "job-1" in jm._dispatch_queue
 
-    # User was told they're queued
+    # User was told they're queued (ETA message)
     send_dm.assert_awaited_once()
     msg = send_dm.call_args[0][1]
-    assert "queued" in msg.lower()
+    assert "minutes" in msg.lower()
 
 
 @pytest.mark.asyncio
@@ -1011,6 +1011,48 @@ async def test_send_outreach_job_not_found(deps):
     await jm.send_outreach("nonexistent")
 
     send_dm.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_send_outreach_immediate_bypasses_outreach(deps):
+    """Jobs marked immediate skip outreach and dispatch directly."""
+    jm = deps["jm"]
+    session = deps["session"]
+    db = deps["db"]
+    send_dm = deps["send_dm"]
+
+    job = _make_job()
+    await db.upsert_job(job)
+
+    jm.mark_immediate("job-1")
+    await jm.send_outreach("job-1")
+
+    # No outreach DM sent
+    send_dm.assert_not_awaited()
+    # Dispatched directly via handle_yes
+    session.handle_yes.assert_awaited_once_with("npub1alice", "job-1")
+
+
+@pytest.mark.asyncio
+async def test_send_outreach_non_immediate_sends_outreach(deps):
+    """Jobs NOT marked immediate go through normal outreach."""
+    jm = deps["jm"]
+    session = deps["session"]
+    db = deps["db"]
+    api = deps["api"]
+    send_dm = deps["send_dm"]
+
+    job = _make_job(billing_date=None)
+    await db.upsert_job(job)
+    api.get_user.return_value = {"debt_sats": 0}
+    api.update_job_status.return_value = {"job": job}
+
+    await jm.send_outreach("job-1")
+
+    # Normal outreach DM sent
+    send_dm.assert_awaited_once()
+    # handle_yes NOT called
+    session.handle_yes.assert_not_awaited()
 
 
 # ------------------------------------------------------------------

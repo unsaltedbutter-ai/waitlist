@@ -67,6 +67,7 @@ class JobManager:
         self._send_dm = send_dm
         self._dispatch_queue: list[str] = []  # job IDs waiting for an agent slot
         self._active_agent_jobs: set[str] = set()  # job IDs currently on the agent
+        self._immediate_jobs: set[str] = set()  # on-demand jobs that skip outreach
         # Lock protecting _dispatch_queue and _active_agent_jobs. Without this,
         # two concurrent request_dispatch calls could both see a slot available,
         # both add to _active_agent_jobs, and exceed max_concurrent_agent_jobs.
@@ -118,6 +119,10 @@ class JobManager:
 
         return claimed_jobs
 
+    def mark_immediate(self, job_id: str) -> None:
+        """Flag an on-demand job to skip outreach and dispatch immediately."""
+        self._immediate_jobs.add(job_id)
+
     # ------------------------------------------------------------------
     # Outreach
     # ------------------------------------------------------------------
@@ -128,6 +133,19 @@ class JobManager:
         Checks user busy state and debt before sending. Selects the
         appropriate message template based on action and outreach count.
         """
+        # On-demand immediate: skip outreach, dispatch directly
+        if job_id in self._immediate_jobs:
+            self._immediate_jobs.discard(job_id)
+            job = await self._db.get_job(job_id)
+            if job:
+                log.info(
+                    "send_outreach: immediate dispatch for job %s, "
+                    "skipping outreach",
+                    job_id,
+                )
+                await self._session.handle_yes(job["user_npub"], job_id)
+            return
+
         job = await self._db.get_job(job_id)
         if job is None:
             log.warning("send_outreach: job %s not found locally", job_id)
