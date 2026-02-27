@@ -463,6 +463,25 @@ class VLMExecutor:
                         # Phase 2 [no lock]: Settle delay
                         time.sleep(self.settle_delay)
 
+                        # After profile selection, jump to account page
+                        # instead of making the VLM find the account icon.
+                        if (pa_type == 'click'
+                                and pending_action.get('is_profile_click')
+                                and not used_account_fallback):
+                            account_url = ACCOUNT_URLS.get(service)
+                            if account_url:
+                                time.sleep(self.settle_delay)
+                                browser.navigate(session, account_url)
+                                zoom = ACCOUNT_ZOOM_STEPS.get(
+                                    service, ACCOUNT_ZOOM_DEFAULT)
+                                if zoom:
+                                    browser.zoom_out(session, steps=zoom)
+                                used_account_fallback = True
+                                step_count += 1
+                                last_click_screen_bbox = None
+                                log.info('Job %s: post-profile jump to %s',
+                                         job_id, account_url)
+
                     pending_action = None
 
                 # -------------------------------------------------------
@@ -768,6 +787,10 @@ class VLMExecutor:
                         'bbox': scaled_pt,
                         'chrome_offset': chrome_height_px,
                         'auto_value': auto_value,
+                        'is_profile_click': (
+                            'profile' in target_desc.lower()
+                            and 'add' not in target_desc.lower()
+                        ),
                     }
 
                 elif vlm_action == 'type_text':
