@@ -17,10 +17,13 @@ from agent.vlm_executor import (
     _restore_cursor,
 )
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+# Re-export conftest helper for local use (conftest can't be imported directly)
+from agent.tests.conftest import make_mock_session as _make_session
+
 
 def _make_vlm(responses: list[dict]) -> MagicMock:
     """Create a mock VLMClient that returns canned responses in order.
@@ -31,16 +34,6 @@ def _make_vlm(responses: list[dict]) -> MagicMock:
     vlm.analyze = MagicMock(side_effect=[(r, 1.0) for r in responses])
     vlm.last_inference_ms = 100
     return vlm
-
-
-def _make_session():
-    """Create a mock BrowserSession."""
-    session = MagicMock()
-    session.pid = 12345
-    session.window_id = 42
-    session.bounds = {'x': 0, 'y': 0, 'width': 1280, 'height': 900}
-    session.profile_dir = '/tmp/ub-chrome-test'
-    return session
 
 
 # Common response dicts
@@ -125,32 +118,9 @@ CREDENTIAL_ERROR_PAGE = {
 # ---------------------------------------------------------------------------
 
 @pytest.fixture(autouse=True)
-def _mock_system(monkeypatch):
+def _mock_system(mock_vlm_system):
     """Mock all system interactions: browser, screenshots, input, time.sleep."""
-    session = _make_session()
-
-    monkeypatch.setattr('agent.vlm_executor.browser.create_session', lambda: session)
-    monkeypatch.setattr('agent.vlm_executor.browser.navigate', lambda *a, **kw: None)
-    monkeypatch.setattr('agent.vlm_executor.browser.get_session_window', lambda s: s.bounds)
-    monkeypatch.setattr('agent.vlm_executor.browser.close_session', lambda s: None)
-    monkeypatch.setattr('agent.vlm_executor.ss.capture_to_base64', lambda wid: 'AAAA')
-    monkeypatch.setattr('agent.vlm_executor.crop_browser_chrome', lambda b64: (b64, 88))
-    monkeypatch.setattr('agent.vlm_executor.mouse.click', lambda x, y, fast=False: None)
-    monkeypatch.setattr('agent.vlm_executor.mouse.move_to', lambda x, y, fast=False: None)
-    # Default cursor inside typical test bboxes so restore doesn't fire unexpectedly
-    monkeypatch.setattr('agent.vlm_executor.mouse.position', lambda: (200, 225))
-    monkeypatch.setattr('agent.vlm_executor.keyboard.hotkey', lambda *a: None)
-    monkeypatch.setattr('agent.vlm_executor.keyboard.press_key', lambda k: None)
-    monkeypatch.setattr('agent.vlm_executor.keyboard.type_text', lambda *a, **kw: None)
-    monkeypatch.setattr('agent.vlm_executor.scroll_mod.scroll', lambda d, c: None)
-    monkeypatch.setattr('agent.vlm_executor.coords.image_to_screen',
-                        lambda x, y, bounds, chrome_offset=0: (x, y))
-    monkeypatch.setattr('agent.vlm_executor.focus_window_by_pid', lambda pid: None)
-    monkeypatch.setattr('agent.vlm_executor._clipboard_copy', lambda t: None)
-    monkeypatch.setattr('agent.vlm_executor.time.sleep', lambda s: None)
-    monkeypatch.setattr('agent.vlm_executor.random.gauss', lambda mu, sigma: mu)
-    monkeypatch.setattr('agent.vlm_executor.random.uniform', lambda a, b: a)
-    monkeypatch.setattr('agent.vlm_executor.random.random', lambda: 0.5)  # >0.4 = type, not paste
+    pass
 
 
 # ---------------------------------------------------------------------------
@@ -1368,3 +1338,106 @@ class TestAccountNavigation:
         """SERVICE_URLS and ACCOUNT_URLS cover the same set of services."""
         from agent.config import ACCOUNT_URLS, SERVICE_URLS
         assert set(SERVICE_URLS.keys()) == set(ACCOUNT_URLS.keys())
+
+
+# ---------------------------------------------------------------------------
+# completed=true override tests
+# ---------------------------------------------------------------------------
+
+class TestCompletedOverride:
+    def test_completed_true_overrides_click_to_done(self):
+        """VLM says completed=true + action=click: executor overrides to done."""
+        completed_click = {
+            'state': 'confirmation',
+            'action': 'click',
+            'completed': True,
+            'target_description': 'Done button',
+            'click_point': [500, 300],
+            'billing_end_date': '2026-03-15',
+        }
+        vlm = _make_vlm([SIGNED_IN, completed_click])
+        executor = VLMExecutor(vlm, settle_delay=0)
+        result = executor.run('netflix', 'cancel', {'email': 'a', 'pass': 'b'})
+        assert result.success is True
+        assert result.billing_date == '2026-03-15'
+
+
+# ---------------------------------------------------------------------------
+# Profile click post-navigation tests (Disney+ fix)
+# ---------------------------------------------------------------------------
+
+class TestProfileClickNavigation:
+    def test_profile_click_triggers_account_url_navigation(self, monkeypatch):
+        """After clicking a profile avatar, executor navigates to account URL."""
+        nav_calls = []
+        monkeypatch.setattr('agent.vlm_executor.browser.navigate',
+                            lambda s, url, **kw: nav_calls.append(url))
+
+        profile_click = {
+            'state': 'home page',
+            'action': 'click',
+            'target_description': 'leftmost profile avatar',
+            'click_point': [200, 300],
+        }
+        vlm = _make_vlm([SIGNED_IN, profile_click, CANCEL_DONE])
+        executor = VLMExecutor(vlm, settle_delay=0)
+        # disney_plus has ACCOUNT_URL_JUMP=False, so post-sign-in jump is skipped,
+        # but the profile click path still triggers the account URL navigation.
+        result = executor.run('disney_plus', 'cancel', {'email': 'a', 'pass': 'b'})
+        assert result.success
+        from agent.config import ACCOUNT_URLS
+        account_url = ACCOUNT_URLS['disney_plus']
+        assert account_url in nav_calls
+
+
+# ---------------------------------------------------------------------------
+# Consecutive VLM error abort tests
+# ---------------------------------------------------------------------------
+
+class TestConsecutiveVLMErrors:
+    def test_three_consecutive_vlm_errors_abort(self):
+        """3 consecutive VLM inference errors cause abort with unparseable message."""
+        vlm = MagicMock()
+        vlm.analyze = MagicMock(side_effect=[
+            (SIGNED_IN, 1.0),
+            RuntimeError('API timeout'),
+            RuntimeError('API timeout'),
+            RuntimeError('API timeout'),
+        ])
+        vlm.last_inference_ms = 100
+        vlm.last_sent_image_b64 = ''
+        executor = VLMExecutor(vlm, settle_delay=0)
+        result = executor.run('netflix', 'cancel', {'email': 'a', 'pass': 'b'})
+        assert result.success is False
+        assert 'unparseable' in result.error_message.lower()
+
+
+# ---------------------------------------------------------------------------
+# Paste code path tests
+# ---------------------------------------------------------------------------
+
+class TestPasteCodePath:
+    def test_paste_path_uses_clipboard(self, monkeypatch):
+        """random.random < 0.4 triggers paste via clipboard instead of typing."""
+        # Override random.random to trigger paste path
+        monkeypatch.setattr('agent.vlm_executor.random.random', lambda: 0.3)
+
+        clipboard_calls = []
+        monkeypatch.setattr('agent.vlm_executor._clipboard_copy',
+                            lambda t: clipboard_calls.append(t))
+
+        hotkey_calls = []
+        monkeypatch.setattr('agent.vlm_executor.keyboard.hotkey',
+                            lambda *a: hotkey_calls.append(a))
+
+        vlm = _make_vlm([USER_PASS_PAGE, SIGNED_IN, CANCEL_DONE])
+        executor = VLMExecutor(vlm, settle_delay=0)
+        result = executor.run('netflix', 'cancel',
+                              {'email': 'test@x.com', 'pass': 's3cret'})
+        assert result.success
+
+        # Email should have been pasted via clipboard
+        assert 'test@x.com' in clipboard_calls
+        # Verify Cmd+V was called (paste hotkey)
+        paste_calls = [c for c in hotkey_calls if c == ('command', 'v')]
+        assert len(paste_calls) >= 1

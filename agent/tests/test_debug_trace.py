@@ -246,36 +246,12 @@ class TestDebugTraceVLMIntegration:
     """Verify DebugTrace is wired into VLMExecutor correctly."""
 
     @pytest.fixture(autouse=True)
-    def _mock_system(self, monkeypatch, tmp_path):
+    def _mock_system(self, mock_vlm_system, monkeypatch, tmp_path):
         """Mock all system interactions for VLMExecutor tests."""
         self.tmp_path = tmp_path
-        session = MagicMock()
-        session.pid = 12345
-        session.window_id = 42
-        session.bounds = {'x': 0, 'y': 0, 'width': 1280, 'height': 900}
-        session.profile_dir = '/tmp/ub-chrome-test'
-
-        monkeypatch.setattr('agent.vlm_executor.browser.create_session', lambda: session)
-        monkeypatch.setattr('agent.vlm_executor.browser.navigate', lambda *a, **kw: None)
-        monkeypatch.setattr('agent.vlm_executor.browser.get_session_window', lambda s: s.bounds)
-        monkeypatch.setattr('agent.vlm_executor.browser.close_session', lambda s: None)
-        monkeypatch.setattr('agent.vlm_executor.ss.capture_to_base64', lambda wid: _TINY_PNG)
-        monkeypatch.setattr('agent.vlm_executor.crop_browser_chrome', lambda b64: (b64, 88))
-        monkeypatch.setattr('agent.vlm_executor.mouse.click', lambda x, y, fast=False: None)
-        monkeypatch.setattr('agent.vlm_executor.mouse.move_to', lambda x, y, fast=False: None)
-        monkeypatch.setattr('agent.vlm_executor.keyboard.hotkey', lambda *a: None)
-        monkeypatch.setattr('agent.vlm_executor.keyboard.press_key', lambda k: None)
-        monkeypatch.setattr('agent.vlm_executor.keyboard.type_text', lambda *a, **kw: None)
-        monkeypatch.setattr('agent.vlm_executor.scroll_mod.scroll', lambda d, c: None)
-        monkeypatch.setattr('agent.vlm_executor.coords.image_to_screen',
-                            lambda x, y, bounds, chrome_offset=0: (x, y))
-        monkeypatch.setattr('agent.vlm_executor.focus_window_by_pid', lambda pid: None)
-        monkeypatch.setattr('agent.vlm_executor._clipboard_copy', lambda t: None)
-        monkeypatch.setattr('agent.vlm_executor.time.sleep', lambda s: None)
-        monkeypatch.setattr('agent.vlm_executor.random.gauss', lambda mu, sigma: mu)
-        monkeypatch.setattr('agent.vlm_executor.random.uniform', lambda a, b: a)
-        monkeypatch.setattr('agent.vlm_executor.random.random', lambda: 0.5)
-
+        # Override screenshot to use a real tiny PNG (debug trace saves it)
+        monkeypatch.setattr('agent.vlm_executor.ss.capture_to_base64',
+                            lambda wid: _TINY_PNG)
         # Redirect debug trace to tmp_path
         monkeypatch.setattr('agent.debug_trace.DEFAULT_DEBUG_DIR', str(tmp_path))
         monkeypatch.setattr('agent.vlm_executor.DebugTrace.prune_old',

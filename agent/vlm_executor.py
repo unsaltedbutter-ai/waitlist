@@ -38,6 +38,7 @@ from agent import screenshot as ss
 from agent.config import (
     ACCOUNT_URL_JUMP, ACCOUNT_URLS, ACCOUNT_ZOOM_DEFAULT,
     ACCOUNT_ZOOM_STEPS, PRE_LOGIN_SCROLL, SERVICE_URLS,
+    TOTAL_EXECUTION_TIMEOUT,
 )
 from agent.debug_trace import DebugTrace
 from agent.gui_lock import gui_lock
@@ -195,6 +196,30 @@ def _infer_credential_from_target(target_desc: str) -> str | None:
     return None
 
 
+def _random_point_in_bbox(x1, y1, x2, y2):
+    """Pick a center-biased Gaussian point inside a 10%-inset safe area."""
+    bw = x2 - x1
+    bh = y2 - y1
+    inset_x = bw * 0.10
+    inset_y = bh * 0.10
+    safe_x1 = x1 + inset_x
+    safe_y1 = y1 + inset_y
+    safe_x2 = x2 - inset_x
+    safe_y2 = y2 - inset_y
+    rx = (safe_x1 + safe_x2) / 2 + random.gauss(0, bw * 0.10)
+    ry = (safe_y1 + safe_y2) / 2 + random.gauss(0, bh * 0.10)
+    rx = max(safe_x1, min(rx, safe_x2))
+    ry = max(safe_y1, min(ry, safe_y2))
+    return rx, ry
+
+
+def _zero_credentials(credentials: dict) -> None:
+    """Overwrite credential values with null bytes and clear the dict."""
+    for key in list(credentials.keys()):
+        credentials[key] = '\x00' * len(credentials[key])
+    credentials.clear()
+
+
 def _click_bbox(bbox, session, chrome_offset: int = 0) -> None:
     """Click inside a bbox with inset and center-biased Gaussian randomization.
 
@@ -206,18 +231,7 @@ def _click_bbox(bbox, session, chrome_offset: int = 0) -> None:
         cx = bbox[0] + random.gauss(0, 4)
         cy = bbox[1] + random.gauss(0, 4)
     elif len(bbox) >= 4:
-        bw = bbox[2] - bbox[0]
-        bh = bbox[3] - bbox[1]
-        inset_x = bw * 0.10
-        inset_y = bh * 0.10
-        safe_x1 = bbox[0] + inset_x
-        safe_y1 = bbox[1] + inset_y
-        safe_x2 = bbox[2] - inset_x
-        safe_y2 = bbox[3] - inset_y
-        cx = (safe_x1 + safe_x2) / 2 + random.gauss(0, bw * 0.10)
-        cy = (safe_y1 + safe_y2) / 2 + random.gauss(0, bh * 0.10)
-        cx = max(safe_x1, min(cx, safe_x2))
-        cy = max(safe_y1, min(cy, safe_y2))
+        cx, cy = _random_point_in_bbox(bbox[0], bbox[1], bbox[2], bbox[3])
     else:
         raise ValueError(f'bbox must have 2 or 4 elements, got {len(bbox)}')
 
@@ -263,18 +277,7 @@ def _restore_cursor(screen_bbox, session) -> bool:
         return False
 
     focus_window_by_pid(session.pid)
-    bw = x2 - x1
-    bh = y2 - y1
-    inset_x = bw * 0.10
-    inset_y = bh * 0.10
-    safe_x1 = x1 + inset_x
-    safe_y1 = y1 + inset_y
-    safe_x2 = x2 - inset_x
-    safe_y2 = y2 - inset_y
-    rx = (safe_x1 + safe_x2) / 2 + random.gauss(0, bw * 0.10)
-    ry = (safe_y1 + safe_y2) / 2 + random.gauss(0, bh * 0.10)
-    rx = max(safe_x1, min(rx, safe_x2))
-    ry = max(safe_y1, min(ry, safe_y2))
+    rx, ry = _random_point_in_bbox(x1, y1, x2, y2)
     mouse.move_to(int(rx), int(ry))
     return True
 
@@ -342,26 +345,31 @@ class VLMExecutor:
         Returns:
             ExecutionResult with success/failure, duration, billing_date, etc.
         """
-        if service not in SERVICE_URLS:
+        t0 = time.monotonic()
+        inference_count = 0
+        step_count = 0
+
+        def _result(success: bool, error_message: str = '', **kw) -> ExecutionResult:
             return ExecutionResult(
                 job_id=job_id,
                 service=service,
                 flow=action,
-                success=False,
-                duration_seconds=0.0,
-                step_count=0,
-                inference_count=0,
+                success=success,
+                duration_seconds=time.monotonic() - t0,
+                step_count=step_count,
+                inference_count=inference_count,
                 playbook_version=0,
-                error_message=f'Unknown service: {service}',
+                error_message=error_message,
+                **kw,
             )
+
+        if service not in SERVICE_URLS:
+            return _result(False, f'Unknown service: {service}')
 
         DebugTrace.prune_old()
 
         start_url = SERVICE_URLS[service]
-        t0 = time.monotonic()
         session = None
-        inference_count = 0
-        step_count = 0
         billing_date = None
         error_message = ''
         trace = DebugTrace(job_id, enabled=self._debug and bool(job_id))
@@ -394,17 +402,7 @@ class VLMExecutor:
                 prompts.append(build_resume_prompt(service, plan_tier))
                 labels.append('resume')
             else:
-                return ExecutionResult(
-                    job_id=job_id,
-                    service=service,
-                    flow=action,
-                    success=False,
-                    duration_seconds=time.monotonic() - t0,
-                    step_count=step_count,
-                    inference_count=inference_count,
-                    playbook_version=0,
-                    error_message=f'Unknown action: {action}',
-                )
+                return _result(False, f'Unknown action: {action}')
 
             prompt_idx = 0
             stuck = _StuckDetector()
@@ -415,6 +413,12 @@ class VLMExecutor:
             consecutive_vlm_errors = 0
 
             for iteration in range(self.max_steps):
+                # Wall-clock timeout guard
+                if time.monotonic() - t0 > TOTAL_EXECUTION_TIMEOUT:
+                    error_message = f'Total execution timeout ({TOTAL_EXECUTION_TIMEOUT}s) exceeded'
+                    log.warning('Job %s: %s', job_id, error_message)
+                    return _result(False, error_message)
+
                 # -------------------------------------------------------
                 # Phase 1 [lock]: Execute pending action from previous
                 # iteration. Restore cursor first so hover menus survive.
@@ -502,17 +506,7 @@ class VLMExecutor:
                 except RuntimeError as exc:
                     error_message = f'Chrome window lost: {exc}'
                     log.warning('Job %s: %s', job_id, error_message)
-                    return ExecutionResult(
-                        job_id=job_id,
-                        service=service,
-                        flow=action,
-                        success=False,
-                        duration_seconds=time.monotonic() - t0,
-                        step_count=step_count,
-                        inference_count=inference_count,
-                        playbook_version=0,
-                        error_message=error_message,
-                    )
+                    return _result(False, error_message)
 
                 screenshot_b64, chrome_height_px = crop_browser_chrome(raw_b64)
 
@@ -542,17 +536,7 @@ class VLMExecutor:
                     if consecutive_vlm_errors >= 3:
                         error_message = f'VLM returned unparseable output {consecutive_vlm_errors} times'
                         log.warning('Job %s: %s', job_id, error_message)
-                        return ExecutionResult(
-                            job_id=job_id,
-                            service=service,
-                            flow=action,
-                            success=False,
-                            duration_seconds=time.monotonic() - t0,
-                            step_count=step_count,
-                            inference_count=inference_count,
-                            playbook_version=0,
-                            error_message=error_message,
-                        )
+                        return _result(False, error_message)
                     continue
 
                 sent_b64 = getattr(self.vlm, 'last_sent_image_b64', '')
@@ -586,17 +570,7 @@ class VLMExecutor:
                     if stuck.check(page_type, page_type, screenshot_b64):
                         error_message = f'Stuck during sign-in (page_type={page_type} repeated)'
                         log.warning('Job %s: %s', job_id, error_message)
-                        return ExecutionResult(
-                            job_id=job_id,
-                            service=service,
-                            flow=action,
-                            success=False,
-                            duration_seconds=time.monotonic() - t0,
-                            step_count=step_count,
-                            inference_count=inference_count,
-                            playbook_version=0,
-                            error_message=error_message,
-                        )
+                        return _result(False, error_message)
 
                     result = self._execute_signin_page(
                         response, scale_factor, session,
@@ -633,47 +607,15 @@ class VLMExecutor:
                     elif result == 'credential_invalid':
                         error_message = 'Sign-in failed: credentials rejected by service'
                         log.warning('Job %s: %s', job_id, error_message)
-                        return ExecutionResult(
-                            job_id=job_id,
-                            service=service,
-                            flow=action,
-                            success=False,
-                            duration_seconds=time.monotonic() - t0,
-                            step_count=step_count,
-                            inference_count=inference_count,
-                            playbook_version=0,
-                            error_message=error_message,
-                            error_code='credential_invalid',
-                        )
+                        return _result(False, error_message, error_code='credential_invalid')
                     elif result == 'captcha':
                         error_message = 'CAPTCHA detected during sign-in'
                         log.warning('Job %s: %s', job_id, error_message)
-                        return ExecutionResult(
-                            job_id=job_id,
-                            service=service,
-                            flow=action,
-                            success=False,
-                            duration_seconds=time.monotonic() - t0,
-                            step_count=step_count,
-                            inference_count=inference_count,
-                            playbook_version=0,
-                            error_message=error_message,
-                            error_code='captcha',
-                        )
+                        return _result(False, error_message, error_code='captcha')
                     elif result == 'need_human':
                         error_message = 'Sign-in requires human intervention'
                         log.warning('Job %s: %s', job_id, error_message)
-                        return ExecutionResult(
-                            job_id=job_id,
-                            service=service,
-                            flow=action,
-                            success=False,
-                            duration_seconds=time.monotonic() - t0,
-                            step_count=step_count,
-                            inference_count=inference_count,
-                            playbook_version=0,
-                            error_message=error_message,
-                        )
+                        return _result(False, error_message)
                     # 'continue': take another screenshot
                     continue
 
@@ -700,32 +642,12 @@ class VLMExecutor:
                     log.info('Job %s: flow complete (billing_date=%s)',
                              job_id, billing_date)
                     trace.cleanup_success()
-                    return ExecutionResult(
-                        job_id=job_id,
-                        service=service,
-                        flow=action,
-                        success=True,
-                        duration_seconds=time.monotonic() - t0,
-                        step_count=step_count,
-                        inference_count=inference_count,
-                        playbook_version=0,
-                        billing_date=billing_date,
-                    )
+                    return _result(True, billing_date=billing_date)
 
                 if 'need_human' in state or vlm_action == 'need_human':
                     error_message = f'Needs human intervention: {response.get("state", "unknown")}'
                     log.warning('Job %s: %s', job_id, error_message)
-                    return ExecutionResult(
-                        job_id=job_id,
-                        service=service,
-                        flow=action,
-                        success=False,
-                        duration_seconds=time.monotonic() - t0,
-                        step_count=step_count,
-                        inference_count=inference_count,
-                        playbook_version=0,
-                        error_message=error_message,
-                    )
+                    return _result(False, error_message)
 
                 if stuck.check(state, vlm_action, screenshot_b64):
                     account_url = ACCOUNT_URLS.get(service)
@@ -749,17 +671,7 @@ class VLMExecutor:
                         continue
                     error_message = f'Stuck during {current_label} (state={state}, action={vlm_action})'
                     log.warning('Job %s: %s', job_id, error_message)
-                    return ExecutionResult(
-                        job_id=job_id,
-                        service=service,
-                        flow=action,
-                        success=False,
-                        duration_seconds=time.monotonic() - t0,
-                        step_count=step_count,
-                        inference_count=inference_count,
-                        playbook_version=0,
-                        error_message=error_message,
-                    )
+                    return _result(False, error_message)
 
                 # Reset typed-credential tracking when action changes
                 if vlm_action != 'type_text':
@@ -856,36 +768,13 @@ class VLMExecutor:
                 # Max steps reached
                 error_message = f'Max steps ({self.max_steps}) reached'
                 log.warning('Job %s: %s', job_id, error_message)
-                return ExecutionResult(
-                    job_id=job_id,
-                    service=service,
-                    flow=action,
-                    success=False,
-                    duration_seconds=time.monotonic() - t0,
-                    step_count=step_count,
-                    inference_count=inference_count,
-                    playbook_version=0,
-                    error_message=error_message,
-                )
+                return _result(False, error_message)
 
             # Should not reach here (loop exits via return or break)
-            return ExecutionResult(
-                job_id=job_id,
-                service=service,
-                flow=action,
-                success=False,
-                duration_seconds=time.monotonic() - t0,
-                step_count=step_count,
-                inference_count=inference_count,
-                playbook_version=0,
-                error_message=error_message or 'Unexpected loop exit',
-            )
+            return _result(False, error_message or 'Unexpected loop exit')
 
         finally:
-            # Zero credentials
-            for key in list(credentials.keys()):
-                credentials[key] = '\x00' * len(credentials[key])
-            credentials.clear()
+            _zero_credentials(credentials)
 
             # Close Chrome
             if session is not None:

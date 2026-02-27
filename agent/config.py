@@ -89,48 +89,10 @@ ACCOUNT_URL_JUMP: dict[str, bool] = {
 
 # --- Paths ---
 
-def _resolve_playbook_dir() -> Path:
-    """Resolve playbook directory: env var > private package > local examples."""
-    env = os.environ.get('PLAYBOOK_DIR')
-    if env:
-        p = Path(env)
-        if p.is_dir():
-            return p
-    try:
-        from unsaltedbutter_prompts.dev.playbooks import get_playbook_dir  # type: ignore[import-untyped]
-        return get_playbook_dir()
-    except ImportError:
-        pass
-    return Path(__file__).parent / 'playbooks'
-
-
-PLAYBOOK_DIR = _resolve_playbook_dir()
-PLAYBOOK_REF_DIR = PLAYBOOK_DIR / 'ref'
 SCREENSHOT_DIR = Path('/tmp/ub-screenshots')
 
 # --- Timeouts (seconds) ---
-STEP_TIMEOUT = 60.0
 TOTAL_EXECUTION_TIMEOUT = 300.0
 PAGE_LOAD_WAIT = 2.5
 # SETTLE_DELAY: read at runtime via os.environ.get('SETTLE_DELAY', '2.5')
 # in VLMExecutor.__init__ to avoid stale import-time reads.
-
-# --- Recording ---
-RECORD_DWELL_THRESHOLD_SEC = 3.0
-RECORD_DWELL_RADIUS_PX = 5
-
-# --- Template variables ---
-# Normal (not sensitive)
-NORMAL_VARS = frozenset({'{email}', '{name}', '{zip}', '{birth}', '{gender}'})
-
-# Sensitive (never logged, never sent to VLM)
-SENSITIVE_VARS = frozenset({'{pass}', '{cvv}'})
-
-# All template vars
-ALL_VARS = NORMAL_VARS | SENSITIVE_VARS
-
-# Special key sequences (stripped from value, become press_key steps)
-KEY_VARS = frozenset({'{tab}', '{return}'})
-
-# Display hint for recording prompts
-VARS_HINT = '{email} {pass} {cvv} {name} {zip} {birth} {gender} {tab} {return}'

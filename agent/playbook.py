@@ -29,29 +29,10 @@ class JobContext:
             result = result.replace('{' + key + '}', val)
         return result
 
-    def destroy(self) -> None:
-        """Zero out all credential fields. Call in finally blocks."""
-        for key in list(self.credentials.keys()):
-            self.credentials[key] = '\x00' * len(self.credentials[key])
-        self.credentials.clear()
-
 
 # ---------------------------------------------------------------------------
-# StepResult / ExecutionResult
+# ExecutionResult
 # ---------------------------------------------------------------------------
-
-@dataclass
-class StepResult:
-    """Outcome of a single playbook step."""
-
-    index: int  # 0-based position in the steps array
-    action: str
-    success: bool
-    duration_seconds: float = 0.0
-    inference_calls: int = 0
-    error: str = ''
-    skipped: bool = False
-
 
 @dataclass
 class ExecutionResult:
@@ -68,5 +49,5 @@ class ExecutionResult:
     error_message: str = ''
     error_code: str = ''  # structured: 'credential_invalid', 'captcha', ''
     billing_date: str | None = None
-    step_results: list[StepResult] = field(default_factory=list)
+    step_results: list[dict] = field(default_factory=list)
     screenshots: list[dict] = field(default_factory=list)  # [{step, timestamp, path}]

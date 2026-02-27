@@ -274,36 +274,6 @@ def typo_generator(text: str, accuracy: str = 'high') -> list[dict]:
     return actions
 
 
-def drift_curve(
-    start: tuple[float, float],
-    distance: float = 120.0,
-    angle_deg: float = 45.0,
-    num_points: int = 12,
-) -> list[tuple[float, float]]:
-    """Gentle post-click drift arc (hand relaxing after click)."""
-    angle = math.radians(angle_deg)
-    end = (
-        start[0] + distance * math.cos(angle),
-        start[1] - distance * math.sin(angle),  # y inverted (screen coords)
-    )
-    return bezier_curve(start, end, num_points=num_points, curvature=0.10)
-
-
-def jerk_offset(
-    start: tuple[float, float],
-    distance: float = 50.0,
-) -> list[tuple[float, float]]:
-    """Sharp horizontal jerk (hand grabbing mouse before a move)."""
-    direction = random.choice([-1, 1])
-    angle_variance = random.uniform(-15, 15)
-    angle = math.radians(angle_variance)
-    end = (
-        start[0] + direction * distance * math.cos(angle),
-        start[1] + direction * distance * math.sin(angle),
-    )
-    return bezier_curve(start, end, num_points=6, curvature=0.02)
-
-
 def _adjacent_key(char: str) -> str:
     """Pick a random adjacent key for a typo. Returns the char unchanged if no adjacency."""
     lower = char.lower()

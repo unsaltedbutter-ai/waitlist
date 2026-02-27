@@ -607,7 +607,7 @@ class Agent:
             return None
 
         # Wait for the value (up to 15 minutes, matching OTP timeout)
-        cred_timeout = int(os.environ.get("OTP_TIMEOUT_SECONDS", "900"))
+        cred_timeout = int(os.environ.get("CREDENTIAL_TIMEOUT_SECONDS", "900"))
         try:
             value = await asyncio.wait_for(
                 active.credential_future, timeout=cred_timeout

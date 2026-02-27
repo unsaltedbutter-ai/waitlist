@@ -1,10 +1,8 @@
 # Agent requirements (runs on Mac Mini)
 pyautogui>=0.9.54
-pynput>=1.7.6
 Pillow>=10.0.0
 aiohttp>=3.9.0
 httpx>=0.25.0
 pyobjc-framework-Quartz>=10.0    # macOS window management (CGWindowListCopyWindowInfo)
 pyobjc-framework-Cocoa>=10.0     # macOS accessibility APIs
 python-dotenv>=1.0.0
-imagehash>=4.3.0

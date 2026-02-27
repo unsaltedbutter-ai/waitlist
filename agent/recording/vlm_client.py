@@ -97,10 +97,11 @@ def _denormalize_bboxes(
     obj: dict | list, w: int, h: int,
     offset_x: float = 0.0, offset_y: float = 0.0,
 ) -> None:
-    """Recursively convert Qwen 0-1000 normalized bboxes to pixels in place.
+    """Recursively convert Qwen 0-1000 normalized coords to pixels in place.
 
-    Walks the parsed JSON response and converts any 4-element numeric list
-    (assumed to be [x1, y1, x2, y2] in Qwen's 0-1000 space) to absolute
+    Walks the parsed JSON response and converts any 2-element numeric list
+    (assumed to be [x, y] point) or 4-element numeric list (assumed to be
+    [x1, y1, x2, y2] bounding box) from Qwen's 0-1000 space to absolute
     pixel coordinates.
 
     When the inference backend pads images to square (e.g., MLX), pass
@@ -110,14 +111,22 @@ def _denormalize_bboxes(
     if isinstance(obj, dict):
         for key in obj:
             val = obj[key]
-            if (isinstance(val, list) and len(val) == 4
+            if (isinstance(val, list)
                     and all(isinstance(v, (int, float)) for v in val)):
-                obj[key] = [
-                    val[0] * w / 1000 - offset_x,
-                    val[1] * h / 1000 - offset_y,
-                    val[2] * w / 1000 - offset_x,
-                    val[3] * h / 1000 - offset_y,
-                ]
+                if len(val) == 4:
+                    obj[key] = [
+                        val[0] * w / 1000 - offset_x,
+                        val[1] * h / 1000 - offset_y,
+                        val[2] * w / 1000 - offset_x,
+                        val[3] * h / 1000 - offset_y,
+                    ]
+                elif len(val) == 2 and key.endswith('_point'):
+                    obj[key] = [
+                        val[0] * w / 1000 - offset_x,
+                        val[1] * h / 1000 - offset_y,
+                    ]
+                else:
+                    _denormalize_bboxes(val, w, h, offset_x, offset_y)
             elif isinstance(val, (dict, list)):
                 _denormalize_bboxes(val, w, h, offset_x, offset_y)
     elif isinstance(obj, list):
@@ -127,17 +136,23 @@ def _denormalize_bboxes(
 
 
 def _swap_yx_bboxes(obj: dict | list) -> None:
-    """Recursively swap [y1, x1, y2, x2] -> [x1, y1, x2, y2] in place.
+    """Recursively swap y,x -> x,y ordering in coordinate lists in place.
 
-    Walks the parsed JSON response and swaps indices 0<->1 and 2<->3 in any
-    4-element numeric list (assumed to be a bounding box).
+    Walks the parsed JSON response and swaps indices in any 2-element numeric
+    list ([y, x] -> [x, y]) or 4-element numeric list
+    ([y1, x1, y2, x2] -> [x1, y1, x2, y2]).
     """
     if isinstance(obj, dict):
         for key in obj:
             val = obj[key]
-            if (isinstance(val, list) and len(val) == 4
+            if (isinstance(val, list)
                     and all(isinstance(v, (int, float)) for v in val)):
-                obj[key] = [val[1], val[0], val[3], val[2]]
+                if len(val) == 4:
+                    obj[key] = [val[1], val[0], val[3], val[2]]
+                elif len(val) == 2 and key.endswith('_point'):
+                    obj[key] = [val[1], val[0]]
+                else:
+                    _swap_yx_bboxes(val)
             elif isinstance(val, (dict, list)):
                 _swap_yx_bboxes(val)
     elif isinstance(obj, list):

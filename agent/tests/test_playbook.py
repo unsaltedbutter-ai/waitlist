@@ -10,7 +10,6 @@ import pytest
 from agent.playbook import (
     ExecutionResult,
     JobContext,
-    StepResult,
 )
 
 
@@ -54,57 +53,11 @@ class TestJobContext:
         result = job_context.resolve_template('{email}{tab}')
         assert result == 'alice@example.com{tab}'
 
-    def test_destroy_zeroes_credentials(self, job_context: JobContext) -> None:
-        """destroy() replaces all credential values with null bytes, then clears."""
-        # Verify credentials exist before destroy
-        assert len(job_context.credentials) > 0
-        job_context.destroy()
-        assert len(job_context.credentials) == 0
-
-    def test_destroy_overwrites_values(self) -> None:
-        """Credential values are overwritten with null bytes before clearing."""
-        ctx = JobContext(
-            job_id='j1', user_id='u1', service='hulu', flow='cancel',
-            credentials={'email': 'test@x.com', 'pass': 'abc123'},
-        )
-        # Capture references to the credential dict entries
-        original_email_len = len(ctx.credentials['email'])
-        original_pass_len = len(ctx.credentials['pass'])
-
-        ctx.destroy()
-
-        # Dict is cleared, but the overwrite logic ran first
-        assert len(ctx.credentials) == 0
-
-    def test_destroy_idempotent(self, job_context: JobContext) -> None:
-        """Calling destroy() twice does not raise."""
-        job_context.destroy()
-        job_context.destroy()
-        assert len(job_context.credentials) == 0
 
 
 # ---------------------------------------------------------------------------
-# StepResult / ExecutionResult
+# ExecutionResult
 # ---------------------------------------------------------------------------
-
-
-class TestStepResult:
-    """StepResult dataclass basics."""
-
-    def test_defaults(self) -> None:
-        sr = StepResult(index=0, action='click', success=True)
-        assert sr.duration_seconds == 0.0
-        assert sr.inference_calls == 0
-        assert sr.error == ''
-        assert sr.skipped is False
-
-    def test_failed_step(self) -> None:
-        sr = StepResult(
-            index=3, action='type_text', success=False,
-            error='Element not found', inference_calls=1,
-        )
-        assert sr.success is False
-        assert sr.error == 'Element not found'
 
 
 class TestExecutionResult:
