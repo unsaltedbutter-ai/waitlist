@@ -587,7 +587,7 @@ class VLMExecutor:
                             account_url = ACCOUNT_URLS.get(service)
                             if account_url:
                                 browser.navigate(session, account_url)
-                                browser.zoom_out(session, steps=2)
+                                browser.zoom_out(session, steps=4)
                                 used_account_fallback = True
                                 step_count += 1
                                 log.info('Job %s: navigated to %s',
@@ -690,7 +690,7 @@ class VLMExecutor:
                         log.info('Job %s: stuck, navigating to %s',
                                  job_id, account_url)
                         browser.navigate(session, account_url)
-                        browser.zoom_out(session, steps=2)
+                        browser.zoom_out(session, steps=4)
                         # Dismiss any "Leave page?" beforeunload dialog
                         with gui_lock:
                             focus_window_by_pid(session.pid)

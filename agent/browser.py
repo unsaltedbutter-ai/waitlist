@@ -124,12 +124,8 @@ def create_session(width: int = 1280, height: int = 900) -> BrowserSession:
         window.resize_window_by_drag('Google Chrome', width, height, fast=True)
         time.sleep(0.2)
 
-        # Zoom out to 80% (2 steps). Account page navigation adds
-        # 2 more steps for 67% total, bringing Cancel above the fold.
-        keyboard.hotkey('command', '-')
-        time.sleep(0.05)
-        keyboard.hotkey('command', '-')
-        time.sleep(0.1)
+        # Zoom happens after account page navigation (4 steps to 67%).
+        # Not here: Chrome resets zoom when navigating away from about:blank.
 
         # Park cursor at a random spot inside the window so every session
         # doesn't start from the lower-left resize corner.
