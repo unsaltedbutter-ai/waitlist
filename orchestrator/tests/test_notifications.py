@@ -245,6 +245,36 @@ class TestHandlePushRouting:
         api.get_pending_invite_dms.assert_awaited_once()
 
     @pytest.mark.asyncio
+    async def test_auto_invite_sends_login_link(self, handler, send_dm):
+        msg = _payload("auto_invite", {
+            "npub_hex": "abc123def456",
+            "otp_code": "123456789012",
+        })
+        await handler.handle_push(msg)
+        # Two DMs: formatted code + instructions
+        assert send_dm.await_count == 2
+        code_msg = send_dm.call_args_list[0][0][1]
+        assert "123456-789012" in code_msg
+        instr_msg = send_dm.call_args_list[1][0][1]
+        assert "login" in instr_msg.lower()
+
+    @pytest.mark.asyncio
+    async def test_auto_invite_missing_npub_logs_warning(self, handler, send_dm, caplog):
+        msg = _payload("auto_invite", {"otp_code": "123456789012"})
+        with caplog.at_level(logging.WARNING):
+            await handler.handle_push(msg)
+        send_dm.assert_not_awaited()
+        assert "auto_invite push missing" in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_auto_invite_missing_otp_logs_warning(self, handler, send_dm, caplog):
+        msg = _payload("auto_invite", {"npub_hex": "abc123"})
+        with caplog.at_level(logging.WARNING):
+            await handler.handle_push(msg)
+        send_dm.assert_not_awaited()
+        assert "auto_invite push missing" in caplog.text
+
+    @pytest.mark.asyncio
     async def test_unknown_type_logs_warning(self, handler, caplog):
         msg = _payload("bogus_type", {"foo": "bar"})
         with caplog.at_level(logging.WARNING):

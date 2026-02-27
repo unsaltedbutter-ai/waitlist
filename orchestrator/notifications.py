@@ -83,6 +83,8 @@ class NotificationHandler:
             await self._handle_payment_expired(data)
         elif notif_type == "new_user":
             await self._handle_new_user(data)
+        elif notif_type == "auto_invite":
+            await self._handle_auto_invite(data)
         else:
             log.warning("[push] Unknown push notification type: %s", notif_type)
 
@@ -138,6 +140,17 @@ class NotificationHandler:
 
         # Send any pending invite DMs
         await self.send_pending_invite_dms()
+
+    async def _handle_auto_invite(self, data: dict) -> None:
+        """Auto-invite push: send login link DM with OTP code."""
+        npub = data.get("npub_hex")
+        otp_code = data.get("otp_code")
+        if not npub or not otp_code:
+            log.warning("auto_invite push missing npub_hex or otp_code")
+            return
+        parts = messages.login_code(otp_code, self._config.base_url)
+        for part in parts:
+            await self._send_dm(npub, part)
 
     async def send_pending_invite_dms(self) -> int:
         """Send invite DMs to waitlist entries marked as pending.

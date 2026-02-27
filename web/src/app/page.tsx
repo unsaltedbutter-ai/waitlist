@@ -10,6 +10,7 @@ export default function WaitlistPage() {
   const [status, setStatus] = useState<
     "idle" | "submitting" | "success" | "error"
   >("idle");
+  const [autoInvited, setAutoInvited] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
   const [npubCopied, setNpubCopied] = useState(false);
 
@@ -40,6 +41,7 @@ export default function WaitlistPage() {
         return;
       }
 
+      setAutoInvited(!!data.autoInvited);
       setStatus("success");
     } catch {
       setStatus("error");
@@ -51,17 +53,33 @@ export default function WaitlistPage() {
     return (
       <main className="min-h-screen flex items-center justify-center px-4">
         <div className="max-w-lg w-full text-center">
-          <h1 className="text-3xl font-bold mb-4 text-foreground">
-            You&apos;re on the list.
-          </h1>
-          <p className="text-muted text-lg">
-            The first rule about UnsaltedButter:
-            <br />
-            you do not talk about UnsaltedButter.
-            <br />
-            <br />
-            We&apos;ll reach out when it&apos;s your turn.
-          </p>
+          {autoInvited ? (
+            <>
+              <h1 className="text-3xl font-bold mb-4 text-foreground">
+                Check your Nostr DMs.
+              </h1>
+              <p className="text-muted text-lg">
+                We sent you a login link. It expires in 15 minutes.
+                <br />
+                <br />
+                If it expires, just DM &apos;login&apos; to the bot for a fresh one.
+              </p>
+            </>
+          ) : (
+            <>
+              <h1 className="text-3xl font-bold mb-4 text-foreground">
+                You&apos;re on the list.
+              </h1>
+              <p className="text-muted text-lg">
+                The first rule about UnsaltedButter:
+                <br />
+                you do not talk about UnsaltedButter.
+                <br />
+                <br />
+                We&apos;ll reach out when it&apos;s your turn.
+              </p>
+            </>
+          )}
         </div>
       </main>
     );

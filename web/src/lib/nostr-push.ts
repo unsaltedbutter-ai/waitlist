@@ -206,6 +206,14 @@ export async function pushPaymentExpired(
   });
 }
 
+export async function pushAutoInvite(npubHex: string, otpCode: string): Promise<void> {
+  await sendPushDM({
+    type: "auto_invite",
+    data: { npub_hex: npubHex, otp_code: otpCode },
+    timestamp: Date.now(),
+  });
+}
+
 /** Reset the cached pool (for testing only). */
 function resetPool(): void {
   pool = null;

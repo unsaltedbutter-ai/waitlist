@@ -353,32 +353,12 @@ class CommandRouter:
             await self._send_dm(sender_npub, part)
 
     async def _cmd_waitlist(self, sender_npub: str) -> None:
-        """Add to waitlist or return appropriate status."""
-        # Check if already registered
+        """Add to waitlist or auto-invite if below capacity."""
         user_data = await self._api.get_user(sender_npub)
         if user_data is not None:
             await self._send_dm(sender_npub, messages.already_has_account())
             return
-
-        try:
-            result = await self._api.add_to_waitlist(sender_npub)
-        except Exception:
-            log.exception("Waitlist API failed for user %s", sender_npub)
-            await self._send_dm(sender_npub, messages.error_generic())
-            return
-
-        status = result.get("status", "")
-        if status == "added":
-            await self._send_dm(sender_npub, messages.waitlist_added())
-        elif status == "already_waitlisted":
-            await self._send_dm(sender_npub, messages.waitlist_already())
-        elif status == "already_invited":
-            await self._send_dm(
-                sender_npub,
-                messages.waitlist_invited(self._config.base_url),
-            )
-        else:
-            await self._send_dm(sender_npub, messages.error_generic())
+        await self._auto_waitlist(sender_npub)
 
     async def _cmd_invites(self, sender_npub: str) -> None:
         """Operator only: send pending invite DMs."""

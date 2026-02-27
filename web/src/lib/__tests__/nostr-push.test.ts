@@ -62,6 +62,7 @@ let pushNewUser: typeof import("@/lib/nostr-push").pushNewUser;
 let pushJobsReady: typeof import("@/lib/nostr-push").pushJobsReady;
 let pushPaymentReceived: typeof import("@/lib/nostr-push").pushPaymentReceived;
 let pushPaymentExpired: typeof import("@/lib/nostr-push").pushPaymentExpired;
+let pushAutoInvite: typeof import("@/lib/nostr-push").pushAutoInvite;
 let _resetPool: typeof import("@/lib/nostr-push")._resetPool;
 
 beforeEach(async () => {
@@ -82,6 +83,7 @@ beforeEach(async () => {
   pushJobsReady = mod.pushJobsReady;
   pushPaymentReceived = mod.pushPaymentReceived;
   pushPaymentExpired = mod.pushPaymentExpired;
+  pushAutoInvite = mod.pushAutoInvite;
   _resetPool = mod._resetPool;
   _resetPool();
 });
@@ -151,6 +153,19 @@ describe("nostr-push", () => {
       expect(parsed.data.service_name).toBe("Hulu");
       expect(parsed.data.debt_sats).toBe(3000);
       expect(parsed.data.job_id).toBe("job-456");
+      expect(typeof parsed.timestamp).toBe("number");
+    });
+  });
+
+  describe("pushAutoInvite", () => {
+    it("sends nested payload with npub_hex and otp_code", async () => {
+      await pushAutoInvite("eeff".repeat(16), "123456789012");
+
+      const message = mockWrapEvent.mock.calls[0][2];
+      const parsed = JSON.parse(message);
+      expect(parsed.type).toBe("auto_invite");
+      expect(parsed.data.npub_hex).toBe("eeff".repeat(16));
+      expect(parsed.data.otp_code).toBe("123456789012");
       expect(typeof parsed.timestamp).toBe("number");
     });
   });

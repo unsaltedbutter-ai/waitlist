@@ -932,47 +932,51 @@ async def test_login_otp_creation_fails():
 
 
 @pytest.mark.asyncio
-async def test_waitlist_new_user():
-    """Waitlist for new user should add them."""
+async def test_waitlist_below_capacity_auto_invites():
+    """Waitlist for new user below capacity should auto-invite and send login code."""
     router, deps = _make_router()
     deps["api"].get_user.return_value = None
-    deps["api"].add_to_waitlist.return_value = {"status": "added"}
+    deps["api"].auto_invite.return_value = {"status": "invited", "invite_code": "ABC123"}
+    deps["api"].create_otp.return_value = "123456789012"
 
     await router.handle_dm(ALICE, "waitlist")
 
-    deps["api"].add_to_waitlist.assert_awaited_once_with(ALICE)
-    deps["send_dm"].assert_awaited_once()
-    msg = deps["send_dm"].call_args[0][1]
-    assert "waitlist" in msg.lower()
+    deps["api"].auto_invite.assert_awaited_once_with(ALICE)
+    deps["api"].create_otp.assert_awaited_once_with(ALICE)
+    # Two DMs: code + instructions
+    assert deps["send_dm"].await_count == 2
+    code_msg = deps["send_dm"].call_args_list[0][0][1]
+    assert "123456-789012" in code_msg
 
 
 @pytest.mark.asyncio
-async def test_waitlist_already_waitlisted():
-    """Waitlist for already-waitlisted user should say so."""
+async def test_waitlist_at_capacity():
+    """Waitlist for new user at capacity should send waitlist message."""
     router, deps = _make_router()
     deps["api"].get_user.return_value = None
-    deps["api"].add_to_waitlist.return_value = {"status": "already_waitlisted"}
+    deps["api"].auto_invite.return_value = {"status": "at_capacity", "invite_code": None}
 
     await router.handle_dm(ALICE, "waitlist")
 
     deps["send_dm"].assert_awaited_once()
     msg = deps["send_dm"].call_args[0][1]
-    assert "already" in msg.lower()
     assert "waitlist" in msg.lower()
 
 
 @pytest.mark.asyncio
 async def test_waitlist_already_invited():
-    """Waitlist for already-invited user should tell them to login."""
+    """Waitlist for already-invited user should send login code."""
     router, deps = _make_router()
     deps["api"].get_user.return_value = None
-    deps["api"].add_to_waitlist.return_value = {"status": "already_invited"}
+    deps["api"].auto_invite.return_value = {"status": "already_invited", "invite_code": "XYZ"}
+    deps["api"].create_otp.return_value = "999888777666"
 
     await router.handle_dm(ALICE, "waitlist")
 
-    deps["send_dm"].assert_awaited_once()
-    msg = deps["send_dm"].call_args[0][1]
-    assert "invited" in msg.lower() or "login" in msg.lower()
+    # Two DMs: code + instructions
+    assert deps["send_dm"].await_count == 2
+    code_msg = deps["send_dm"].call_args_list[0][0][1]
+    assert "999888-777666" in code_msg
 
 
 @pytest.mark.asyncio
