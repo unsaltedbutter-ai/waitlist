@@ -267,6 +267,7 @@ export default function OnboardingPage() {
           serviceId: sid,
           serviceName: svc.service_name,
           planName: plan?.display_name,
+          planPriceCents: plan?.monthly_price_cents,
         };
       });
       setQueue(savedQueue);
@@ -597,9 +598,9 @@ export default function OnboardingPage() {
                     <SortableItem
                       key={item.serviceId}
                       item={item}
-                      position={index + 1}
                       isFirst={index === 0}
                       isLast={index === queue.length - 1}
+                      icon={<ServiceIcon serviceId={item.serviceId} />}
                       onMoveUp={() => {
                         if (index === 0) return;
                         setQueue((prev) => arrayMove(prev, index, index - 1));
@@ -608,21 +609,6 @@ export default function OnboardingPage() {
                         if (index === queue.length - 1) return;
                         setQueue((prev) => arrayMove(prev, index, index + 1));
                       }}
-                      statusBadge={
-                        index === 0 ? (
-                          <span className="text-xs font-semibold uppercase tracking-wider px-2 py-0.5 rounded-md bg-green-500/12 text-green-400">
-                            Active
-                          </span>
-                        ) : index === 1 ? (
-                          <span className="text-xs font-semibold uppercase tracking-wider px-2 py-0.5 rounded-md bg-white/5 text-muted/50">
-                            Next up
-                          </span>
-                        ) : (
-                          <span className="text-xs font-semibold uppercase tracking-wider px-2 py-0.5 rounded-md bg-white/5 text-muted/50">
-                            Queued
-                          </span>
-                        )
-                      }
                     />
                   ))}
                 </div>
@@ -634,10 +620,18 @@ export default function OnboardingPage() {
             </p>
           </>
         ) : queue.length === 1 ? (
-          <div className="border border-border rounded-xl px-4 py-3 bg-surface">
-            <span className="text-sm text-foreground font-medium">{queue[0].serviceName}</span>
+          <div className="flex items-center gap-3 border border-border rounded-xl px-4 py-3.5 bg-surface">
+            <ServiceIcon serviceId={queue[0].serviceId} />
+            <span className="flex-1 min-w-0 truncate font-semibold text-foreground text-base">
+              {queue[0].serviceName}
+            </span>
             {queue[0].planName && (
-              <span className="text-xs text-muted ml-2">{queue[0].planName}</span>
+              <span className="text-xs text-accent bg-accent/10 px-2.5 py-1 rounded-md font-medium whitespace-nowrap">
+                {queue[0].planName}
+                {queue[0].planPriceCents != null && (
+                  <> &middot; ${(queue[0].planPriceCents / 100).toFixed(2)}</>
+                )}
+              </span>
             )}
           </div>
         ) : (

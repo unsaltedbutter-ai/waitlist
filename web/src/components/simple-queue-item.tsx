@@ -11,6 +11,7 @@ export interface QueueItemData {
   serviceId: string;
   serviceName: string;
   planName?: string;
+  planPriceCents?: number;
 }
 
 interface SimpleQueueItemProps {
@@ -23,6 +24,7 @@ interface SimpleQueueItemProps {
   onRemove?: () => void;
   pinned?: boolean;
   statusBadge?: React.ReactNode;
+  icon?: React.ReactNode;
 }
 
 /**
@@ -39,6 +41,7 @@ export function SimpleQueueItem({
   onRemove,
   pinned,
   statusBadge,
+  icon,
 }: SimpleQueueItemProps) {
   const {
     attributes,
@@ -55,11 +58,20 @@ export function SimpleQueueItem({
     opacity: isDragging ? 0.5 : 1,
   };
 
+  const priceBadge = item.planName ? (
+    <span className="text-xs text-accent bg-accent/10 px-2.5 py-1 rounded-md font-medium whitespace-nowrap">
+      {item.planName}
+      {item.planPriceCents != null && (
+        <> &middot; ${(item.planPriceCents / 100).toFixed(2)}</>
+      )}
+    </span>
+  ) : null;
+
   return (
     <div
       ref={setNodeRef}
       style={style}
-      className="flex items-center gap-3 bg-surface border border-border rounded px-4 py-3"
+      className="flex items-center gap-3 bg-surface border border-border rounded-xl px-4 py-3.5"
     >
       {pinned ? (
         <span className="text-muted/40 text-lg leading-none select-none">
@@ -100,16 +112,14 @@ export function SimpleQueueItem({
           )}
         </>
       )}
+      {icon}
       {position != null && (
         <span className="text-sm font-medium text-muted w-6">{position}</span>
       )}
-      <span className="flex-1 min-w-0 truncate">
-        <span className="text-foreground font-medium">{item.serviceName}</span>
-        {item.planName && (
-          <span className="text-muted text-xs ml-2">{item.planName}</span>
-        )}
+      <span className="flex-1 min-w-0 truncate font-semibold text-foreground text-base">
+        {item.serviceName}
       </span>
-      {statusBadge}
+      {priceBadge || statusBadge}
       {onRemove && !pinned && (
         <button
           type="button"

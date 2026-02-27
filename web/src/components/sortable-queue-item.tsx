@@ -7,6 +7,7 @@ import { JobStatusIndicator } from "@/components/job-status-indicator";
 import { AccessDateLine } from "@/components/access-date-line";
 import { QueueItemOverflowMenu } from "@/components/queue-item-overflow-menu";
 import { ServiceCredentialForm } from "@/components/service-credential-form";
+import { ServiceIcon } from "@/app/onboarding/_components";
 
 export interface SortableQueueItemProps {
   item: EnrichedQueueItem;
@@ -76,6 +77,15 @@ export function SortableQueueItem({
     );
   }
 
+  const priceBadge = item.plan_name ? (
+    <span className="text-xs text-accent bg-accent/10 px-2.5 py-1 rounded-md font-medium whitespace-nowrap shrink-0">
+      {item.plan_name}
+      {item.plan_price_cents != null && (
+        <> &middot; ${(item.plan_price_cents / 100).toFixed(2)}</>
+      )}
+    </span>
+  ) : null;
+
   // ---------------------------------------------------------------------------
   // Render
   // ---------------------------------------------------------------------------
@@ -84,10 +94,10 @@ export function SortableQueueItem({
     <div
       ref={setNodeRef}
       style={style}
-      className="bg-surface border border-border rounded"
+      className="bg-surface border border-border rounded-xl"
     >
       {/* Primary row */}
-      <div className="flex items-center gap-3 px-4 py-3">
+      <div className="flex items-center gap-3 px-4 py-3.5">
         {/* Drag handle */}
         {pinned ? (
           <span className="text-muted/40 text-lg leading-none select-none shrink-0">
@@ -105,18 +115,17 @@ export function SortableQueueItem({
           </button>
         )}
 
-        {/* Service name, plan, secondary line */}
+        <ServiceIcon serviceId={item.service_id} />
+
+        {/* Service name + secondary line */}
         <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2">
-            <span className="text-foreground font-medium truncate">
-              {item.service_name}
-            </span>
-            {item.plan_name && (
-              <span className="text-muted text-xs shrink-0">{item.plan_name}</span>
-            )}
-          </div>
+          <span className="text-foreground font-semibold text-base truncate block">
+            {item.service_name}
+          </span>
           {renderSecondaryLine()}
         </div>
+
+        {priceBadge}
 
         {/* Overflow menu */}
         <QueueItemOverflowMenu
