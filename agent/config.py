@@ -50,6 +50,14 @@ SERVICE_URLS: dict[str, str] = {
     'max': 'https://play.max.com/login',
 }
 
+# Scroll clicks to apply after navigating to the login page, before the
+# first screenshot. Useful when the service homepage has a distracting nav
+# link (e.g. Netflix "Sign In") that pulls the VLM away from the hero CTA.
+# 0 or absent = no scroll.
+PRE_LOGIN_SCROLL: dict[str, int] = {
+    'netflix': 3,
+}
+
 ACCOUNT_URLS: dict[str, str] = {
     'netflix': 'https://www.netflix.com/account',
     'hulu': 'https://secure.hulu.com/account',

@@ -35,7 +35,7 @@ from typing import Callable
 
 from agent import browser
 from agent import screenshot as ss
-from agent.config import ACCOUNT_URLS, SERVICE_URLS
+from agent.config import ACCOUNT_URLS, PRE_LOGIN_SCROLL, SERVICE_URLS
 from agent.debug_trace import DebugTrace
 from agent.gui_lock import gui_lock
 from agent.input import coords, keyboard, mouse, scroll as scroll_mod
@@ -371,6 +371,15 @@ class VLMExecutor:
             # Navigate to login page (navigate handles its own gui_lock internally)
             browser.navigate(session, start_url, fast=True)
             step_count += 1
+
+            # Optional pre-login scroll: push distracting nav elements
+            # out of view so the VLM focuses on the main CTA.
+            pre_scroll = PRE_LOGIN_SCROLL.get(service, 0)
+            if pre_scroll:
+                time.sleep(0.5)
+                with gui_lock:
+                    focus_window_by_pid(session.pid)
+                    scroll_mod.scroll('down', pre_scroll)
 
             # Build prompt chain
             prompts = [build_signin_prompt(service)]
