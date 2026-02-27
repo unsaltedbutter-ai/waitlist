@@ -303,6 +303,32 @@ class TestExtractJson:
         result = _extract_json(raw)
         assert result['action'] == 'type_text'
 
+    def test_malformed_json_regex_fallback(self) -> None:
+        """VLM truncated output with mismatched brackets: regex extracts fields."""
+        raw = (
+            '{\n'
+            '  "page_type": "email_code_single",\n'
+            '  "email_point": [425, 201],\n'
+            '  "password_point": null,\n'
+            '  "button_point": null,\n'
+            '  "profile_point": null,\n'
+            '  "code_points": [{"label": "code_1", "point": [350, 264}]\n'
+        )
+        result = _extract_json(raw)
+        assert result['page_type'] == 'email_code_single'
+        assert result['email_point'] == [425, 201]
+        assert result['password_point'] is None
+        assert result['button_point'] is None
+        assert result['code_points'] is None  # too broken to extract
+
+    def test_truncated_json_regex_fallback(self) -> None:
+        """VLM output cut off mid-response: regex extracts available fields."""
+        raw = '{"page_type": "user_pass", "email_point": [500, 300], "password_point": [500'
+        result = _extract_json(raw)
+        assert result['page_type'] == 'user_pass'
+        assert result['email_point'] == [500, 300]
+        assert result['password_point'] is None  # incomplete
+
 
 class TestVLMClientInit:
     """VLMClient construction (no HTTP calls)."""

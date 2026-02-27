@@ -69,6 +69,27 @@ def _extract_json(raw: str) -> dict:
                 except json.JSONDecodeError:
                     start = -1
 
+    # Strategy 5: regex field extraction for malformed JSON.
+    # VLMs sometimes produce truncated output or mismatched brackets
+    # (e.g., [350, 264}] instead of [350, 264]}). Extract whatever
+    # fields we can so the executor can still act.
+    page_type_m = re.search(r'"page_type"\s*:\s*"([^"]+)"', text)
+    if page_type_m:
+        result: dict = {'page_type': page_type_m.group(1)}
+        for field in ('email_point', 'password_point', 'button_point',
+                       'profile_point', 'click_point'):
+            m = re.search(rf'"{field}"\s*:\s*\[\s*(\d+)\s*,\s*(\d+)', text)
+            result[field] = [int(m.group(1)), int(m.group(2))] if m else None
+        result['code_points'] = None
+        result['actions'] = None
+        # Cancel/resume fields
+        for field in ('state', 'action', 'target_description',
+                       'text_to_type', 'key_to_press', 'billing_end_date'):
+            m = re.search(rf'"{field}"\s*:\s*"([^"]*)"', text)
+            result[field] = m.group(1) if m else None
+        log.warning('JSON parse failed, extracted fields via regex: %s', result)
+        return result
+
     raise ValueError(f"Could not extract JSON from VLM output: {text[:200]}")
 
 

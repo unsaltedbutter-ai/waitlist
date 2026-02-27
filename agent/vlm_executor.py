@@ -396,6 +396,7 @@ class VLMExecutor:
             pending_action = None
             used_account_fallback = False
             last_typed_cred_key = None
+            consecutive_vlm_errors = 0
 
             for iteration in range(self.max_steps):
                 # -------------------------------------------------------
@@ -493,13 +494,30 @@ class VLMExecutor:
                     )
                     vlm_response_ms = round((time.monotonic() - vlm_t0) * 1000)
                     inference_count += 1
+                    consecutive_vlm_errors = 0
                 except Exception as exc:
-                    log.warning('VLM error on iteration %d: %s', iteration, exc)
+                    consecutive_vlm_errors += 1
+                    log.warning('VLM error on iteration %d (%d consecutive): %s',
+                                iteration, consecutive_vlm_errors, exc)
                     sent_b64 = getattr(self.vlm, 'last_sent_image_b64', '')
                     trace.save_step(iteration, screenshot_b64, None,
                                     phase=current_label,
                                     sent_image_b64=sent_b64,
                                     prompt=current_prompt)
+                    if consecutive_vlm_errors >= 3:
+                        error_message = f'VLM returned unparseable output {consecutive_vlm_errors} times'
+                        log.warning('Job %s: %s', job_id, error_message)
+                        return ExecutionResult(
+                            job_id=job_id,
+                            service=service,
+                            flow=action,
+                            success=False,
+                            duration_seconds=time.monotonic() - t0,
+                            step_count=step_count,
+                            inference_count=inference_count,
+                            playbook_version=0,
+                            error_message=error_message,
+                        )
                     continue
 
                 sent_b64 = getattr(self.vlm, 'last_sent_image_b64', '')
@@ -933,6 +951,7 @@ class VLMExecutor:
             with gui_lock:
                 focus_window_by_pid(session.pid)
                 _click_bbox(button_pt, session, chrome_offset=chrome_offset)
+            time.sleep(self.settle_delay)
             return 'continue'
 
         if page_type == 'user_pass' and email_pt:
@@ -970,10 +989,11 @@ class VLMExecutor:
                     keyboard.press_key('enter')
                     time.sleep(1.0)
                 elif email_pasted and not password_pt:
-                    # VLM didn't find password field; skip password entry.
-                    # Next step will re-evaluate (likely pass_only or user_pass).
-                    log.warning('user_pass: password_point is null, skipping password entry')
-                    time.sleep(0.5)
+                    # No password field found: multi-step login. Submit
+                    # email to advance to the next page (likely pass_only).
+                    time.sleep(0.2)
+                    keyboard.press_key('enter')
+                    time.sleep(1.0)
                 elif not email_pasted and password_pt:
                     # Email entry failed; try tabbing to password
                     time.sleep(0.2)
