@@ -952,36 +952,34 @@ class VLMExecutor:
             time.sleep(self.settle_delay)
             return 'continue'
 
-        if page_type == 'button_only' and button_pt:
-            with gui_lock:
-                focus_window_by_pid(session.pid)
-                _click_bbox(button_pt, session, chrome_offset=chrome_offset)
-            time.sleep(self.settle_delay)
-            return 'continue'
+        # --- Credential entry: driven by available coordinates ---
+        # Instead of trusting page_type (user_pass, user_only, pass_only,
+        # button_only), act on which points the VLM returned. This avoids
+        # wasted steps from misclassification.
 
-        if page_type == 'user_pass' and email_pt:
+        if email_pt or password_pt:
             with gui_lock:
                 focus_window_by_pid(session.pid)
-                # Click email, select-all, type, tab/paste password, enter
-                _click_bbox(email_pt, session, chrome_offset=chrome_offset)
-                time.sleep(0.3)
-                keyboard.hotkey('command', 'a')
-                time.sleep(0.1)
-                email_val = credentials.get('email', '')
                 email_pasted = False
-                if email_val:
-                    email_pasted = _enter_credential(email_val)
 
-                if email_pasted and password_pt:
-                    # Simulate password manager: app switch, wait, refocus
-                    time.sleep(random.uniform(0.3, 0.6))
-                    _simulate_app_switch(session)
-                    time.sleep(random.uniform(2.0, 4.0))
-                    focus_window_by_pid(session.pid)
-                    _click_bbox(
-                        password_pt, session,
-                        chrome_offset=chrome_offset,
-                    )
+                if email_pt:
+                    _click_bbox(email_pt, session, chrome_offset=chrome_offset)
+                    time.sleep(0.3)
+                    keyboard.hotkey('command', 'a')
+                    time.sleep(0.1)
+                    email_val = credentials.get('email', '')
+                    if email_val:
+                        email_pasted = _enter_credential(email_val)
+
+                if password_pt:
+                    if email_pasted:
+                        # Simulate password manager: app switch, wait, refocus
+                        time.sleep(random.uniform(0.3, 0.6))
+                        _simulate_app_switch(session)
+                        time.sleep(random.uniform(2.0, 4.0))
+                        focus_window_by_pid(session.pid)
+                    _click_bbox(password_pt, session,
+                                chrome_offset=chrome_offset)
                     time.sleep(0.2)
                     keyboard.hotkey('command', 'a')
                     time.sleep(0.1)
@@ -990,58 +988,21 @@ class VLMExecutor:
                         _clipboard_copy(pass_val)
                         keyboard.hotkey('command', 'v')
                         time.sleep(0.15)
-                    time.sleep(0.2)
-                    keyboard.press_key('enter')
-                elif email_pasted and not password_pt:
-                    # No password field found: multi-step login. Submit
-                    # email to advance to the next page (likely pass_only).
-                    time.sleep(0.2)
-                    keyboard.press_key('enter')
-                elif not email_pasted and password_pt:
-                    # Email entry failed; try tabbing to password
-                    time.sleep(0.2)
-                    keyboard.press_key('tab')
-                    time.sleep(0.2)
-                    keyboard.hotkey('command', 'a')
-                    time.sleep(0.1)
-                    pass_val = credentials.get('pass', '')
-                    if pass_val:
-                        _enter_credential(pass_val)
-                    time.sleep(0.2)
-                    keyboard.press_key('enter')
+
+                # Submit: click button if available, else Enter
+                time.sleep(0.2)
+                if button_pt:
+                    _click_bbox(button_pt, session,
+                                chrome_offset=chrome_offset)
                 else:
-                    # Neither worked; let next step retry
-                    log.warning('user_pass: email paste failed and no password_point')
+                    keyboard.press_key('enter')
             time.sleep(self.settle_delay)
             return 'continue'
 
-        if page_type == 'user_only' and email_pt:
+        if button_pt:
             with gui_lock:
                 focus_window_by_pid(session.pid)
-                _click_bbox(email_pt, session, chrome_offset=chrome_offset)
-                time.sleep(0.3)
-                keyboard.hotkey('command', 'a')
-                time.sleep(0.1)
-                email_val = credentials.get('email', '')
-                if email_val:
-                    _enter_credential(email_val)
-                time.sleep(0.2)
-                keyboard.press_key('enter')
-            time.sleep(self.settle_delay)
-            return 'continue'
-
-        if page_type == 'pass_only' and password_pt:
-            with gui_lock:
-                focus_window_by_pid(session.pid)
-                _click_bbox(password_pt, session, chrome_offset=chrome_offset)
-                time.sleep(0.3)
-                keyboard.hotkey('command', 'a')
-                time.sleep(0.1)
-                pass_val = credentials.get('pass', '')
-                if pass_val:
-                    _enter_credential(pass_val)
-                time.sleep(0.2)
-                keyboard.press_key('enter')
+                _click_bbox(button_pt, session, chrome_offset=chrome_offset)
             time.sleep(self.settle_delay)
             return 'continue'
 

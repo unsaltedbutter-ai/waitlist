@@ -493,20 +493,22 @@ class TestVLMExecutorRun:
 # ---------------------------------------------------------------------------
 
 class TestSigninPageDispatch:
-    def test_user_pass(self):
-        """user_pass page triggers email + password + enter."""
+    def test_email_and_password_points(self):
+        """Both email and password points: types both and submits."""
         vlm = _make_vlm([USER_PASS_PAGE, SIGNED_IN, CANCEL_DONE])
         executor = VLMExecutor(vlm, settle_delay=0)
         result = executor.run('netflix', 'cancel', {'email': 'a@b.com', 'pass': 'x'})
         assert result.success
 
-    def test_user_only(self):
+    def test_email_point_only(self):
+        """Only email point (no password): types email and submits."""
         vlm = _make_vlm([USER_ONLY_PAGE, SIGNED_IN, CANCEL_DONE])
         executor = VLMExecutor(vlm, settle_delay=0)
         result = executor.run('netflix', 'cancel', {'email': 'a@b.com', 'pass': 'x'})
         assert result.success
 
-    def test_pass_only(self):
+    def test_password_point_only(self):
+        """Only password point (no email): types password and submits."""
         pass_only = {
             'page_type': 'pass_only',
             'email_point': None,
@@ -520,6 +522,21 @@ class TestSigninPageDispatch:
         result = executor.run('netflix', 'cancel', {'email': 'a@b.com', 'pass': 'x'})
         assert result.success
 
+    def test_email_point_with_button(self):
+        """Email point + button point: types email, clicks button to submit."""
+        page = {
+            'page_type': 'user_only',
+            'email_point': [400, 200],
+            'password_point': None,
+            'button_point': [400, 280],
+            'profile_point': None,
+            'code_points': None,
+        }
+        vlm = _make_vlm([page, SIGNED_IN, CANCEL_DONE])
+        executor = VLMExecutor(vlm, settle_delay=0)
+        result = executor.run('netflix', 'cancel', {'email': 'a@b.com', 'pass': 'x'})
+        assert result.success
+
     def test_profile_select_skips_to_cancel(self):
         """profile_select is treated as signed_in, skipping directly to cancel."""
         vlm = _make_vlm([PROFILE_SELECT_PAGE, CANCEL_DONE])
@@ -527,7 +544,8 @@ class TestSigninPageDispatch:
         result = executor.run('netflix', 'cancel', {'email': 'a', 'pass': 'b'})
         assert result.success
 
-    def test_button_only(self):
+    def test_button_point_only(self):
+        """Only button point (no fields): clicks the button."""
         button_only = {
             'page_type': 'button_only',
             'email_point': None,
@@ -539,6 +557,21 @@ class TestSigninPageDispatch:
         vlm = _make_vlm([button_only, SIGNED_IN, CANCEL_DONE])
         executor = VLMExecutor(vlm, settle_delay=0)
         result = executor.run('netflix', 'cancel', {'email': 'a', 'pass': 'b'})
+        assert result.success
+
+    def test_misclassified_page_type_uses_points(self):
+        """VLM says button_only but provides email_point: types email anyway."""
+        misclassified = {
+            'page_type': 'button_only',
+            'email_point': [400, 350],
+            'password_point': None,
+            'button_point': [650, 350],
+            'profile_point': None,
+            'code_points': None,
+        }
+        vlm = _make_vlm([misclassified, SIGNED_IN, CANCEL_DONE])
+        executor = VLMExecutor(vlm, settle_delay=0)
+        result = executor.run('netflix', 'cancel', {'email': 'a@b.com', 'pass': 'x'})
         assert result.success
 
     def test_spinner_continues(self):
