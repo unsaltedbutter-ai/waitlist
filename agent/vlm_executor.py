@@ -570,7 +570,7 @@ class VLMExecutor:
                     result = self._execute_signin_page(
                         response, scale_factor, session,
                         screenshot_b64, chrome_height_px,
-                        credentials, job_id,
+                        credentials, job_id, service,
                     )
                     step_count += 1
 
@@ -859,6 +859,7 @@ class VLMExecutor:
         chrome_offset: int,
         credentials: dict[str, str],
         job_id: str,
+        service: str = '',
     ) -> str:
         """Handle a sign-in page classification response.
 
@@ -912,7 +913,7 @@ class VLMExecutor:
         if page_type in ('email_code_single', 'email_code_multi',
                          'phone_code_single', 'phone_code_multi'):
             # OTP wait: no GUI lock held (other jobs can use GUI freely)
-            code = self._request_otp(job_id, credentials.get('email', ''))
+            code = self._request_otp(job_id, service)
             if not code:
                 return 'need_human'
 
