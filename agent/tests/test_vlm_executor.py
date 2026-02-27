@@ -56,7 +56,7 @@ CANCEL_CLICK = {
     'state': 'account page',
     'action': 'click',
     'target_description': 'Cancel Membership button',
-    'bounding_box': [100, 200, 300, 250],
+    'click_point': [200, 225],
 }
 
 RESUME_DONE = {
@@ -67,56 +67,56 @@ RESUME_DONE = {
 
 USER_PASS_PAGE = {
     'page_type': 'user_pass',
-    'email_box': [100, 200, 400, 230],
-    'password_box': [100, 260, 400, 290],
-    'button_box': [150, 320, 350, 360],
-    'profile_box': None,
-    'code_boxes': None,
+    'email_point': [250, 215],
+    'password_point': [250, 275],
+    'button_point': [250, 340],
+    'profile_point': None,
+    'code_points': None,
 }
 
 USER_ONLY_PAGE = {
     'page_type': 'user_only',
-    'email_box': [100, 200, 400, 230],
-    'password_box': None,
-    'button_box': [150, 270, 350, 300],
-    'profile_box': None,
-    'code_boxes': None,
+    'email_point': [250, 215],
+    'password_point': None,
+    'button_point': [250, 285],
+    'profile_point': None,
+    'code_points': None,
 }
 
 PROFILE_SELECT_PAGE = {
     'page_type': 'profile_select',
-    'email_box': None,
-    'password_box': None,
-    'button_box': None,
-    'profile_box': [200, 300, 400, 500],
-    'code_boxes': None,
+    'email_point': None,
+    'password_point': None,
+    'button_point': None,
+    'profile_point': [300, 400],
+    'code_points': None,
 }
 
 EMAIL_CODE_PAGE = {
     'page_type': 'email_code_single',
-    'email_box': None,
-    'password_box': None,
-    'button_box': [200, 400, 350, 440],
-    'profile_box': None,
-    'code_boxes': [{'label': 'code', 'box': [100, 300, 400, 340]}],
+    'email_point': None,
+    'password_point': None,
+    'button_point': [275, 420],
+    'profile_point': None,
+    'code_points': [{'label': 'code', 'point': [250, 320]}],
 }
 
 CAPTCHA_PAGE = {
     'page_type': 'captcha',
-    'email_box': None,
-    'password_box': None,
-    'button_box': None,
-    'profile_box': None,
-    'code_boxes': None,
+    'email_point': None,
+    'password_point': None,
+    'button_point': None,
+    'profile_point': None,
+    'code_points': None,
 }
 
 CREDENTIAL_ERROR_PAGE = {
     'page_type': 'credential_error',
-    'email_box': [100, 200, 400, 230],
-    'password_box': [100, 260, 400, 290],
-    'button_box': [150, 320, 350, 360],
-    'profile_box': None,
-    'code_boxes': None,
+    'email_point': [250, 215],
+    'password_point': [250, 275],
+    'button_point': [250, 340],
+    'profile_point': None,
+    'code_points': None,
 }
 
 
@@ -327,7 +327,7 @@ class TestVLMExecutorRun:
                 'state': f'page_{i}',
                 'action': 'click',
                 'target_description': f'button_{i}',
-                'bounding_box': [100 + i, 200, 300 + i, 250],
+                'click_point': [200 + i, 225],
             })
         responses = [SIGNED_IN] + click_responses
         vlm = _make_vlm(responses)
@@ -509,11 +509,11 @@ class TestSigninPageDispatch:
     def test_pass_only(self):
         pass_only = {
             'page_type': 'pass_only',
-            'email_box': None,
-            'password_box': [100, 200, 400, 230],
-            'button_box': None,
-            'profile_box': None,
-            'code_boxes': None,
+            'email_point': None,
+            'password_point': [250, 215],
+            'button_point': None,
+            'profile_point': None,
+            'code_points': None,
         }
         vlm = _make_vlm([pass_only, SIGNED_IN, CANCEL_DONE])
         executor = VLMExecutor(vlm, settle_delay=0)
@@ -529,11 +529,11 @@ class TestSigninPageDispatch:
     def test_button_only(self):
         button_only = {
             'page_type': 'button_only',
-            'email_box': None,
-            'password_box': None,
-            'button_box': [200, 300, 400, 340],
-            'profile_box': None,
-            'code_boxes': None,
+            'email_point': None,
+            'password_point': None,
+            'button_point': [300, 320],
+            'profile_point': None,
+            'code_points': None,
         }
         vlm = _make_vlm([button_only, SIGNED_IN, CANCEL_DONE])
         executor = VLMExecutor(vlm, settle_delay=0)
@@ -543,11 +543,11 @@ class TestSigninPageDispatch:
     def test_spinner_continues(self):
         spinner = {
             'page_type': 'spinner',
-            'email_box': None,
-            'password_box': None,
-            'button_box': None,
-            'profile_box': None,
-            'code_boxes': None,
+            'email_point': None,
+            'password_point': None,
+            'button_point': None,
+            'profile_point': None,
+            'code_points': None,
         }
         vlm = _make_vlm([spinner, SIGNED_IN, CANCEL_DONE])
         executor = VLMExecutor(vlm, settle_delay=0)
@@ -631,7 +631,7 @@ class TestAutoTypeAfterClick:
             'state': 'form',
             'action': 'click',
             'target_description': 'email input field',
-            'bounding_box': [100, 200, 400, 230],
+            'click_point': [250, 215],
         }
         vlm = _make_vlm([SIGNED_IN, click_email_field, CANCEL_DONE])
         executor = VLMExecutor(vlm, settle_delay=0)
@@ -646,7 +646,7 @@ class TestAutoTypeAfterClick:
             'state': 'account',
             'action': 'click',
             'target_description': 'Cancel Membership button',
-            'bounding_box': [100, 200, 300, 250],
+            'click_point': [200, 225],
         }
         vlm = _make_vlm([SIGNED_IN, click_button, CANCEL_DONE])
         executor = VLMExecutor(vlm, settle_delay=0)
@@ -704,7 +704,7 @@ class TestCredentialCallback:
             'state': 'payment',
             'action': 'click',
             'target_description': 'CVV input field',
-            'bounding_box': [100, 200, 300, 230],
+            'click_point': [200, 215],
         }
         loop = asyncio.new_event_loop()
         calls = []
@@ -916,7 +916,7 @@ class TestCredentialCallback:
             'state': 'payment page',
             'action': 'click',
             'target_description': 'Agree and Subscribe button',
-            'bounding_box': [100, 400, 300, 440],
+            'click_point': [200, 420],
         }
         # Sequence: sign-in, type_cvv (triggers callback), click_submit, done
         # The type_cvv adds one stuck entry. After credential receipt, stuck

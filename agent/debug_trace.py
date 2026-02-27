@@ -36,22 +36,24 @@ def _draw_bbox_overlay(
     # Collect (label, [x1, y1, x2, y2]) pairs from both response schemas
     boxes: list[tuple[str, list]] = []
 
-    # Cancel/resume schema: single bounding_box
-    bb = vlm_response.get('bounding_box')
-    if bb and len(bb) == 4:
+    # Cancel/resume schema: click_point
+    cp = vlm_response.get('click_point')
+    if cp and len(cp) == 2:
         label = vlm_response.get('target_description', 'target') or 'target'
-        boxes.append((label[:30], bb))
+        boxes.append((label[:30], cp))
 
-    # Sign-in schema: named boxes
-    for key in ('email_box', 'password_box', 'button_box', 'profile_box'):
-        box = vlm_response.get(key)
-        if box and len(box) == 4:
-            boxes.append((key, box))
+    # Sign-in schema: named points
+    for key in ('email_point', 'password_point', 'button_point', 'profile_point'):
+        pt = vlm_response.get(key)
+        if pt and len(pt) in (2, 4):
+            boxes.append((key, pt))
 
-    # Sign-in schema: code_boxes list
-    for cb in vlm_response.get('code_boxes') or []:
-        if isinstance(cb, dict) and cb.get('box') and len(cb['box']) == 4:
-            boxes.append((cb.get('label', 'code')[:30], cb['box']))
+    # Sign-in schema: code_points list
+    for cp_entry in vlm_response.get('code_points') or []:
+        if isinstance(cp_entry, dict) and cp_entry.get('point'):
+            pt = cp_entry['point']
+            if len(pt) in (2, 4):
+                boxes.append((cp_entry.get('label', 'code')[:30], pt))
 
     if not boxes:
         return None
@@ -66,16 +68,28 @@ def _draw_bbox_overlay(
         except Exception:
             font = ImageFont.load_default()
 
-        for label, box in boxes:
-            x1 = int(box[0] * scale_factor)
-            y1 = int(box[1] * scale_factor)
-            x2 = int(box[2] * scale_factor)
-            y2 = int(box[3] * scale_factor)
-            draw.rectangle([x1, y1, x2, y2], outline='red', width=3)
-            # Label background
-            text_bbox = draw.textbbox((x1, y1 - 16), label, font=font)
-            draw.rectangle(text_bbox, fill='red')
-            draw.text((x1, y1 - 16), label, fill='white', font=font)
+        for label, coords in boxes:
+            if len(coords) == 2:
+                # Point: draw crosshair
+                cx = int(coords[0] * scale_factor)
+                cy = int(coords[1] * scale_factor)
+                r = 8
+                draw.line([cx - r, cy, cx + r, cy], fill='red', width=3)
+                draw.line([cx, cy - r, cx, cy + r], fill='red', width=3)
+                draw.ellipse([cx - r, cy - r, cx + r, cy + r], outline='red', width=2)
+                text_bbox = draw.textbbox((cx - r, cy - r - 16), label, font=font)
+                draw.rectangle(text_bbox, fill='red')
+                draw.text((cx - r, cy - r - 16), label, fill='white', font=font)
+            else:
+                # Bounding box: draw rectangle
+                x1 = int(coords[0] * scale_factor)
+                y1 = int(coords[1] * scale_factor)
+                x2 = int(coords[2] * scale_factor)
+                y2 = int(coords[3] * scale_factor)
+                draw.rectangle([x1, y1, x2, y2], outline='red', width=3)
+                text_bbox = draw.textbbox((x1, y1 - 16), label, font=font)
+                draw.rectangle(text_bbox, fill='red')
+                draw.text((x1, y1 - 16), label, fill='white', font=font)
 
         buf = io.BytesIO()
         img.save(buf, format='PNG')

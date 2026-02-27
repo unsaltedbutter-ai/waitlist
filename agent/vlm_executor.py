@@ -198,9 +198,9 @@ def _click_bbox(bbox, session, chrome_offset: int = 0) -> None:
     MUST be called while holding gui_lock.
     """
     if len(bbox) == 2:
-        # Point coordinate: click with small Gaussian jitter
-        cx = bbox[0] + random.gauss(0, 3)
-        cy = bbox[1] + random.gauss(0, 3)
+        # Point coordinate: click with small Gaussian jitter (~16x16 target)
+        cx = bbox[0] + random.gauss(0, 4)
+        cy = bbox[1] + random.gauss(0, 4)
     elif len(bbox) >= 4:
         bw = bbox[2] - bbox[0]
         bh = bbox[3] - bbox[1]
@@ -626,7 +626,7 @@ class VLMExecutor:
                 state = response.get('state', '')
                 vlm_action = response.get('action', '')
                 target_desc = response.get('target_description', '')
-                bbox = response.get('bounding_box')
+                click_pt = response.get('click_point')
                 text_to_type = response.get('text_to_type', '')
                 key_to_press = response.get('key_to_press', '')
 
@@ -698,8 +698,8 @@ class VLMExecutor:
                     last_typed_cred_key = None
 
                 # Build pending_action (credentials resolved NOW, outside lock)
-                if vlm_action == 'click' and bbox:
-                    scaled_bbox = [int(c * scale_factor) for c in bbox]
+                if vlm_action == 'click' and click_pt:
+                    scaled_pt = [int(c * scale_factor) for c in click_pt]
                     auto_value = None
                     auto_hint = _infer_credential_from_target(target_desc)
                     if auto_hint:
@@ -716,7 +716,7 @@ class VLMExecutor:
                         auto_value = actual_value or None
                     pending_action = {
                         'type': 'click',
-                        'bbox': scaled_bbox,
+                        'bbox': scaled_pt,
                         'chrome_offset': chrome_height_px,
                         'auto_value': auto_value,
                     }
@@ -737,12 +737,12 @@ class VLMExecutor:
                             log.info('Job %s: credential %s already typed, waiting',
                                      job_id, cred_key)
                             pending_action = {'type': 'wait'}
-                        elif bbox:
+                        elif click_pt:
                             # Click the target field first, then type
-                            scaled_bbox = [int(c * scale_factor) for c in bbox]
+                            scaled_pt = [int(c * scale_factor) for c in click_pt]
                             pending_action = {
                                 'type': 'click',
-                                'bbox': scaled_bbox,
+                                'bbox': scaled_pt,
                                 'chrome_offset': chrome_height_px,
                                 'auto_value': actual_value,
                             }
@@ -846,28 +846,28 @@ class VLMExecutor:
         other concurrent jobs during the (potentially minutes-long) wait.
         """
 
-        def scale(box):
-            if box and len(box) == 4:
-                return [int(c * scale_factor) for c in box]
+        def scale(pt):
+            if pt and len(pt) in (2, 4):
+                return [int(c * scale_factor) for c in pt]
             return None
 
         page_type = response.get('page_type', 'unknown')
-        email_box = scale(response.get('email_box'))
-        password_box = scale(response.get('password_box'))
-        button_box = scale(response.get('button_box'))
-        profile_box = scale(response.get('profile_box'))
+        email_pt = scale(response.get('email_point'))
+        password_pt = scale(response.get('password_point'))
+        button_pt = scale(response.get('button_point'))
+        profile_pt = scale(response.get('profile_point'))
 
-        # Scale code_boxes list
-        raw_code_boxes = response.get('code_boxes') or []
-        code_boxes = []
-        for cb in raw_code_boxes:
-            if isinstance(cb, dict) and cb.get('box'):
-                scaled_box = scale(cb['box'])
-                if scaled_box:
-                    code_boxes.append({'label': cb.get('label', ''), 'box': scaled_box})
+        # Scale code_points list
+        raw_code_points = response.get('code_points') or []
+        code_points = []
+        for cp in raw_code_points:
+            if isinstance(cp, dict) and cp.get('point'):
+                scaled_pt = scale(cp['point'])
+                if scaled_pt:
+                    code_points.append({'label': cp.get('label', ''), 'point': scaled_pt})
 
         log.debug('Sign-in page_type=%s, email=%s, pass=%s, button=%s',
-                  page_type, email_box, password_box, button_box)
+                  page_type, email_pt, password_pt, button_pt)
 
         if page_type == 'credential_error':
             return 'credential_invalid'
@@ -898,16 +898,16 @@ class VLMExecutor:
                 focus_window_by_pid(session.pid)
                 _clipboard_copy(code)
 
-                if code_boxes:
-                    box = code_boxes[0]['box']
-                    _click_bbox(box, session, chrome_offset=chrome_offset)
+                if code_points:
+                    pt = code_points[0]['point']
+                    _click_bbox(pt, session, chrome_offset=chrome_offset)
                     time.sleep(0.5)
                 keyboard.hotkey('command', 'v')
                 time.sleep(0.3)
 
-                if button_box:
+                if button_pt:
                     time.sleep(0.3)
-                    _click_bbox(button_box, session, chrome_offset=chrome_offset)
+                    _click_bbox(button_pt, session, chrome_offset=chrome_offset)
                 else:
                     time.sleep(0.2)
                     keyboard.press_key('enter')
@@ -922,29 +922,29 @@ class VLMExecutor:
                 focus_window_by_pid(session.pid)
                 for act in actions:
                     act_type = act.get('action', '')
-                    box = scale(act.get('box'))
-                    if act_type in ('click', 'dismiss') and box:
-                        _click_bbox(box, session, chrome_offset=chrome_offset)
+                    pt = scale(act.get('point'))
+                    if act_type in ('click', 'dismiss') and pt:
+                        _click_bbox(pt, session, chrome_offset=chrome_offset)
                         time.sleep(0.5)
             return 'continue'
 
-        if page_type == 'profile_select' and profile_box:
+        if page_type == 'profile_select' and profile_pt:
             with gui_lock:
                 focus_window_by_pid(session.pid)
-                _click_bbox(profile_box, session, chrome_offset=chrome_offset)
+                _click_bbox(profile_pt, session, chrome_offset=chrome_offset)
             return 'continue'
 
-        if page_type == 'button_only' and button_box:
+        if page_type == 'button_only' and button_pt:
             with gui_lock:
                 focus_window_by_pid(session.pid)
-                _click_bbox(button_box, session, chrome_offset=chrome_offset)
+                _click_bbox(button_pt, session, chrome_offset=chrome_offset)
             return 'continue'
 
-        if page_type == 'user_pass' and email_box:
+        if page_type == 'user_pass' and email_pt:
             with gui_lock:
                 focus_window_by_pid(session.pid)
                 # Click email, select-all, type, tab/paste password, enter
-                _click_bbox(email_box, session, chrome_offset=chrome_offset)
+                _click_bbox(email_pt, session, chrome_offset=chrome_offset)
                 time.sleep(0.3)
                 keyboard.hotkey('command', 'a')
                 time.sleep(0.1)
@@ -953,14 +953,14 @@ class VLMExecutor:
                 if email_val:
                     email_pasted = _enter_credential(email_val)
 
-                if email_pasted and password_box:
+                if email_pasted and password_pt:
                     # Simulate password manager: app switch, wait, refocus
                     time.sleep(random.uniform(0.3, 0.6))
                     _simulate_app_switch(session)
                     time.sleep(random.uniform(2.0, 4.0))
                     focus_window_by_pid(session.pid)
                     _click_bbox(
-                        password_box, session,
+                        password_pt, session,
                         chrome_offset=chrome_offset,
                     )
                     time.sleep(0.2)
@@ -974,12 +974,12 @@ class VLMExecutor:
                     time.sleep(0.2)
                     keyboard.press_key('enter')
                     time.sleep(1.0)
-                elif email_pasted and not password_box:
+                elif email_pasted and not password_pt:
                     # VLM didn't find password field; skip password entry.
                     # Next step will re-evaluate (likely pass_only or user_pass).
-                    log.warning('user_pass: password_box is null, skipping password entry')
+                    log.warning('user_pass: password_point is null, skipping password entry')
                     time.sleep(0.5)
-                elif not email_pasted and password_box:
+                elif not email_pasted and password_pt:
                     # Email entry failed; try tabbing to password
                     time.sleep(0.2)
                     keyboard.press_key('tab')
@@ -994,14 +994,14 @@ class VLMExecutor:
                     time.sleep(1.0)
                 else:
                     # Neither worked; let next step retry
-                    log.warning('user_pass: email paste failed and no password_box')
+                    log.warning('user_pass: email paste failed and no password_point')
                     time.sleep(0.5)
             return 'continue'
 
-        if page_type == 'user_only' and email_box:
+        if page_type == 'user_only' and email_pt:
             with gui_lock:
                 focus_window_by_pid(session.pid)
-                _click_bbox(email_box, session, chrome_offset=chrome_offset)
+                _click_bbox(email_pt, session, chrome_offset=chrome_offset)
                 time.sleep(0.3)
                 keyboard.hotkey('command', 'a')
                 time.sleep(0.1)
@@ -1013,10 +1013,10 @@ class VLMExecutor:
                 time.sleep(1.0)
             return 'continue'
 
-        if page_type == 'pass_only' and password_box:
+        if page_type == 'pass_only' and password_pt:
             with gui_lock:
                 focus_window_by_pid(session.pid)
-                _click_bbox(password_box, session, chrome_offset=chrome_offset)
+                _click_bbox(password_pt, session, chrome_offset=chrome_offset)
                 time.sleep(0.3)
                 keyboard.hotkey('command', 'a')
                 time.sleep(0.1)

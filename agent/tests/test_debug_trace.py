@@ -43,7 +43,7 @@ _SAMPLE_RESPONSE = {
     'state': 'account page',
     'action': 'click',
     'target_description': 'Cancel button',
-    'bounding_box': [100, 200, 300, 250],
+    'click_point': [200, 225],
 }
 
 
@@ -454,43 +454,43 @@ class TestDrawBboxOverlay:
         expected_bytes = base64.b64decode(_TEST_PNG)
         assert original_bytes == expected_bytes
 
-    def test_signin_response_boxes(self):
-        """Sign-in response with email_box, password_box, button_box."""
+    def test_signin_response_points(self):
+        """Sign-in response with email_point, password_point, button_point."""
         response = {
             'page_type': 'user_pass',
-            'email_box': [10, 20, 200, 50],
-            'password_box': [10, 70, 200, 100],
-            'button_box': [50, 120, 150, 150],
-            'profile_box': None,
-            'code_boxes': None,
+            'email_point': [105, 35],
+            'password_point': [105, 85],
+            'button_point': [100, 135],
+            'profile_point': None,
+            'code_points': None,
         }
         result = _draw_bbox_overlay(_TEST_PNG, response, 1.0)
         assert result is not None
         img = Image.open(io.BytesIO(result))
         assert img.size == (800, 600)
 
-    def test_code_boxes_handled(self):
-        """code_boxes list entries are drawn."""
+    def test_code_points_handled(self):
+        """code_points list entries are drawn."""
         response = {
             'page_type': 'email_code_single',
-            'email_box': None,
-            'password_box': None,
-            'button_box': [200, 400, 350, 440],
-            'profile_box': None,
-            'code_boxes': [{'label': 'code', 'box': [100, 300, 400, 340]}],
+            'email_point': None,
+            'password_point': None,
+            'button_point': [275, 420],
+            'profile_point': None,
+            'code_points': [{'label': 'code', 'point': [250, 320]}],
         }
         result = _draw_bbox_overlay(_TEST_PNG, response, 1.0)
         assert result is not None
 
     def test_scale_factor_applied(self):
-        """Bboxes are scaled by scale_factor (VLM coords != image coords)."""
+        """Points are scaled by scale_factor (VLM coords != image coords)."""
         response = {
             'state': 'page',
             'action': 'click',
             'target_description': 'button',
-            'bounding_box': [100, 100, 200, 200],
+            'click_point': [150, 150],
         }
-        # scale_factor=2.0 means box drawn at [200,200,400,400]
+        # scale_factor=2.0 means point drawn at [300, 300]
         result = _draw_bbox_overlay(_TEST_PNG, response, 2.0)
         assert result is not None
         # Check the overlay is different from a 1.0 scale overlay

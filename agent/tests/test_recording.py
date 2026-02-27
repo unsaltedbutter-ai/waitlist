@@ -110,9 +110,9 @@ class TestBuildSigninPrompt:
     def test_contains_response_schema(self) -> None:
         prompt = build_signin_prompt('netflix')
         assert '"page_type"' in prompt
-        assert '"email_box"' in prompt
-        assert '"password_box"' in prompt
-        assert '"code_boxes"' in prompt
+        assert '"email_point"' in prompt
+        assert '"password_point"' in prompt
+        assert '"code_points"' in prompt
         assert '"actions"' in prompt
 
     @_skip_without_private
@@ -164,14 +164,14 @@ class TestBuildCancelPrompt:
         assert 'retention' in prompt.lower()
 
     @_skip_without_private
-    def test_contains_service_specific_urls(self) -> None:
+    def test_contains_service_specific_labels(self) -> None:
         prompt = build_cancel_prompt('netflix')
-        assert 'cancelplan' in prompt
+        assert 'Cancel Membership' in prompt
 
     @_skip_without_private
     def test_contains_response_schema(self) -> None:
         prompt = build_cancel_prompt('netflix')
-        assert '"bounding_box"' in prompt
+        assert '"click_point"' in prompt
 
     def test_unknown_service(self) -> None:
         prompt = build_cancel_prompt('foobar')
