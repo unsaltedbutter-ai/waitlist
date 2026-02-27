@@ -84,7 +84,8 @@ SCREENSHOT_DIR = Path('/tmp/ub-screenshots')
 STEP_TIMEOUT = 60.0
 TOTAL_EXECUTION_TIMEOUT = 300.0
 PAGE_LOAD_WAIT = 2.5
-SETTLE_DELAY = float(os.getenv('SETTLE_DELAY', '2.5'))
+# SETTLE_DELAY: read at runtime via os.environ.get('SETTLE_DELAY', '2.5')
+# in VLMExecutor.__init__ to avoid stale import-time reads.
 
 # --- Recording ---
 RECORD_DWELL_THRESHOLD_SEC = 3.0

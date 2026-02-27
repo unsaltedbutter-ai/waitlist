@@ -27,6 +27,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import logging
+import os
 import random
 import subprocess
 import time
@@ -34,7 +35,7 @@ from typing import Callable
 
 from agent import browser
 from agent import screenshot as ss
-from agent.config import ACCOUNT_URLS, SETTLE_DELAY, SERVICE_URLS
+from agent.config import ACCOUNT_URLS, SERVICE_URLS
 from agent.debug_trace import DebugTrace
 from agent.gui_lock import gui_lock
 from agent.input import coords, keyboard, mouse, scroll as scroll_mod
@@ -311,7 +312,10 @@ class VLMExecutor:
         self._otp_callback = otp_callback
         self._credential_callback = credential_callback
         self._loop = loop
-        self.settle_delay = settle_delay if settle_delay is not None else SETTLE_DELAY
+        if settle_delay is not None:
+            self.settle_delay = settle_delay
+        else:
+            self.settle_delay = float(os.environ.get('SETTLE_DELAY', '2.5'))
         self.max_steps = max_steps
         self._debug = debug
 
