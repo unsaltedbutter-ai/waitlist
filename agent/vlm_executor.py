@@ -953,14 +953,14 @@ class VLMExecutor:
                 if email_val:
                     email_pasted = _enter_credential(email_val)
 
-                if email_pasted:
+                if email_pasted and password_box:
                     # Simulate password manager: app switch, wait, refocus
                     time.sleep(random.uniform(0.3, 0.6))
                     _simulate_app_switch(session)
                     time.sleep(random.uniform(2.0, 4.0))
                     focus_window_by_pid(session.pid)
                     _click_bbox(
-                        password_box or email_box, session,
+                        password_box, session,
                         chrome_offset=chrome_offset,
                     )
                     time.sleep(0.2)
@@ -971,7 +971,16 @@ class VLMExecutor:
                         _clipboard_copy(pass_val)
                         keyboard.hotkey('command', 'v')
                         time.sleep(0.15)
-                else:
+                    time.sleep(0.2)
+                    keyboard.press_key('enter')
+                    time.sleep(1.0)
+                elif email_pasted and not password_box:
+                    # VLM didn't find password field; skip password entry.
+                    # Next step will re-evaluate (likely pass_only or user_pass).
+                    log.warning('user_pass: password_box is null, skipping password entry')
+                    time.sleep(0.5)
+                elif not email_pasted and password_box:
+                    # Email entry failed; try tabbing to password
                     time.sleep(0.2)
                     keyboard.press_key('tab')
                     time.sleep(0.2)
@@ -980,10 +989,13 @@ class VLMExecutor:
                     pass_val = credentials.get('pass', '')
                     if pass_val:
                         _enter_credential(pass_val)
-
-                time.sleep(0.2)
-                keyboard.press_key('enter')
-                time.sleep(1.0)
+                    time.sleep(0.2)
+                    keyboard.press_key('enter')
+                    time.sleep(1.0)
+                else:
+                    # Neither worked; let next step retry
+                    log.warning('user_pass: email paste failed and no password_box')
+                    time.sleep(0.5)
             return 'continue'
 
         if page_type == 'user_only' and email_box:
