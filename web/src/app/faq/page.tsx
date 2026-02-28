@@ -23,7 +23,7 @@ export default async function FaqPage() {
 
   const items = faqData.map((item) => ({
     ...item,
-    answer: item.answer.replace(/3,000 sats/g, `${priceFormatted} sats`),
+    answer: item.answer.replace(/\{\{PRICE\}\}/g, priceFormatted),
   }));
 
   return (

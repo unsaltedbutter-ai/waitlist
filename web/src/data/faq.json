@@ -12,7 +12,7 @@
   {
     "id": "how-much",
     "question": "How much does it cost?",
-    "answer": "3,000 sats per action (one cancel or one resume). No subscriptions, no prepaid balance, no hidden fees. You pay after the job is done."
+    "answer": "{{PRICE}} sats per action (one cancel or one resume). The price may vary over time, but if/when NgU, the price goes down. No subscriptions, no prepaid balance, no hidden fees. You pay after the job is done."
   },
   {
     "id": "which-services",
@@ -22,12 +22,12 @@
   {
     "id": "why-no-apple",
     "question": "Why don't you support Apple TV+?",
-    "answer": "We figure your Apple TV+ account is combined with your iCloud account. We don't want your Apple ID credentials."
+    "answer": "Your Apple TV+ account is combined with your iCloud account. I don't want your Apple ID credentials."
   },
   {
     "id": "why-no-prime",
     "question": "Why don't you support Amazon Prime Video?",
-    "answer": "We figure your Prime Video account is combined with your Amazon Prime Shipping account. We don't want your Amazon credentials."
+    "answer": "Your Prime Video account is combined with your Amazon Prime Shipping account. I don't want your Amazon credentials."
   },
   {
     "id": "why-no-email",
@@ -37,17 +37,17 @@
   {
     "id": "how-pay",
     "question": "How do I pay?",
-    "answer": "Lightning. We're Bitcoin only. After a cancel or resume completes, you receive a Lightning invoice via nostr DM."
+    "answer": "Lightning. Bitcoin only. After a cancel or resume completes, you receive a Lightning invoice via nostr DM."
   },
   {
     "id": "when-pay",
     "question": "When do I pay?",
-    "answer": "After we succeed in cancelling/resuming your subscription, we'll send you a nostr DM with a Lightning invoice."
+    "answer": "After the cancel or resume succeeds, I send you a nostr DM with a Lightning invoice."
   },
   {
     "id": "what-if-fail",
     "question": "What happens if a cancel or resume fails?",
-    "answer": "You get a DM explaining what happened. If we fail, no charge to you."
+    "answer": "You get a DM explaining what happened. If I fail, no charge."
   },
   {
     "id": "why-no-fiat",
@@ -67,12 +67,12 @@
   {
     "id": "how-join",
     "question": "How do I join?",
-    "answer": "Submit your Nostr npub on the waitlist, or DM \"waitlist\" to the bot. We invite people in order."
+    "answer": "Submit your Nostr npub on the waitlist, or DM \"waitlist\" to the bot. Invites go out in order."
   },
   {
     "id": "billing-dates",
     "question": "How does UnsaltedButter know my billing date?",
-    "answer": "Billing dates are captured directly from the cancel confirmation screen shown by the streaming service. We never guess or assume your billing cycle."
+    "answer": "Billing dates are captured directly from the streaming service account page. Never guessed or assumed."
   },
   {
     "id": "delete-account",
