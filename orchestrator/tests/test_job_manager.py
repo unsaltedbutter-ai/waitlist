@@ -1147,6 +1147,238 @@ async def test_try_dispatch_next_skips_vanished_jobs(deps):
     session.handle_otp_confirm_yes.assert_awaited_once_with("npub1carol")
 
 
+# ------------------------------------------------------------------
+# send_batch_outreach
+# ------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_send_batch_outreach_two_cancel_jobs(deps):
+    """Two cancel jobs for the same user produce one consolidated DM."""
+    jm = deps["jm"]
+    db = deps["db"]
+    api = deps["api"]
+    send_dm = deps["send_dm"]
+
+    job_a = _make_job(job_id="job-a", service_id="netflix")
+    job_b = _make_job(job_id="job-b", service_id="hulu")
+    await db.upsert_job(job_a)
+    await db.upsert_job(job_b)
+    api.get_user.return_value = {"debt_sats": 0}
+    api.update_job_status.return_value = {"job": {}}
+
+    await jm.send_batch_outreach([job_a, job_b])
+
+    # One DM sent (not two)
+    send_dm.assert_awaited_once()
+    msg = send_dm.call_args[0][1]
+    assert "Netflix" in msg
+    assert "Hulu" in msg
+    assert "cancel" in msg.lower()
+
+    # Both jobs updated locally
+    local_a = await db.get_job("job-a")
+    local_b = await db.get_job("job-b")
+    assert local_a["status"] == "outreach_sent"
+    assert local_b["status"] == "outreach_sent"
+
+    # VPS updated for each
+    assert api.update_job_status.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_send_batch_outreach_resume_jobs(deps):
+    """Resume batch uses outreach_resume_batch template."""
+    jm = deps["jm"]
+    db = deps["db"]
+    api = deps["api"]
+    send_dm = deps["send_dm"]
+
+    job_a = _make_job(job_id="job-a", service_id="netflix", action="resume")
+    job_b = _make_job(job_id="job-b", service_id="hulu", action="resume")
+    await db.upsert_job(job_a)
+    await db.upsert_job(job_b)
+    api.get_user.return_value = {"debt_sats": 0}
+    api.update_job_status.return_value = {"job": {}}
+
+    await jm.send_batch_outreach([job_a, job_b])
+
+    msg = send_dm.call_args[0][1]
+    assert "resume" in msg.lower()
+    assert "reactivate" in msg
+
+
+@pytest.mark.asyncio
+async def test_send_batch_outreach_user_busy(deps):
+    """Batch outreach skipped if user is busy."""
+    jm = deps["jm"]
+    db = deps["db"]
+    session = deps["session"]
+    send_dm = deps["send_dm"]
+
+    job = _make_job()
+    await db.upsert_job(job)
+    session.is_busy.return_value = True
+
+    await jm.send_batch_outreach([job])
+
+    send_dm.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_send_batch_outreach_user_has_debt(deps):
+    """Batch outreach sends debt_block if user has debt."""
+    jm = deps["jm"]
+    db = deps["db"]
+    api = deps["api"]
+    send_dm = deps["send_dm"]
+
+    job = _make_job()
+    await db.upsert_job(job)
+    api.get_user.return_value = {"debt_sats": 5000}
+
+    await jm.send_batch_outreach([job])
+
+    send_dm.assert_awaited_once()
+    msg = send_dm.call_args[0][1]
+    assert "5,000" in msg
+
+
+@pytest.mark.asyncio
+async def test_poll_and_claim_batches_same_user_cancels(deps):
+    """Two cancel jobs for the same user are sent as one batch DM."""
+    jm = deps["jm"]
+    api = deps["api"]
+    db = deps["db"]
+    send_dm = deps["send_dm"]
+
+    job_a = _make_job(job_id="job-a", service_id="netflix", status="pending")
+    job_b = _make_job(job_id="job-b", service_id="hulu", status="pending")
+    api.get_pending_jobs.return_value = [job_a, job_b]
+    api.claim_jobs.return_value = {
+        "claimed": [{"id": "job-a"}, {"id": "job-b"}],
+        "blocked": [],
+    }
+    api.get_user.return_value = {"debt_sats": 0}
+    api.update_job_status.return_value = {"job": {}}
+
+    claimed = await jm.poll_and_claim()
+
+    assert len(claimed) == 2
+    # One batch DM, not two individual DMs
+    send_dm.assert_awaited_once()
+    msg = send_dm.call_args[0][1]
+    assert "Netflix" in msg
+    assert "Hulu" in msg
+
+
+@pytest.mark.asyncio
+async def test_poll_and_claim_mixed_actions_not_batched(deps):
+    """Cancel + resume for the same user are NOT batched together."""
+    jm = deps["jm"]
+    api = deps["api"]
+    db = deps["db"]
+    send_dm = deps["send_dm"]
+
+    job_a = _make_job(job_id="job-a", service_id="netflix", action="cancel", status="pending")
+    job_b = _make_job(job_id="job-b", service_id="hulu", action="resume", status="pending")
+    api.get_pending_jobs.return_value = [job_a, job_b]
+    api.claim_jobs.return_value = {
+        "claimed": [{"id": "job-a"}, {"id": "job-b"}],
+        "blocked": [],
+    }
+    api.get_user.return_value = {"debt_sats": 0}
+    api.update_job_status.return_value = {"job": {}}
+
+    await jm.poll_and_claim()
+
+    # Two individual DMs (different actions, not batched)
+    assert send_dm.await_count == 2
+
+
+# ------------------------------------------------------------------
+# get_outreach_job_for_user_service
+# ------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_get_outreach_job_for_user_service_found(deps):
+    """Finds an outreach job matching user+service+action."""
+    jm = deps["jm"]
+    db = deps["db"]
+
+    await db.upsert_job(_make_job(status="outreach_sent"))
+
+    result = await jm.get_outreach_job_for_user_service(
+        "npub1alice", "netflix", "cancel"
+    )
+    assert result is not None
+    assert result["id"] == "job-1"
+
+
+@pytest.mark.asyncio
+async def test_get_outreach_job_for_user_service_wrong_action(deps):
+    """Does not match if action differs."""
+    jm = deps["jm"]
+    db = deps["db"]
+
+    await db.upsert_job(_make_job(status="outreach_sent", action="cancel"))
+
+    result = await jm.get_outreach_job_for_user_service(
+        "npub1alice", "netflix", "resume"
+    )
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_get_outreach_job_for_user_service_terminal(deps):
+    """Does not match terminal jobs."""
+    jm = deps["jm"]
+    db = deps["db"]
+
+    await db.upsert_job(_make_job(status="completed_paid"))
+
+    result = await jm.get_outreach_job_for_user_service(
+        "npub1alice", "netflix", "cancel"
+    )
+    assert result is None
+
+
+# ------------------------------------------------------------------
+# get_outreach_jobs_for_user_action
+# ------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_get_outreach_jobs_for_user_action(deps):
+    """Returns all outreach jobs for a user matching a specific action."""
+    jm = deps["jm"]
+    db = deps["db"]
+
+    await db.upsert_job(_make_job(job_id="job-a", service_id="netflix", status="outreach_sent"))
+    await db.upsert_job(_make_job(job_id="job-b", service_id="hulu", status="outreach_sent"))
+    await db.upsert_job(_make_job(job_id="job-c", service_id="max", action="resume", status="outreach_sent"))
+
+    result = await jm.get_outreach_jobs_for_user_action("npub1alice", "cancel")
+    assert len(result) == 2
+    ids = {j["id"] for j in result}
+    assert ids == {"job-a", "job-b"}
+
+
+@pytest.mark.asyncio
+async def test_get_outreach_jobs_for_user_action_empty(deps):
+    """Returns empty list when no matching outreach jobs."""
+    jm = deps["jm"]
+
+    result = await jm.get_outreach_jobs_for_user_action("npub1alice", "cancel")
+    assert result == []
+
+
+# ------------------------------------------------------------------
+# Concurrent dispatch
+# ------------------------------------------------------------------
+
+
 @pytest.mark.asyncio
 async def test_concurrent_on_job_complete_does_not_exceed_max(deps):
     """Two concurrent on_job_complete calls should not dispatch more than max_concurrent."""

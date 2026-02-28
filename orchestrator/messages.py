@@ -50,6 +50,36 @@ def outreach_cancel_no_date(service_id: str) -> str:
     )
 
 
+def outreach_cancel_batch(service_ids: list[str]) -> str:
+    """Consolidated outreach for multiple cancel jobs on the same user.
+
+    Sends one DM listing all services instead of spamming separate messages.
+    """
+    names = [display_name(sid) for sid in service_ids]
+    if len(names) == 2:
+        joined = f"{names[0]} or {names[1]}"
+    else:
+        joined = ", ".join(names[:-1]) + f", or {names[-1]}"
+    return (
+        f"Do you want to cancel {joined} today to avoid being billed for "
+        f"another month? Reply 'cancel' and the name of the service and "
+        f"we'll cancel it for you."
+    )
+
+
+def outreach_resume_batch(service_ids: list[str]) -> str:
+    """Consolidated outreach for multiple resume jobs on the same user."""
+    names = [display_name(sid) for sid in service_ids]
+    if len(names) == 2:
+        joined = f"{names[0]} or {names[1]}"
+    else:
+        joined = ", ".join(names[:-1]) + f", or {names[-1]}"
+    return (
+        f"Want to resume {joined}? Reply 'resume' and the name of the "
+        f"service and we'll reactivate it for you."
+    )
+
+
 def outreach_resume(service_id: str, ending_service: str | None = None) -> str:
     """Outreach for a resume job. Optionally mention which service is ending."""
     name = display_name(service_id)
@@ -357,6 +387,14 @@ def operator_job_failed(job_id: str, service_id: str, error: str | None) -> str:
     if error:
         msg += f"\nError: {error}"
     return msg
+
+
+def bare_action_hint(action: str) -> str:
+    """Hint when user says 'cancel' or 'resume' with no service name."""
+    return (
+        f"What do you want to {action}? "
+        f"Say something like '{action} netflix' or '{action} disney+'"
+    )
 
 
 def operator_agent_down(minutes: int) -> str:

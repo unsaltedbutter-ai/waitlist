@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections import defaultdict
 from datetime import datetime, timezone, timedelta
 
 import messages
@@ -113,8 +114,28 @@ class JobManager:
             await self._db.upsert_job(job)
             claimed_jobs.append(job)
 
-        # Send outreach for each claimed job
+        # Group first-outreach jobs by (user, action) for batch outreach.
+        # Jobs that are immediate, followups, or single-per-group go individually.
+        user_action_jobs: dict[tuple[str, str], list[dict]] = defaultdict(list)
+        individual_jobs: list[dict] = []
+
         for job in claimed_jobs:
+            if (
+                job.get("outreach_count", 0) == 0
+                and job["id"] not in self._immediate_jobs
+            ):
+                key = (job["user_npub"], job["action"])
+                user_action_jobs[key].append(job)
+            else:
+                individual_jobs.append(job)
+
+        for (_user_npub, _action), jobs in user_action_jobs.items():
+            if len(jobs) >= 2:
+                await self.send_batch_outreach(jobs)
+            else:
+                individual_jobs.extend(jobs)
+
+        for job in individual_jobs:
             await self.send_outreach(job["id"])
 
         return claimed_jobs
@@ -233,6 +254,88 @@ class JobManager:
                     "Could not parse billing_date %s for job %s",
                     billing_date, job_id,
                 )
+
+    async def send_batch_outreach(self, jobs: list[dict]) -> None:
+        """Send one consolidated DM for multiple jobs of the same action to the same user.
+
+        Used when the cron creates several cancel (or resume) jobs for one user
+        at the same time. Sends a single DM listing all services instead of
+        spamming one DM per service.
+        """
+        if not jobs:
+            return
+
+        user_npub = jobs[0]["user_npub"]
+        action = jobs[0]["action"]
+
+        # Check if user is busy
+        if await self._session.is_busy(user_npub):
+            log.info(
+                "send_batch_outreach: user %s is busy, skipping %d jobs",
+                user_npub, len(jobs),
+            )
+            return
+
+        # Check if user has debt
+        user_data = await self._api.get_user(user_npub)
+        debt_sats = user_data.get("debt_sats", 0) if user_data else 0
+        if debt_sats > 0:
+            await self._send_dm(user_npub, messages.debt_block(debt_sats))
+            return
+
+        # Build and send batch message
+        service_ids = [j["service_id"] for j in jobs]
+        if action == "cancel":
+            msg = messages.outreach_cancel_batch(service_ids)
+        else:
+            msg = messages.outreach_resume_batch(service_ids)
+        await self._send_dm(user_npub, msg)
+
+        # Update each job individually (VPS status, local DB, timers)
+        for job in jobs:
+            job_id = job["id"]
+            new_count = job.get("outreach_count", 0) + 1
+            next_outreach_at = (
+                datetime.now(timezone.utc)
+                + timedelta(seconds=self._config.outreach_interval_seconds)
+            ).isoformat()
+
+            try:
+                await self._api.update_job_status(
+                    job_id,
+                    "outreach_sent",
+                    outreach_count=new_count,
+                    next_outreach_at=next_outreach_at,
+                )
+            except Exception:
+                log.exception("Failed to update VPS for job %s", job_id)
+
+            await self._db.update_job_status(
+                job_id,
+                "outreach_sent",
+                outreach_count=new_count,
+                next_outreach_at=next_outreach_at,
+            )
+
+            await self._timers.schedule_delay(
+                OUTREACH,
+                job_id,
+                self._config.outreach_interval_seconds,
+            )
+
+            billing_date = job.get("billing_date")
+            if billing_date:
+                try:
+                    bd = datetime.fromisoformat(billing_date)
+                    if bd.tzinfo is None:
+                        bd = bd.replace(tzinfo=timezone.utc)
+                    if bd > datetime.now(timezone.utc):
+                        await self._timers.schedule(IMPLIED_SKIP, job_id, bd)
+                except (ValueError, TypeError):
+                    log.warning(
+                        "Could not parse billing_date %s for job %s",
+                        billing_date, job_id,
+                    )
 
     async def handle_skip(self, user_npub: str, job_id: str) -> None:
         """User says 'skip' to outreach. Mark user_skip, stay IDLE."""
@@ -497,6 +600,38 @@ class JobManager:
             if job["status"] in _OUTREACH_STATUSES:
                 return job
         return None
+
+    async def get_outreach_job_for_user_service(
+        self, user_npub: str, service_id: str, action: str
+    ) -> dict | None:
+        """Find an outreach-eligible job matching user+service+action.
+
+        Used when a user replies "cancel netflix" to find the existing
+        scheduled job instead of creating a duplicate on-demand job.
+        """
+        jobs = await self._db.get_jobs_for_user(user_npub)
+        for job in jobs:
+            if (
+                job["status"] in _OUTREACH_STATUSES
+                and job["service_id"] == service_id
+                and job["action"] == action
+            ):
+                return job
+        return None
+
+    async def get_outreach_jobs_for_user_action(
+        self, user_npub: str, action: str
+    ) -> list[dict]:
+        """Get all outreach-eligible jobs for a user matching a specific action.
+
+        Used when user sends bare "cancel" or "resume" with no service name
+        to check if they have exactly one relevant outreach job.
+        """
+        jobs = await self._db.get_jobs_for_user(user_npub)
+        return [
+            j for j in jobs
+            if j["status"] in _OUTREACH_STATUSES and j["action"] == action
+        ]
 
     async def reconcile_cancelled_jobs(self, cancelled: list[dict]) -> int:
         """Clean up jobs the VPS reports as terminal. Returns count reconciled."""

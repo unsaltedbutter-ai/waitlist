@@ -50,6 +50,10 @@ def _make_router(
     job_manager.agent_slot_available = MagicMock(return_value=True)
     job_manager.mark_immediate = MagicMock()
 
+    # Default: no existing outreach job for user+service
+    job_manager.get_outreach_job_for_user_service.return_value = None
+    job_manager.get_outreach_jobs_for_user_action.return_value = []
+
     # Default session.get_state to IDLE, get_current_job to None
     session.get_state.return_value = IDLE
     session.get_current_job.return_value = None
@@ -1129,3 +1133,140 @@ async def test_whitespace_trimmed():
 
     await router.handle_dm(ALICE, "  help  ")
     deps["send_dm"].assert_awaited_once_with(ALICE, messages.help_text())
+
+
+# ==================================================================
+# Bare cancel / resume (no service specified)
+# ==================================================================
+
+
+@pytest.mark.asyncio
+async def test_bare_cancel_one_outreach_job_auto_confirms():
+    """Bare 'cancel' with exactly one outreach cancel job should confirm it."""
+    router, deps = _make_router()
+    outreach_job = _make_job(service_id="netflix", action="cancel")
+    deps["job_manager"].get_outreach_jobs_for_user_action.return_value = [outreach_job]
+
+    await router.handle_dm(ALICE, "cancel")
+
+    deps["session"].handle_yes.assert_awaited_once_with(ALICE, "job-1")
+    deps["send_dm"].assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_bare_cancel_multiple_outreach_jobs_shows_hint():
+    """Bare 'cancel' with multiple outreach jobs should show hint."""
+    router, deps = _make_router()
+    deps["job_manager"].get_outreach_jobs_for_user_action.return_value = [
+        _make_job(job_id="job-a", service_id="netflix"),
+        _make_job(job_id="job-b", service_id="hulu"),
+    ]
+
+    await router.handle_dm(ALICE, "cancel")
+
+    deps["send_dm"].assert_awaited_once()
+    msg = deps["send_dm"].call_args[0][1]
+    assert "cancel netflix" in msg or "cancel" in msg
+
+
+@pytest.mark.asyncio
+async def test_bare_cancel_no_outreach_one_service_auto_resolves():
+    """Bare 'cancel' with no outreach but one queue service auto-resolves."""
+    router, deps = _make_router()
+    deps["job_manager"].get_outreach_jobs_for_user_action.return_value = []
+    deps["api"].get_user.return_value = {
+        "debt_sats": 0,
+        "queue": [{"service_id": "netflix", "position": 1}],
+    }
+    deps["api"].create_on_demand_job.return_value = {
+        "status_code": 200,
+        "data": {"job_id": "job-new"},
+    }
+
+    await router.handle_dm(ALICE, "cancel")
+
+    deps["api"].create_on_demand_job.assert_awaited_once_with(
+        ALICE, "netflix", "cancel"
+    )
+
+
+@pytest.mark.asyncio
+async def test_bare_cancel_no_outreach_multiple_services_shows_hint():
+    """Bare 'cancel' with no outreach and multiple services shows hint."""
+    router, deps = _make_router()
+    deps["job_manager"].get_outreach_jobs_for_user_action.return_value = []
+    deps["api"].get_user.return_value = {
+        "debt_sats": 0,
+        "queue": [
+            {"service_id": "netflix", "position": 1},
+            {"service_id": "hulu", "position": 2},
+        ],
+    }
+
+    await router.handle_dm(ALICE, "cancel")
+
+    deps["send_dm"].assert_awaited_once()
+    msg = deps["send_dm"].call_args[0][1]
+    assert "cancel" in msg
+
+
+@pytest.mark.asyncio
+async def test_bare_resume_one_outreach_auto_confirms():
+    """Bare 'resume' with one outreach resume job auto-confirms."""
+    router, deps = _make_router()
+    outreach_job = _make_job(service_id="hulu", action="resume")
+    deps["job_manager"].get_outreach_jobs_for_user_action.return_value = [outreach_job]
+
+    await router.handle_dm(ALICE, "resume")
+
+    deps["session"].handle_yes.assert_awaited_once_with(ALICE, "job-1")
+
+
+@pytest.mark.asyncio
+async def test_bare_cancel_unregistered_user():
+    """Bare 'cancel' from unregistered user should auto-invite."""
+    router, deps = _make_router()
+    deps["job_manager"].get_outreach_jobs_for_user_action.return_value = []
+    deps["api"].get_user.return_value = None
+    deps["api"].auto_invite.return_value = {"status": "invited", "invite_code": "X"}
+    deps["api"].create_otp.return_value = "123456789012"
+
+    await router.handle_dm(ALICE, "cancel")
+
+    deps["api"].auto_invite.assert_awaited_once_with(ALICE)
+
+
+# ==================================================================
+# cancel <service> with existing outreach job
+# ==================================================================
+
+
+@pytest.mark.asyncio
+async def test_cancel_service_with_existing_outreach_confirms():
+    """'cancel netflix' with an existing outreach job should confirm it, not create new."""
+    router, deps = _make_router()
+    outreach_job = _make_job(service_id="netflix", action="cancel")
+    deps["job_manager"].get_outreach_job_for_user_service.return_value = outreach_job
+
+    await router.handle_dm(ALICE, "cancel netflix")
+
+    deps["session"].handle_yes.assert_awaited_once_with(ALICE, "job-1")
+    deps["api"].create_on_demand_job.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_cancel_service_no_outreach_creates_new():
+    """'cancel netflix' without existing outreach creates on-demand job."""
+    router, deps = _make_router()
+    deps["job_manager"].get_outreach_job_for_user_service.return_value = None
+    deps["api"].get_user.return_value = {"debt_sats": 0}
+    deps["api"].create_on_demand_job.return_value = {
+        "status_code": 200,
+        "data": {"job_id": "job-new"},
+    }
+
+    await router.handle_dm(ALICE, "cancel netflix")
+
+    deps["api"].create_on_demand_job.assert_awaited_once_with(
+        ALICE, "netflix", "cancel"
+    )

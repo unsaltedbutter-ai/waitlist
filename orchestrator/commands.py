@@ -138,8 +138,12 @@ class CommandRouter:
             await self._cmd_skip(sender_npub)
         elif lower == "snooze":
             await self._cmd_snooze(sender_npub)
+        elif lower == "cancel":
+            await self._cmd_bare_action(sender_npub, "cancel")
         elif lower.startswith("cancel "):
             await self._cmd_action(sender_npub, text[7:], "cancel")
+        elif lower == "resume":
+            await self._cmd_bare_action(sender_npub, "resume")
         elif lower.startswith("resume "):
             await self._cmd_action(sender_npub, text[7:], "resume")
         elif lower == "status":
@@ -185,6 +189,36 @@ class CommandRouter:
             return
         await self._job_manager.handle_snooze(sender_npub, job["id"])
 
+    async def _cmd_bare_action(self, sender_npub: str, action: str) -> None:
+        """Handle bare 'cancel' or 'resume' with no service specified.
+
+        Auto-resolves if the user has exactly one outreach job for that action,
+        or exactly one service in their queue. Otherwise shows a hint.
+        """
+        # Check for existing outreach jobs matching this action
+        outreach_jobs = await self._job_manager.get_outreach_jobs_for_user_action(
+            sender_npub, action
+        )
+        if len(outreach_jobs) == 1:
+            await self._session.handle_yes(sender_npub, outreach_jobs[0]["id"])
+            return
+        if len(outreach_jobs) > 1:
+            await self._send_dm(sender_npub, messages.bare_action_hint(action))
+            return
+
+        # No outreach jobs. Check if user has exactly one service in queue.
+        user_data = await self._api.get_user(sender_npub)
+        if user_data is None:
+            await self._auto_waitlist(sender_npub)
+            return
+
+        queue = user_data.get("queue", [])
+        if len(queue) == 1:
+            await self._cmd_action(sender_npub, queue[0]["service_id"], action)
+            return
+
+        await self._send_dm(sender_npub, messages.bare_action_hint(action))
+
     async def _cmd_action(
         self, sender_npub: str, service_input: str, action: str
     ) -> None:
@@ -194,6 +228,14 @@ class CommandRouter:
             await self._send_dm(
                 sender_npub, messages.unknown_service(service_input.strip())
             )
+            return
+
+        # Check for existing outreach job (e.g. user replying to batch DM)
+        existing_job = await self._job_manager.get_outreach_job_for_user_service(
+            sender_npub, service_id, action
+        )
+        if existing_job:
+            await self._session.handle_yes(sender_npub, existing_job["id"])
             return
 
         # Check if user exists and has debt

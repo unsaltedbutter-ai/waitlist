@@ -15,6 +15,7 @@ from messages import (
     action_success_cancel,
     action_success_resume,
     already_has_account,
+    bare_action_hint,
     busy,
     credential_needed,
     credential_received,
@@ -36,9 +37,11 @@ from messages import (
     otp_received,
     otp_timeout,
     outreach_cancel,
+    outreach_cancel_batch,
     outreach_cancel_no_date,
     outreach_followup,
     outreach_resume,
+    outreach_resume_batch,
     payment_expired,
     payment_received,
     queued,
@@ -100,6 +103,27 @@ class TestOutreach:
         msg = last_chance("paramount", 4)
         assert "Paramount+" in msg
         assert "4 days" in msg
+
+    def test_outreach_cancel_batch_two_services(self) -> None:
+        msg = outreach_cancel_batch(["netflix", "hulu"])
+        assert "Netflix or Hulu" in msg
+        assert "cancel" in msg
+        assert "another month" in msg
+
+    def test_outreach_cancel_batch_three_services(self) -> None:
+        msg = outreach_cancel_batch(["netflix", "hulu", "disney_plus"])
+        assert "Netflix, Hulu, or Disney+" in msg
+        assert "cancel" in msg
+
+    def test_outreach_resume_batch_two_services(self) -> None:
+        msg = outreach_resume_batch(["netflix", "hulu"])
+        assert "Netflix or Hulu" in msg
+        assert "resume" in msg
+        assert "reactivate" in msg
+
+    def test_outreach_resume_batch_three_services(self) -> None:
+        msg = outreach_resume_batch(["netflix", "hulu", "max"])
+        assert "Netflix, Hulu, or Max" in msg
 
     def test_outreach_followup(self) -> None:
         msg = outreach_followup("peacock")
@@ -376,6 +400,17 @@ class TestMisc:
     def test_operator_job_failed_no_error(self) -> None:
         msg = operator_job_failed("abcdef12-3456-7890", "netflix", None)
         assert "Error" not in msg
+
+    def test_bare_action_hint_cancel(self) -> None:
+        msg = bare_action_hint("cancel")
+        assert "cancel" in msg
+        assert "netflix" in msg
+        assert "disney+" in msg
+
+    def test_bare_action_hint_resume(self) -> None:
+        msg = bare_action_hint("resume")
+        assert "resume" in msg
+        assert "netflix" in msg
 
     def test_operator_agent_down(self) -> None:
         msg = operator_agent_down(10)
