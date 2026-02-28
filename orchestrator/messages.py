@@ -63,7 +63,7 @@ def outreach_cancel_batch(service_ids: list[str]) -> str:
     return (
         f"Do you want to cancel {joined} today to avoid being billed for "
         f"another month? Reply 'cancel' and the name of the service and "
-        f"we'll cancel it for you."
+        f"I'll cancel it for you."
     )
 
 
@@ -76,7 +76,7 @@ def outreach_resume_batch(service_ids: list[str]) -> str:
         joined = ", ".join(names[:-1]) + f", or {names[-1]}"
     return (
         f"Want to resume {joined}? Reply 'resume' and the name of the "
-        f"service and we'll reactivate it for you."
+        f"service and I'll reactivate it for you."
     )
 
 
@@ -197,7 +197,7 @@ def action_failed(service_id: str, action: str) -> str:
     """Action failed. Brief, honest, no internal details."""
     name = display_name(service_id)
     verb = "cancel" if action == "cancel" else "resume"
-    return f"Failed to {verb} {name}. We've notified our human. \U0001f916"
+    return f"Failed to {verb} {name}. I've notified my human. \U0001f916"
 
 
 def action_failed_credentials(service_id: str, action: str) -> str:
@@ -296,11 +296,11 @@ def busy(service_id: str | None = None, action: str | None = None) -> str:
 
 
 def waitlist_added() -> str:
-    return "You're on the waitlist. We'll DM you when a spot opens."
+    return "You're on the waitlist. I'll DM you when a spot opens."
 
 
 def waitlist_already() -> str:
-    return "You're already on the waitlist. We'll DM you when a spot opens."
+    return "You're already on the waitlist. I'll DM you when a spot opens."
 
 
 def waitlist_invited(base_url: str) -> str:
@@ -354,7 +354,7 @@ def action_starting(service_id: str, action: str) -> str:
     verb = "Cancelling" if action == "cancel" else "Resuming"
     return (
         f"{verb} {name}\n"
-        f"Please be prepared to DM us OTP information."
+        f"Please be prepared to DM me OTP information."
     )
 
 
@@ -363,8 +363,8 @@ def queued(service_id: str, action: str, queue_pos: int = 2) -> str:
     verb = "cancelling" if action == "cancel" else "resuming"
     eta_minutes = (queue_pos - 1) * 2
     return (
-        f"We'll start {verb} {name} in around {eta_minutes} minutes.\n"
-        f"We'll ping you when we're ready to start."
+        f"I'll start {verb} {name} in around {eta_minutes} minutes.\n"
+        f"I'll ping you when I'm ready to start."
     )
 
 
