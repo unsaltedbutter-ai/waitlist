@@ -14,4 +14,5 @@ export interface EnrichedQueueItem {
   active_job_status: string | null;
   last_access_end_date: string | null;
   last_completed_action: "cancel" | "resume" | null;
+  next_billing_date: string | null;
 }

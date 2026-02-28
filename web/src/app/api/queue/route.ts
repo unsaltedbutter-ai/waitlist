@@ -16,7 +16,8 @@ export const GET = withAuth(async (_req: NextRequest, { userId }) => {
       `SELECT rq.service_id, ss.display_name AS service_name, rq.position,
               rq.plan_id, sp.display_name AS plan_name, sp.monthly_price_cents AS plan_price_cents,
               aj.active_job_id, aj.active_job_action, aj.active_job_status,
-              lj.last_access_end_date, lj.last_completed_action
+              lj.last_access_end_date, lj.last_completed_action,
+              rq.next_billing_date::text AS next_billing_date
        FROM rotation_queue rq
        JOIN streaming_services ss ON ss.id = rq.service_id
        LEFT JOIN service_plans sp ON sp.id = rq.plan_id
@@ -102,30 +103,41 @@ export const PUT = withAuth(async (req: NextRequest, { userId }) => {
       );
     }
 
-    // If no plans provided (dashboard reorder), preserve existing plan_ids
+    // Preserve existing plan_ids and next_billing_date values
+    const existing = await query<{ service_id: string; plan_id: string | null; next_billing_date: string | null }>(
+      "SELECT service_id, plan_id, next_billing_date::text FROM rotation_queue WHERE user_id = $1",
+      [userId]
+    );
+    const existingBillingDates: Record<string, string | null> = {};
     let planMap: Record<string, string | null> = {};
     if (plans) {
       planMap = plans;
-    } else {
-      const existing = await query<{ service_id: string; plan_id: string | null }>(
-        "SELECT service_id, plan_id FROM rotation_queue WHERE user_id = $1",
-        [userId]
-      );
-      for (const row of existing.rows) {
-        if (row.plan_id) {
-          planMap[row.service_id] = row.plan_id;
-        }
+    }
+    for (const row of existing.rows) {
+      if (!plans && row.plan_id) {
+        planMap[row.service_id] = row.plan_id;
       }
+      existingBillingDates[row.service_id] = row.next_billing_date;
     }
 
     await transaction(async (txQuery) => {
       await txQuery("DELETE FROM rotation_queue WHERE user_id = $1", [userId]);
       for (let i = 0; i < order.length; i++) {
-        const planId = planMap[order[i]] ?? null;
-        await txQuery(
-          "INSERT INTO rotation_queue (user_id, service_id, position, plan_id) VALUES ($1, $2, $3, $4)",
-          [userId, order[i], i + 1, planId]
-        );
+        const serviceId = order[i];
+        const planId = planMap[serviceId] ?? null;
+        // Preserve existing billing date, or default to CURRENT_DATE + 30 for new services
+        const hasBillingDate = serviceId in existingBillingDates;
+        if (hasBillingDate) {
+          await txQuery(
+            "INSERT INTO rotation_queue (user_id, service_id, position, plan_id, next_billing_date) VALUES ($1, $2, $3, $4, $5)",
+            [userId, serviceId, i + 1, planId, existingBillingDates[serviceId]]
+          );
+        } else {
+          await txQuery(
+            "INSERT INTO rotation_queue (user_id, service_id, position, plan_id, next_billing_date) VALUES ($1, $2, $3, $4, CURRENT_DATE + 30)",
+            [userId, serviceId, i + 1, planId]
+          );
+        }
       }
       // Set onboarded_at on first queue save (completes onboarding)
       await txQuery(

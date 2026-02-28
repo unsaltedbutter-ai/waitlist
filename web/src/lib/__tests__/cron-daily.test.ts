@@ -245,6 +245,16 @@ describe("runDailyCron", () => {
     expect(result.skipped_debt).toBe(3);
   });
 
+  it("cancel query reads from rotation_queue.next_billing_date", async () => {
+    setupMocks({});
+
+    await runDailyCron();
+
+    const cancelQuery = mockQuery.mock.calls[0][0] as string;
+    expect(cancelQuery).toContain("rotation_queue");
+    expect(cancelQuery).toContain("next_billing_date");
+  });
+
   it("idempotency: the cancel query excludes users with existing non-terminal jobs", async () => {
     setupMocks({});
 
@@ -284,12 +294,13 @@ describe("runDailyCron", () => {
     expect(resumeQuery).toContain("debt_sats = 0");
   });
 
-  it("cancel query filters for billing_date within 14 days", async () => {
+  it("cancel query filters for next_billing_date within 14 days", async () => {
     setupMocks({});
 
     await runDailyCron();
 
     const cancelQuery = mockQuery.mock.calls[0][0] as string;
+    expect(cancelQuery).toContain("next_billing_date");
     expect(cancelQuery).toContain("14 days");
   });
 
@@ -329,9 +340,9 @@ describe("runDailyCron", () => {
     expect(insertSQL).toContain("'pending'");
   });
 
-  it("handles users with no previous jobs (no billing_date to check)", async () => {
-    // When there are no previous completed jobs, the cancel query returns
-    // nothing for those users. Correct behavior: no billing_date means
+  it("handles users with no next_billing_date (returns no cancel candidates)", async () => {
+    // When rotation_queue entries have NULL next_billing_date, the cancel
+    // query returns nothing. Correct behavior: no billing date means
     // nothing to schedule against.
     setupMocks({});
 

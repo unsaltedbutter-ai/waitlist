@@ -182,12 +182,7 @@ fi
 # 5. [init] Apply database schema (SCHEMA.sql is the complete v4 schema)
 # =============================================================================
 if $INIT_MODE; then
-    log "Copying SCHEMA.sql to VPS..."
-    scp ${SSH_OPTS} \
-        "${PROJECT_ROOT}/unsalted-butter-handoff/docs/SCHEMA.sql" \
-        "${VPS_USER}@${VPS_IP}:${REMOTE_DIR}/scripts/SCHEMA.sql"
-
-    log "Applying database schema..."
+    log "Applying database schema (schema.sql already synced via rsync)..."
 
     ${SSH_CMD} bash << 'REMOTE_SCHEMA'
 set -euo pipefail
@@ -196,8 +191,8 @@ REMOTE_DIR="/home/butter/unsaltedbutter"
 DB_PASS=$(cat /home/butter/.unsaltedbutter/db_password)
 export PGPASSWORD="${DB_PASS}"
 
-echo "Applying SCHEMA.sql (v4 pay-per-action)..."
-psql -h localhost -U butter -d unsaltedbutter -f "${REMOTE_DIR}/scripts/SCHEMA.sql"
+echo "Applying schema.sql (v4 pay-per-action)..."
+psql -h localhost -U butter -d unsaltedbutter -f "${REMOTE_DIR}/scripts/schema.sql"
 
 echo "Schema applied successfully"
 REMOTE_SCHEMA

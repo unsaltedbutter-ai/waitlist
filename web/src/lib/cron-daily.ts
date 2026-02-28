@@ -33,36 +33,26 @@ async function findUpcomingCancels(): Promise<
     (_, i) => `$${i + 1}`
   ).join(", ");
 
-  // Find the most recent completed job per user+service that has an access_end_date.
-  // The billing_date for the next cycle = access_end_date (day after access ends, they get billed).
-  // We want cancels where billing_date is within 14 days from now.
+  // Query rotation_queue.next_billing_date directly instead of scanning job history.
+  // next_billing_date is maintained by the job status update route on every state change.
   const result = await query<{
     user_id: string;
     service_id: string;
     billing_date: string;
   }>(
-    `WITH latest_completed AS (
-      SELECT DISTINCT ON (j.user_id, j.service_id)
-        j.user_id,
-        j.service_id,
-        j.billing_date
-      FROM jobs j
-      WHERE j.status IN (${terminalPlaceholders})
-        AND j.billing_date IS NOT NULL
-      ORDER BY j.user_id, j.service_id, j.created_at DESC
-    )
-    SELECT lc.user_id, lc.service_id, lc.billing_date::text
-    FROM latest_completed lc
-    JOIN users u ON u.id = lc.user_id
-    WHERE u.debt_sats = 0
-      AND u.onboarded_at IS NOT NULL
-      AND lc.billing_date BETWEEN CURRENT_DATE AND (CURRENT_DATE + INTERVAL '14 days')
-      AND NOT EXISTS (
-        SELECT 1 FROM jobs ej
-        WHERE ej.user_id = lc.user_id
-          AND ej.service_id = lc.service_id
-          AND ej.status NOT IN (${terminalPlaceholders})
-      )`,
+    `SELECT rq.user_id, rq.service_id, rq.next_billing_date::text AS billing_date
+     FROM rotation_queue rq
+     JOIN users u ON u.id = rq.user_id
+     WHERE u.debt_sats = 0
+       AND u.onboarded_at IS NOT NULL
+       AND rq.next_billing_date IS NOT NULL
+       AND rq.next_billing_date BETWEEN CURRENT_DATE AND (CURRENT_DATE + INTERVAL '14 days')
+       AND NOT EXISTS (
+         SELECT 1 FROM jobs ej
+         WHERE ej.user_id = rq.user_id
+           AND ej.service_id = rq.service_id
+           AND ej.status NOT IN (${terminalPlaceholders})
+       )`,
     [...TERMINAL_STATUSES]
   );
 

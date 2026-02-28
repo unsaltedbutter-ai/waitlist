@@ -802,4 +802,167 @@ describe("PATCH /api/agent/jobs/[id]/status", () => {
     expect(capturedCalls).toHaveLength(1);
     expect(capturedCalls[0].sql).toContain("streaming_credentials");
   });
+
+  // -- Rotation queue next_billing_date updates --
+
+  it("cancel completion sets next_billing_date to NULL", async () => {
+    mockJobLookup("active");
+    mockAtomicUpdate("completed_paid", { action: "cancel", user_id: "user-1", service_id: "netflix", access_end_date: "2026-03-15" });
+
+    const res = await PATCH(
+      makeRequest({ status: "completed_paid", access_end_date: "2026-03-15" }) as any,
+      { params: Promise.resolve({ id: JOB_ID }) }
+    );
+    expect(res.status).toBe(200);
+
+    // Find the rotation_queue UPDATE call (after job lookup, atomic update, recordStatusChange)
+    const calls = vi.mocked(query).mock.calls;
+    const rqCall = calls.find((c) =>
+      typeof c[0] === "string" && (c[0] as string).includes("rotation_queue") && (c[0] as string).includes("NULL")
+    );
+    expect(rqCall).toBeTruthy();
+    expect(rqCall![0]).toContain("next_billing_date = NULL");
+    expect(rqCall![1]).toEqual(["user-1", "netflix"]);
+  });
+
+  it("resume completion sets next_billing_date to CURRENT_DATE + 30", async () => {
+    mockJobLookup("active");
+    mockAtomicUpdate("completed_paid", { action: "resume", user_id: "user-1", service_id: "hulu" });
+
+    const res = await PATCH(
+      makeRequest({ status: "completed_paid" }) as any,
+      { params: Promise.resolve({ id: JOB_ID }) }
+    );
+    expect(res.status).toBe(200);
+
+    const calls = vi.mocked(query).mock.calls;
+    const rqCall = calls.find((c) =>
+      typeof c[0] === "string" && (c[0] as string).includes("rotation_queue") && (c[0] as string).includes("CURRENT_DATE + 30")
+    );
+    expect(rqCall).toBeTruthy();
+    expect(rqCall![1]).toEqual(["user-1", "hulu"]);
+  });
+
+  it("user_skip on cancel job advances next_billing_date by 30 days", async () => {
+    mockJobLookup("outreach_sent");
+    mockAtomicUpdate("user_skip", { action: "cancel", user_id: "user-1", service_id: "netflix" });
+
+    const res = await PATCH(
+      makeRequest({ status: "user_skip" }) as any,
+      { params: Promise.resolve({ id: JOB_ID }) }
+    );
+    expect(res.status).toBe(200);
+
+    const calls = vi.mocked(query).mock.calls;
+    const rqCall = calls.find((c) =>
+      typeof c[0] === "string" && (c[0] as string).includes("rotation_queue") && (c[0] as string).includes("next_billing_date + 30")
+    );
+    expect(rqCall).toBeTruthy();
+    expect(rqCall![1]).toEqual(["user-1", "netflix"]);
+  });
+
+  it("implied_skip on cancel job advances next_billing_date by 30 days", async () => {
+    mockJobLookup("dispatched");
+    mockAtomicUpdate("implied_skip", { action: "cancel", user_id: "user-1", service_id: "netflix" });
+
+    const res = await PATCH(
+      makeRequest({ status: "implied_skip" }) as any,
+      { params: Promise.resolve({ id: JOB_ID }) }
+    );
+    expect(res.status).toBe(200);
+
+    const calls = vi.mocked(query).mock.calls;
+    const rqCall = calls.find((c) =>
+      typeof c[0] === "string" && (c[0] as string).includes("rotation_queue") && (c[0] as string).includes("next_billing_date + 30")
+    );
+    expect(rqCall).toBeTruthy();
+  });
+
+  it("user_skip on resume job does not update rotation_queue", async () => {
+    mockJobLookup("outreach_sent");
+    mockAtomicUpdate("user_skip", { action: "resume", user_id: "user-1", service_id: "netflix" });
+
+    const res = await PATCH(
+      makeRequest({ status: "user_skip" }) as any,
+      { params: Promise.resolve({ id: JOB_ID }) }
+    );
+    expect(res.status).toBe(200);
+
+    const calls = vi.mocked(query).mock.calls;
+    const rqCall = calls.find((c) =>
+      typeof c[0] === "string" && (c[0] as string).includes("rotation_queue")
+    );
+    expect(rqCall).toBeUndefined();
+  });
+
+  it("failed status does not update rotation_queue", async () => {
+    mockJobLookup("active");
+    mockAtomicUpdate("failed", { action: "cancel", user_id: "user-1", service_id: "netflix" });
+
+    const res = await PATCH(
+      makeRequest({ status: "failed" }) as any,
+      { params: Promise.resolve({ id: JOB_ID }) }
+    );
+    expect(res.status).toBe(200);
+
+    const calls = vi.mocked(query).mock.calls;
+    const rqCall = calls.find((c) =>
+      typeof c[0] === "string" && (c[0] as string).includes("rotation_queue")
+    );
+    expect(rqCall).toBeUndefined();
+  });
+
+  // -- access_end_date fallback --
+
+  it("cancel completion without access_end_date defaults to CURRENT_DATE + 14 days", async () => {
+    mockJobLookup("active");
+    mockAtomicUpdate("completed_paid", { action: "cancel", user_id: "user-1", service_id: "netflix", access_end_date: null });
+
+    const res = await PATCH(
+      makeRequest({ status: "completed_paid" }) as any,
+      { params: Promise.resolve({ id: JOB_ID }) }
+    );
+    expect(res.status).toBe(200);
+
+    const calls = vi.mocked(query).mock.calls;
+    const fallbackCall = calls.find((c) =>
+      typeof c[0] === "string" && (c[0] as string).includes("access_end_date") && (c[0] as string).includes("14 days")
+    );
+    expect(fallbackCall).toBeTruthy();
+    expect(fallbackCall![1]).toEqual([JOB_ID]);
+  });
+
+  it("cancel completion with access_end_date does not apply fallback", async () => {
+    mockJobLookup("active");
+    mockAtomicUpdate("completed_paid", { action: "cancel", user_id: "user-1", service_id: "netflix", access_end_date: "2026-03-15" });
+
+    const res = await PATCH(
+      makeRequest({ status: "completed_paid", access_end_date: "2026-03-15" }) as any,
+      { params: Promise.resolve({ id: JOB_ID }) }
+    );
+    expect(res.status).toBe(200);
+
+    const calls = vi.mocked(query).mock.calls;
+    const fallbackCall = calls.find((c) =>
+      typeof c[0] === "string" && (c[0] as string).includes("14 days")
+    );
+    expect(fallbackCall).toBeUndefined();
+  });
+
+  it("resume completion does not apply access_end_date fallback", async () => {
+    mockJobLookup("active");
+    mockAtomicUpdate("completed_paid", { action: "resume", user_id: "user-1", service_id: "netflix", access_end_date: null });
+
+    const res = await PATCH(
+      makeRequest({ status: "completed_paid" }) as any,
+      { params: Promise.resolve({ id: JOB_ID }) }
+    );
+    expect(res.status).toBe(200);
+
+    const calls = vi.mocked(query).mock.calls;
+    const fallbackCall = calls.find((c) =>
+      typeof c[0] === "string" && (c[0] as string).includes("14 days")
+    );
+    expect(fallbackCall).toBeUndefined();
+  });
 });

@@ -39,9 +39,16 @@ function mockCreds(serviceIds: string[]) {
   );
 }
 
-/** Mock the query that reads existing plan_ids (when no plans provided in body) */
+/** Mock the query that reads existing plan_ids and next_billing_date */
+function mockExistingQueue(rows: { service_id: string; plan_id: string | null; next_billing_date?: string | null }[] = []) {
+  vi.mocked(query).mockResolvedValueOnce(
+    mockQueryResult(rows.map((r) => ({ ...r, next_billing_date: r.next_billing_date ?? null })))
+  );
+}
+
+/** @deprecated Alias for backward compat in existing tests */
 function mockExistingPlanIds(rows: { service_id: string; plan_id: string | null }[] = []) {
-  vi.mocked(query).mockResolvedValueOnce(mockQueryResult(rows));
+  mockExistingQueue(rows.map((r) => ({ ...r, next_billing_date: null })));
 }
 
 function mockTransaction() {
@@ -215,9 +222,9 @@ describe("PUT /api/queue", () => {
   it("deletes old queue and inserts new positions in transaction", async () => {
     mockServices(["netflix", "hulu"]);
     mockCreds(["netflix", "hulu"]);
-    mockExistingPlanIds([
-      { service_id: "netflix", plan_id: "netflix_standard" },
-      { service_id: "hulu", plan_id: null },
+    mockExistingQueue([
+      { service_id: "netflix", plan_id: "netflix_standard", next_billing_date: "2026-04-01" },
+      { service_id: "hulu", plan_id: null, next_billing_date: null },
     ]);
 
     const txQuery = vi.fn().mockResolvedValue(mockQueryResult([]));
@@ -231,15 +238,15 @@ describe("PUT /api/queue", () => {
       "DELETE FROM rotation_queue WHERE user_id = $1",
       ["test-user"]
     );
-    // Second call: INSERT position 1 = hulu (no plan_id)
+    // Second call: INSERT position 1 = hulu (no plan_id, preserved null billing date)
     expect(txQuery).toHaveBeenCalledWith(
-      "INSERT INTO rotation_queue (user_id, service_id, position, plan_id) VALUES ($1, $2, $3, $4)",
-      ["test-user", "hulu", 1, null]
+      "INSERT INTO rotation_queue (user_id, service_id, position, plan_id, next_billing_date) VALUES ($1, $2, $3, $4, $5)",
+      ["test-user", "hulu", 1, null, null]
     );
-    // Third call: INSERT position 2 = netflix (preserved plan_id)
+    // Third call: INSERT position 2 = netflix (preserved plan_id + billing date)
     expect(txQuery).toHaveBeenCalledWith(
-      "INSERT INTO rotation_queue (user_id, service_id, position, plan_id) VALUES ($1, $2, $3, $4)",
-      ["test-user", "netflix", 2, "netflix_standard"]
+      "INSERT INTO rotation_queue (user_id, service_id, position, plan_id, next_billing_date) VALUES ($1, $2, $3, $4, $5)",
+      ["test-user", "netflix", 2, "netflix_standard", "2026-04-01"]
     );
     // Fourth call: UPDATE onboarded_at
     expect(txQuery).toHaveBeenCalledWith(
@@ -278,7 +285,8 @@ describe("PUT /api/queue", () => {
   it("plans provided from onboarding are saved as plan_id", async () => {
     mockServices(["netflix", "hulu"]);
     mockCreds(["netflix", "hulu"]);
-    // No mockExistingPlanIds needed: plans are provided in body
+    // Existing queue query still runs (returns empty for first save)
+    mockExistingQueue([]);
 
     const txQuery = vi.fn().mockResolvedValue(mockQueryResult([]));
     vi.mocked(transaction).mockImplementationOnce(async (cb) => cb(txQuery as any));
@@ -290,13 +298,90 @@ describe("PUT /api/queue", () => {
     const res = await PUT(req as any, { params: Promise.resolve({}) });
     expect(res.status).toBe(200);
 
+    // New services get CURRENT_DATE + 30 (SQL expression, no $5 param)
     expect(txQuery).toHaveBeenCalledWith(
-      "INSERT INTO rotation_queue (user_id, service_id, position, plan_id) VALUES ($1, $2, $3, $4)",
+      "INSERT INTO rotation_queue (user_id, service_id, position, plan_id, next_billing_date) VALUES ($1, $2, $3, $4, CURRENT_DATE + 30)",
       ["test-user", "netflix", 1, "netflix_standard_ads"]
     );
     expect(txQuery).toHaveBeenCalledWith(
-      "INSERT INTO rotation_queue (user_id, service_id, position, plan_id) VALUES ($1, $2, $3, $4)",
+      "INSERT INTO rotation_queue (user_id, service_id, position, plan_id, next_billing_date) VALUES ($1, $2, $3, $4, CURRENT_DATE + 30)",
       ["test-user", "hulu", 2, "hulu_ads"]
+    );
+  });
+
+  // --- Billing date behavior ---
+
+  it("new services get CURRENT_DATE + 30 as next_billing_date", async () => {
+    mockServices(["netflix", "hulu"]);
+    mockCreds(["netflix", "hulu"]);
+    mockExistingQueue([]); // first save, no existing entries
+
+    const txQuery = vi.fn().mockResolvedValue(mockQueryResult([]));
+    vi.mocked(transaction).mockImplementationOnce(async (cb) => cb(txQuery as any));
+
+    const req = makeRequest({ order: ["netflix", "hulu"] });
+    await PUT(req as any, { params: Promise.resolve({}) });
+
+    // Both are new services, so both use CURRENT_DATE + 30 (no $5 param)
+    const insertCalls = txQuery.mock.calls.filter(
+      (c: unknown[]) => typeof c[0] === "string" && (c[0] as string).includes("INSERT INTO rotation_queue")
+    );
+    expect(insertCalls).toHaveLength(2);
+    for (const call of insertCalls) {
+      expect(call[0]).toContain("CURRENT_DATE + 30");
+      expect(call[1]).toHaveLength(4); // no $5 param
+    }
+  });
+
+  it("reorder preserves existing next_billing_date values", async () => {
+    mockServices(["netflix", "hulu"]);
+    mockCreds(["netflix", "hulu"]);
+    mockExistingQueue([
+      { service_id: "netflix", plan_id: null, next_billing_date: "2026-04-15" },
+      { service_id: "hulu", plan_id: null, next_billing_date: null },
+    ]);
+
+    const txQuery = vi.fn().mockResolvedValue(mockQueryResult([]));
+    vi.mocked(transaction).mockImplementationOnce(async (cb) => cb(txQuery as any));
+
+    const req = makeRequest({ order: ["hulu", "netflix"] });
+    await PUT(req as any, { params: Promise.resolve({}) });
+
+    // hulu had null billing date: preserved as null via $5
+    expect(txQuery).toHaveBeenCalledWith(
+      "INSERT INTO rotation_queue (user_id, service_id, position, plan_id, next_billing_date) VALUES ($1, $2, $3, $4, $5)",
+      ["test-user", "hulu", 1, null, null]
+    );
+    // netflix had a billing date: preserved via $5
+    expect(txQuery).toHaveBeenCalledWith(
+      "INSERT INTO rotation_queue (user_id, service_id, position, plan_id, next_billing_date) VALUES ($1, $2, $3, $4, $5)",
+      ["test-user", "netflix", 2, null, "2026-04-15"]
+    );
+  });
+
+  it("adding a new service to existing queue gives it CURRENT_DATE + 30", async () => {
+    mockServices(["netflix", "hulu", "disney_plus"]);
+    mockCreds(["netflix", "hulu", "disney_plus"]);
+    mockExistingQueue([
+      { service_id: "netflix", plan_id: null, next_billing_date: "2026-04-15" },
+      { service_id: "hulu", plan_id: null, next_billing_date: "2026-05-01" },
+    ]);
+
+    const txQuery = vi.fn().mockResolvedValue(mockQueryResult([]));
+    vi.mocked(transaction).mockImplementationOnce(async (cb) => cb(txQuery as any));
+
+    const req = makeRequest({ order: ["netflix", "disney_plus", "hulu"] });
+    await PUT(req as any, { params: Promise.resolve({}) });
+
+    // disney_plus is new: gets CURRENT_DATE + 30
+    expect(txQuery).toHaveBeenCalledWith(
+      "INSERT INTO rotation_queue (user_id, service_id, position, plan_id, next_billing_date) VALUES ($1, $2, $3, $4, CURRENT_DATE + 30)",
+      ["test-user", "disney_plus", 2, null]
+    );
+    // netflix preserved
+    expect(txQuery).toHaveBeenCalledWith(
+      "INSERT INTO rotation_queue (user_id, service_id, position, plan_id, next_billing_date) VALUES ($1, $2, $3, $4, $5)",
+      ["test-user", "netflix", 1, null, "2026-04-15"]
     );
   });
 

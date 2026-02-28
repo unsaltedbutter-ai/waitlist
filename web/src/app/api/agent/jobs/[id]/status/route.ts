@@ -144,6 +144,39 @@ export const PATCH = withAgentAuth(async (_req: NextRequest, { body, params }) =
     // Record the status transition in the history table
     await recordStatusChange(jobId, currentStatus, newStatus, "agent");
 
+    // Update rotation_queue.next_billing_date based on completed status + action
+    const completedStatuses = ["completed_paid", "completed_eventual", "completed_reneged"];
+    const skipStatuses = ["user_skip", "implied_skip"];
+
+    if (completedStatuses.includes(newStatus)) {
+      if (updatedJob.action === "cancel") {
+        // Cancel complete: clear billing date (service is now cancelled)
+        await query(
+          "UPDATE rotation_queue SET next_billing_date = NULL WHERE user_id = $1 AND service_id = $2",
+          [updatedJob.user_id, updatedJob.service_id]
+        );
+        // Fallback: if access_end_date is still NULL, default to cancel date + 14 days
+        if (!updatedJob.access_end_date) {
+          await query(
+            "UPDATE jobs SET access_end_date = (CURRENT_DATE + INTERVAL '14 days')::date WHERE id = $1",
+            [jobId]
+          );
+        }
+      } else if (updatedJob.action === "resume") {
+        // Resume complete: next billing in 30 days
+        await query(
+          "UPDATE rotation_queue SET next_billing_date = CURRENT_DATE + 30 WHERE user_id = $1 AND service_id = $2",
+          [updatedJob.user_id, updatedJob.service_id]
+        );
+      }
+    } else if (skipStatuses.includes(newStatus) && updatedJob.action === "cancel") {
+      // Skip on a cancel job: advance billing date by 30 days from current billing date
+      await query(
+        "UPDATE rotation_queue SET next_billing_date = next_billing_date + 30 WHERE user_id = $1 AND service_id = $2",
+        [updatedJob.user_id, updatedJob.service_id]
+      );
+    }
+
     if (newStatus === "completed_reneged" && updatedJob.amount_sats) {
       await transaction(async (txQuery) => {
         const credResult = await txQuery<{ email_enc: Buffer }>(
