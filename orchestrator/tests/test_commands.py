@@ -719,6 +719,69 @@ async def test_resume_service_alias_hbo():
 
 
 # ==================================================================
+# IDLE commands: stop / start aliases
+# ==================================================================
+
+
+@pytest.mark.asyncio
+async def test_stop_is_cancel_alias():
+    """'stop netflix' should behave like 'cancel netflix'."""
+    router, deps = _make_router()
+    deps["api"].get_user.return_value = {"debt_sats": 0}
+    deps["api"].create_on_demand_job.return_value = {
+        "status_code": 200,
+        "data": {"job_id": "job-2"},
+    }
+
+    await router.handle_dm(ALICE, "stop netflix")
+
+    deps["api"].create_on_demand_job.assert_awaited_once_with(
+        ALICE, "netflix", "cancel"
+    )
+
+
+@pytest.mark.asyncio
+async def test_bare_stop_is_bare_cancel_alias():
+    """Bare 'stop' should behave like bare 'cancel'."""
+    router, deps = _make_router()
+    outreach_job = _make_job(service_id="netflix", action="cancel")
+    deps["job_manager"].get_outreach_jobs_for_user_action.return_value = [outreach_job]
+
+    await router.handle_dm(ALICE, "stop")
+
+    deps["session"].handle_yes.assert_awaited_once_with(ALICE, "job-1")
+
+
+@pytest.mark.asyncio
+async def test_start_is_resume_alias():
+    """'start hulu' should behave like 'resume hulu'."""
+    router, deps = _make_router()
+    deps["api"].get_user.return_value = {"debt_sats": 0}
+    deps["api"].create_on_demand_job.return_value = {
+        "status_code": 200,
+        "data": {"job_id": "job-3"},
+    }
+
+    await router.handle_dm(ALICE, "start hulu")
+
+    deps["api"].create_on_demand_job.assert_awaited_once_with(
+        ALICE, "hulu", "resume"
+    )
+
+
+@pytest.mark.asyncio
+async def test_bare_start_is_bare_resume_alias():
+    """Bare 'start' should behave like bare 'resume'."""
+    router, deps = _make_router()
+    outreach_job = _make_job(service_id="hulu", action="resume")
+    deps["job_manager"].get_outreach_jobs_for_user_action.return_value = [outreach_job]
+
+    await router.handle_dm(ALICE, "start")
+
+    deps["session"].handle_yes.assert_awaited_once_with(ALICE, "job-1")
+
+
+# ==================================================================
 # IDLE commands: status
 # ==================================================================
 

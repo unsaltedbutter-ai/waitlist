@@ -139,14 +139,18 @@ class CommandRouter:
             await self._cmd_skip(sender_npub)
         elif lower == "snooze":
             await self._cmd_snooze(sender_npub)
-        elif lower == "cancel":
+        elif lower in ("cancel", "stop"):
             await self._cmd_bare_action(sender_npub, "cancel")
         elif lower.startswith("cancel "):
             await self._cmd_action(sender_npub, text[7:], "cancel")
-        elif lower == "resume":
+        elif lower.startswith("stop "):
+            await self._cmd_action(sender_npub, text[5:], "cancel")
+        elif lower in ("resume", "start"):
             await self._cmd_bare_action(sender_npub, "resume")
         elif lower.startswith("resume "):
             await self._cmd_action(sender_npub, text[7:], "resume")
+        elif lower.startswith("start "):
+            await self._cmd_action(sender_npub, text[6:], "resume")
         elif lower == "status":
             await self._cmd_status(sender_npub)
         elif lower == "queue":
