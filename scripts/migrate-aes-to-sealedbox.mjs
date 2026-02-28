@@ -1,15 +1,17 @@
+#!/usr/bin/env node
 /**
  * One-time migration: AES-256-GCM credentials -> libsodium sealed boxes.
  *
- * Run on the VPS where the old AES keyfile and database live:
+ * Run on the VPS from the web/ directory:
  *
  *   cd /home/butter/unsaltedbutter/web
- *   npx tsx ../scripts/migrate-aes-to-sealedbox.ts
+ *   node ../scripts/migrate-aes-to-sealedbox.mjs --dry-run
+ *   node ../scripts/migrate-aes-to-sealedbox.mjs
  *
- * Requires:
- *   - ENCRYPTION_KEY_PATH set in .env.production (old AES keyfile)
- *   - CREDENTIAL_PUBLIC_KEY set in .env.production (new sealed box public key)
- *   - DATABASE_URL set in .env.production
+ * Requires .env.production in CWD with:
+ *   - ENCRYPTION_KEY_PATH (old AES keyfile)
+ *   - CREDENTIAL_PUBLIC_KEY (new sealed box public key hex)
+ *   - DATABASE_URL
  *
  * What it does:
  *   1. Reads all rows from streaming_credentials
@@ -19,20 +21,23 @@
  *   5. Updates each row in place
  *
  * Safe to run multiple times (idempotent: re-encrypts everything).
- * Run --dry-run to preview without writing.
  */
 
-import { readFileSync } from "fs";
-import { createHash, createDecipheriv } from "crypto";
-import { Pool } from "pg";
-import sodium from "libsodium-wrappers";
+import { readFileSync } from "node:fs";
+import { createHash, createDecipheriv } from "node:crypto";
+import { createRequire } from "node:module";
+import { resolve } from "node:path";
 
-// ---------- Config ----------
+// Resolve pg and libsodium-wrappers from the web project's node_modules
+const require = createRequire(resolve(process.cwd(), "node_modules/"));
+const pg = require("pg");
+const sodium = require("libsodium-wrappers");
 
 const DRY_RUN = process.argv.includes("--dry-run");
 
-function loadEnv(): void {
-  // Load .env.production if present
+// ---------- Env ----------
+
+function loadEnv() {
   try {
     const envFile = readFileSync(".env.production", "utf-8");
     for (const line of envFile.split("\n")) {
@@ -51,7 +56,7 @@ function loadEnv(): void {
 
 // ---------- Old AES decrypt ----------
 
-function loadAesKey(): Buffer {
+function loadAesKey() {
   const keyPath = process.env.ENCRYPTION_KEY_PATH;
   if (!keyPath) throw new Error("ENCRYPTION_KEY_PATH not set");
   const key = readFileSync(keyPath);
@@ -59,7 +64,7 @@ function loadAesKey(): Buffer {
   return key;
 }
 
-function aesDecrypt(encrypted: Buffer, key: Buffer): string {
+function aesDecrypt(encrypted, key) {
   if (encrypted.length < 29) throw new Error("Encrypted data too short");
   const iv = encrypted.subarray(0, 12);
   const tag = encrypted.subarray(encrypted.length - 16);
@@ -72,27 +77,27 @@ function aesDecrypt(encrypted: Buffer, key: Buffer): string {
 
 // ---------- New sealed box encrypt ----------
 
-function loadPublicKey(): Uint8Array {
+function loadPublicKey() {
   const hex = process.env.CREDENTIAL_PUBLIC_KEY;
   if (!hex) throw new Error("CREDENTIAL_PUBLIC_KEY not set");
   const key = Buffer.from(hex, "hex");
   if (key.length !== 32) throw new Error(`Public key must be 32 bytes, got ${key.length}`);
-  return key;
+  return new Uint8Array(key);
 }
 
-function sealedBoxEncrypt(plaintext: string, pubkey: Uint8Array): Buffer {
+function sealedBoxEncrypt(plaintext, pubkey) {
   const message = sodium.from_string(plaintext);
   const ciphertext = sodium.crypto_box_seal(message, pubkey);
   return Buffer.from(ciphertext);
 }
 
-function hashEmail(email: string): string {
+function hashEmail(email) {
   return createHash("sha256").update(email.trim().toLowerCase()).digest("hex");
 }
 
 // ---------- Main ----------
 
-async function main(): Promise<void> {
+async function main() {
   loadEnv();
 
   console.log(DRY_RUN ? "=== DRY RUN (no writes) ===" : "=== LIVE MIGRATION ===");
@@ -104,7 +109,7 @@ async function main(): Promise<void> {
   const pubkey = loadPublicKey();
   console.log("Sealed box public key loaded");
 
-  const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+  const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL });
 
   try {
     const { rows } = await pool.query(
@@ -117,11 +122,9 @@ async function main(): Promise<void> {
 
     for (const row of rows) {
       try {
-        // Decrypt with old AES key
         const email = aesDecrypt(row.email_enc, aesKey);
         const password = aesDecrypt(row.password_enc, aesKey);
 
-        // Re-encrypt with sealed box
         const emailEnc = sealedBoxEncrypt(email, pubkey);
         const passwordEnc = sealedBoxEncrypt(password, pubkey);
         const emailHash = hashEmail(email);
