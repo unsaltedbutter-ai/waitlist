@@ -25,12 +25,14 @@ job cannot displace the cursor between restore and capture.
 from __future__ import annotations
 
 import asyncio
+import calendar
 import hashlib
 import logging
 import os
 import random
 import subprocess
 import time
+from datetime import date
 from typing import Callable
 
 from agent import browser
@@ -218,6 +220,15 @@ def _zero_credentials(credentials: dict) -> None:
     for key in list(credentials.keys()):
         credentials[key] = '\x00' * len(credentials[key])
     credentials.clear()
+
+
+def _next_month_date(today: date | None = None) -> date:
+    """Return the same day-of-month next month, clamped to month end."""
+    today = today or date.today()
+    year = today.year + (today.month // 12)
+    month = (today.month % 12) + 1
+    last_day = calendar.monthrange(year, month)[1]
+    return date(year, month, min(today.day, last_day))
 
 
 def _click_bbox(bbox, session, chrome_offset: int = 0) -> None:
@@ -410,6 +421,7 @@ class VLMExecutor:
             pending_action = None
             used_account_fallback = False
             last_typed_cred_key = None
+            captured_billing_date = None
             consecutive_vlm_errors = 0
 
             for iteration in range(self.max_steps):
@@ -637,8 +649,19 @@ class VLMExecutor:
                              job_id, vlm_action)
                     vlm_action = 'done'
 
+                # Capture billing date from any cancel/resume response
+                mid_billing = response.get('billing_end_date')
+                if mid_billing:
+                    captured_billing_date = mid_billing
+                    log.info('Job %s: captured billing_date=%s from mid-flow screen',
+                             job_id, mid_billing)
+
                 if vlm_action == 'done':
-                    billing_date = response.get('billing_end_date')
+                    billing_date = mid_billing or captured_billing_date
+                    if not billing_date and action == 'resume':
+                        billing_date = _next_month_date().isoformat()
+                        log.info('Job %s: no billing date found, defaulting to next month: %s',
+                                 job_id, billing_date)
                     log.info('Job %s: flow complete (billing_date=%s)',
                              job_id, billing_date)
                     trace.cleanup_success()

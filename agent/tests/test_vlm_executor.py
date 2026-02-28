@@ -13,6 +13,7 @@ from agent.vlm_executor import (
     _StuckDetector,
     _bbox_to_screen,
     _infer_credential_from_target,
+    _next_month_date,
     _resolve_credential,
     _restore_cursor,
 )
@@ -246,12 +247,13 @@ class TestVLMExecutorRun:
         assert result.inference_count == 4
 
     def test_successful_resume_flow(self):
-        """Sign in -> done (resume)."""
+        """Sign in -> done (resume) defaults to next month when no date."""
         vlm = _make_vlm([SIGNED_IN, RESUME_DONE])
         executor = VLMExecutor(vlm, settle_delay=0)
         result = executor.run('netflix', 'resume', {'email': 'a@b.com', 'pass': 'x'})
         assert result.success
-        assert result.billing_date is None
+        expected = _next_month_date().isoformat()
+        assert result.billing_date == expected
 
     def test_credentials_zeroed_on_success(self):
         vlm = _make_vlm([SIGNED_IN, CANCEL_DONE])
@@ -384,6 +386,66 @@ class TestVLMExecutorRun:
         result = executor.run('netflix', 'cancel', {'email': 'a', 'pass': 'b'})
         assert result.success
         assert result.billing_date is None
+
+    def test_billing_date_captured_mid_flow(self):
+        """Date shown on intermediate screen is used when done screen lacks it."""
+        mid_screen = {
+            'state': 'retention offer',
+            'action': 'click',
+            'target_description': 'Continue Cancellation',
+            'click_point': [300, 400],
+            'billing_end_date': '2026-05-01',
+        }
+        done_no_date = {
+            'state': 'confirmation',
+            'action': 'done',
+            'billing_end_date': None,
+        }
+        vlm = _make_vlm([SIGNED_IN, mid_screen, done_no_date])
+        executor = VLMExecutor(vlm, settle_delay=0)
+        result = executor.run('netflix', 'cancel', {'email': 'a', 'pass': 'b'})
+        assert result.success
+        assert result.billing_date == '2026-05-01'
+
+    def test_billing_date_done_overrides_mid_flow(self):
+        """Date on done screen takes precedence over earlier capture."""
+        mid_screen = {
+            'state': 'retention offer',
+            'action': 'click',
+            'target_description': 'Continue Cancellation',
+            'click_point': [300, 400],
+            'billing_end_date': '2026-05-01',
+        }
+        done_with_date = {
+            'state': 'confirmation',
+            'action': 'done',
+            'billing_end_date': '2026-06-15',
+        }
+        vlm = _make_vlm([SIGNED_IN, mid_screen, done_with_date])
+        executor = VLMExecutor(vlm, settle_delay=0)
+        result = executor.run('netflix', 'cancel', {'email': 'a', 'pass': 'b'})
+        assert result.success
+        assert result.billing_date == '2026-06-15'
+
+    def test_resume_billing_date_captured_mid_flow(self):
+        """Resume flow captures billing date from account page."""
+        account_page = {
+            'state': 'account page showing cancelled',
+            'action': 'click',
+            'target_description': 'Restart Membership',
+            'click_point': [300, 400],
+            'billing_end_date': '2026-04-20',
+        }
+        resume_done = {
+            'state': 'reactivated',
+            'action': 'done',
+            'billing_end_date': None,
+        }
+        vlm = _make_vlm([SIGNED_IN, account_page, resume_done])
+        executor = VLMExecutor(vlm, settle_delay=0)
+        result = executor.run('netflix', 'resume', {'email': 'a', 'pass': 'b'})
+        assert result.success
+        assert result.billing_date == '2026-04-20'
 
     def test_scroll_action(self):
         scroll_down = {
@@ -1441,3 +1503,36 @@ class TestPasteCodePath:
         # Verify Cmd+V was called (paste hotkey)
         paste_calls = [c for c in hotkey_calls if c == ('command', 'v')]
         assert len(paste_calls) >= 1
+
+
+# ---------------------------------------------------------------------------
+# _next_month_date tests
+# ---------------------------------------------------------------------------
+
+class TestNextMonthDate:
+    def test_normal_month(self):
+        from datetime import date as d
+        assert _next_month_date(d(2026, 2, 15)) == d(2026, 3, 15)
+
+    def test_jan_to_feb_clamps(self):
+        """Jan 31 -> Feb 28 (non-leap year)."""
+        from datetime import date as d
+        assert _next_month_date(d(2027, 1, 31)) == d(2027, 2, 28)
+
+    def test_jan_to_feb_leap(self):
+        """Jan 31 -> Feb 29 (leap year)."""
+        from datetime import date as d
+        assert _next_month_date(d(2028, 1, 31)) == d(2028, 2, 29)
+
+    def test_dec_to_jan(self):
+        """December wraps to January next year."""
+        from datetime import date as d
+        assert _next_month_date(d(2026, 12, 15)) == d(2027, 1, 15)
+
+    def test_march_31_to_april_30(self):
+        from datetime import date as d
+        assert _next_month_date(d(2026, 3, 31)) == d(2026, 4, 30)
+
+    def test_first_of_month(self):
+        from datetime import date as d
+        assert _next_month_date(d(2026, 6, 1)) == d(2026, 7, 1)
