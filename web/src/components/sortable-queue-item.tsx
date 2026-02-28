@@ -146,7 +146,7 @@ export function SortableQueueItem({
                 <p className="text-amber-400 text-xs mb-2">Could not load credential status.</p>
               )}
               {hasCredentials && (
-                <p className="text-green-400 text-xs mb-2">Credentials saved. Enter new values to update.</p>
+                <p className="text-green-400 text-xs mb-2">Credentials on file. Enter new values to update.</p>
               )}
               <ServiceCredentialForm
                 serviceId={item.service_id}
