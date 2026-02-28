@@ -1,54 +1,40 @@
-import { createCipheriv, createDecipheriv, createHash, randomBytes } from "crypto";
-import { readFileSync } from "fs";
+import { createHash } from "crypto";
+import sodium from "libsodium-wrappers";
 
-const IV_LENGTH = 12;
-const TAG_LENGTH = 16;
-const ALGORITHM = "aes-256-gcm";
+let sodiumReady = false;
+let cachedPublicKey: Uint8Array | null = null;
 
-let cachedKey: Buffer | null = null;
-
-function loadKey(): Buffer {
-  if (cachedKey) return cachedKey;
-  const keyPath = process.env.ENCRYPTION_KEY_PATH;
-  if (!keyPath) throw new Error("ENCRYPTION_KEY_PATH not set");
-  cachedKey = readFileSync(keyPath);
-  if (cachedKey.length !== 32) {
-    throw new Error(`Encryption key must be 32 bytes, got ${cachedKey.length}`);
+async function ensureSodium(): Promise<void> {
+  if (!sodiumReady) {
+    await sodium.ready;
+    sodiumReady = true;
   }
-  return cachedKey;
+}
+
+function loadPublicKey(): Uint8Array {
+  if (cachedPublicKey) return cachedPublicKey;
+  const hex = process.env.CREDENTIAL_PUBLIC_KEY;
+  if (!hex) throw new Error("CREDENTIAL_PUBLIC_KEY not set");
+  cachedPublicKey = Buffer.from(hex, "hex");
+  if (cachedPublicKey.length !== 32) {
+    throw new Error(
+      `CREDENTIAL_PUBLIC_KEY must be 32 bytes (64 hex chars), got ${cachedPublicKey.length}`
+    );
+  }
+  return cachedPublicKey;
 }
 
 /**
- * Encrypt a plaintext string.
- * Returns: IV (12 bytes) || ciphertext || auth tag (16 bytes)
+ * Encrypt plaintext using libsodium sealed box (crypto_box_seal).
+ * Only the holder of the corresponding private key can decrypt.
+ * Returns the ciphertext as a Buffer (suitable for BYTEA storage).
  */
-export function encrypt(plaintext: string): Buffer {
-  const key = loadKey();
-  const iv = randomBytes(IV_LENGTH);
-  const cipher = createCipheriv(ALGORITHM, key, iv);
-  const encrypted = Buffer.concat([
-    cipher.update(plaintext, "utf8"),
-    cipher.final(),
-  ]);
-  const tag = cipher.getAuthTag();
-  return Buffer.concat([iv, encrypted, tag]);
-}
-
-/**
- * Decrypt a buffer produced by encrypt().
- * Expects: IV (12 bytes) || ciphertext || auth tag (16 bytes)
- */
-export function decrypt(data: Buffer): string {
-  const key = loadKey();
-  if (data.length < IV_LENGTH + TAG_LENGTH + 1) {
-    throw new Error("Encrypted data too short");
-  }
-  const iv = data.subarray(0, IV_LENGTH);
-  const tag = data.subarray(data.length - TAG_LENGTH);
-  const ciphertext = data.subarray(IV_LENGTH, data.length - TAG_LENGTH);
-  const decipher = createDecipheriv(ALGORITHM, key, iv);
-  decipher.setAuthTag(tag);
-  return decipher.update(ciphertext, undefined, "utf8") + decipher.final("utf8");
+export async function sealedBoxEncrypt(plaintext: string): Promise<Buffer> {
+  await ensureSodium();
+  const pubkey = loadPublicKey();
+  const message = sodium.from_string(plaintext);
+  const ciphertext = sodium.crypto_box_seal(message, pubkey);
+  return Buffer.from(ciphertext);
 }
 
 export function hashEmail(email: string): string {
@@ -58,5 +44,5 @@ export function hashEmail(email: string): string {
 
 /** Clear cached key (for testing or key rotation) */
 export function clearKeyCache(): void {
-  cachedKey = null;
+  cachedPublicKey = null;
 }

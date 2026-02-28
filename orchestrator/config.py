@@ -67,6 +67,9 @@ class Config:
     outreach_interval_seconds: int
     timer_tick_seconds: int
 
+    # Credential decryption
+    credential_private_key_path: str
+
     # Logging
     log_level: str
 
@@ -129,6 +132,10 @@ class Config:
                 os.environ.get("OUTREACH_INTERVAL_SECONDS", "172800")
             ),
             timer_tick_seconds=int(os.environ.get("TIMER_TICK_SECONDS", "60")),
+            credential_private_key_path=os.environ.get(
+                "CREDENTIAL_PRIVATE_KEY_PATH",
+                str(ub_dir / "credential.key"),
+            ).strip(),
             log_level=os.environ.get("LOG_LEVEL", "INFO").strip().upper(),
             bot_name=os.environ.get("BOT_NAME", "UnsaltedButter Bot").strip(),
             bot_about=os.environ.get(

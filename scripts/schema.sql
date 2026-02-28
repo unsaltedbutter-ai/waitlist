@@ -1,8 +1,8 @@
 -- schema.sql -- UnsaltedButter Database Schema (v4: Pay-Per-Action Concierge Model)
 -- Run: psql -h <host> -U butter -d unsaltedbutter -f scripts/schema.sql
 --
--- ENCRYPTION: Each _enc BYTEA field stores 12-byte IV || ciphertext || 16-byte GCM auth tag.
--- No standalone iv column. The crypto module handles prepend/strip transparently.
+-- ENCRYPTION: Each _enc BYTEA field stores a libsodium sealed box ciphertext.
+-- Only the orchestrator holds the private key; the VPS can only encrypt.
 --
 -- CLEAN INSTALL: This script DROPs all tables first. Only run on empty or disposable databases.
 
@@ -119,8 +119,8 @@ CREATE TABLE streaming_credentials (
     id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id             UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     service_id          TEXT NOT NULL REFERENCES streaming_services(id),
-    email_enc           BYTEA NOT NULL,                       -- AES-256-GCM (IV || ciphertext || tag)
-    password_enc        BYTEA NOT NULL,                       -- AES-256-GCM (IV || ciphertext || tag)
+    email_enc           BYTEA NOT NULL,                       -- libsodium sealed box (VPS encrypts, orchestrator decrypts)
+    password_enc        BYTEA NOT NULL,                       -- libsodium sealed box (VPS encrypts, orchestrator decrypts)
     email_hash          VARCHAR(64),                          -- SHA-256 of normalized email (for blocklist checks)
     credential_failures INT NOT NULL DEFAULT 0,               -- consecutive login failures (reset on cred update)
     last_failure_at     TIMESTAMPTZ,                          -- timestamp of most recent credential failure

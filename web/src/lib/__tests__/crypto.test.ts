@@ -1,97 +1,60 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import {
-  createTestKeyFile,
-  createTestKeyFileWithSize,
-} from "@/__test-utils__/fixtures";
 
-// Must be imported AFTER env stubs are set, so use dynamic import in helpers
-let encrypt: typeof import("@/lib/crypto").encrypt;
-let decrypt: typeof import("@/lib/crypto").decrypt;
+let sealedBoxEncrypt: typeof import("@/lib/crypto").sealedBoxEncrypt;
 let clearKeyCache: typeof import("@/lib/crypto").clearKeyCache;
 let hashEmail: typeof import("@/lib/crypto").hashEmail;
 
 beforeEach(async () => {
   vi.unstubAllEnvs();
-  // Re-import to get fresh module state
   const mod = await import("@/lib/crypto");
-  encrypt = mod.encrypt;
-  decrypt = mod.decrypt;
+  sealedBoxEncrypt = mod.sealedBoxEncrypt;
   clearKeyCache = mod.clearKeyCache;
   hashEmail = mod.hashEmail;
   clearKeyCache();
 });
 
-describe("crypto", () => {
+describe("sealedBoxEncrypt", () => {
+  // 32-byte test public key (not a real key, just for format validation)
+  const TEST_PUBKEY_HEX = "a".repeat(64);
+
   function setup() {
-    const keyPath = createTestKeyFile();
-    vi.stubEnv("ENCRYPTION_KEY_PATH", keyPath);
+    vi.stubEnv("CREDENTIAL_PUBLIC_KEY", TEST_PUBKEY_HEX);
     clearKeyCache();
-    return keyPath;
   }
 
-  it("encrypt → decrypt round-trip", () => {
+  it("returns a Buffer", async () => {
     setup();
-    const plaintext = "hunter2-super-secret";
-    const encrypted = encrypt(plaintext);
-    expect(decrypt(encrypted)).toBe(plaintext);
+    const result = await sealedBoxEncrypt("hello");
+    expect(Buffer.isBuffer(result)).toBe(true);
   });
 
-  it("encrypt produces different ciphertext each call (IV randomness)", () => {
+  it("produces different ciphertext each call (nonce randomness)", async () => {
     setup();
-    const plaintext = "same-input";
-    const a = encrypt(plaintext);
-    const b = encrypt(plaintext);
+    const a = await sealedBoxEncrypt("same-input");
+    const b = await sealedBoxEncrypt("same-input");
     expect(Buffer.compare(a, b)).not.toBe(0);
   });
 
-  it("decrypt rejects tampered ciphertext", () => {
+  it("ciphertext is longer than plaintext (overhead from sealed box)", async () => {
     setup();
-    const encrypted = encrypt("secret");
-    // Flip a byte in the ciphertext body (after IV, before tag)
-    encrypted[15] ^= 0xff;
-    expect(() => decrypt(encrypted)).toThrow();
+    const plaintext = "short";
+    const encrypted = await sealedBoxEncrypt(plaintext);
+    // Sealed box overhead is 48 bytes (32 ephemeral pubkey + 16 MAC)
+    expect(encrypted.length).toBeGreaterThan(plaintext.length + 40);
   });
 
-  it("decrypt rejects tampered auth tag", () => {
-    setup();
-    const encrypted = encrypt("secret");
-    // Flip a byte in the last 16 bytes (auth tag)
-    encrypted[encrypted.length - 1] ^= 0xff;
-    expect(() => decrypt(encrypted)).toThrow();
-  });
-
-  it("decrypt rejects truncated data", () => {
-    setup();
-    // IV(12) + tag(16) + 1 = 29 minimum; send 28
-    const short = Buffer.alloc(28);
-    expect(() => decrypt(short)).toThrow("Encrypted data too short");
-  });
-
-  it("decrypt fails with wrong key", () => {
-    const keyA = createTestKeyFile();
-    vi.stubEnv("ENCRYPTION_KEY_PATH", keyA);
+  it("throws when CREDENTIAL_PUBLIC_KEY is not set", async () => {
+    vi.stubEnv("CREDENTIAL_PUBLIC_KEY", "");
     clearKeyCache();
-    const encrypted = encrypt("secret");
-
-    // Switch to a different key
-    const keyB = createTestKeyFile();
-    vi.stubEnv("ENCRYPTION_KEY_PATH", keyB);
-    clearKeyCache();
-    expect(() => decrypt(encrypted)).toThrow();
+    await expect(sealedBoxEncrypt("test")).rejects.toThrow(
+      "CREDENTIAL_PUBLIC_KEY not set"
+    );
   });
 
-  it("throws when ENCRYPTION_KEY_PATH is not set", () => {
-    vi.stubEnv("ENCRYPTION_KEY_PATH", "");
+  it("throws when public key is wrong length", async () => {
+    vi.stubEnv("CREDENTIAL_PUBLIC_KEY", "aabb"); // 2 bytes, not 32
     clearKeyCache();
-    // Empty string is falsy — the code checks `if (!keyPath)`
-    expect(() => encrypt("test")).toThrow("ENCRYPTION_KEY_PATH not set");
-  });
-
-  it("throws when key file is wrong length", () => {
-    const badPath = createTestKeyFileWithSize(16);
-    vi.stubEnv("ENCRYPTION_KEY_PATH", badPath);
-    clearKeyCache();
-    expect(() => encrypt("test")).toThrow("32 bytes");
+    await expect(sealedBoxEncrypt("test")).rejects.toThrow("32 bytes");
   });
 });
 

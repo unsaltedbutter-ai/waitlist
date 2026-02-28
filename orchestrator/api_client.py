@@ -212,7 +212,8 @@ class ApiClient:
     ) -> dict | None:
         """GET /api/agent/credentials/{npub}/{service}.
 
-        Returns {"email": ..., "password": ...} or None on 403/404.
+        Returns {"email_sealed": ..., "password_sealed": ...} or None on 403/404.
+        Sealed blobs are base64-encoded; the orchestrator decrypts them locally.
         Raises on other HTTP errors.
         """
         path = f"/api/agent/credentials/{npub_hex}/{service_id}"

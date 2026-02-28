@@ -5,7 +5,7 @@ vi.mock("@/lib/db", () => ({
   query: vi.fn(),
 }));
 vi.mock("@/lib/crypto", () => ({
-  encrypt: vi.fn((val: string) => Buffer.from(`enc:${val}`)),
+  sealedBoxEncrypt: vi.fn(async (val: string) => Buffer.from(`sealed:${val}`)),
   hashEmail: vi.fn((email: string) => "hash_" + email.trim().toLowerCase()),
 }));
 vi.mock("@/lib/auth", () => ({
@@ -20,7 +20,7 @@ vi.mock("@/lib/auth", () => ({
 }));
 
 import { query } from "@/lib/db";
-import { encrypt } from "@/lib/crypto";
+import { sealedBoxEncrypt } from "@/lib/crypto";
 import { POST, GET } from "../route";
 
 function makePostRequest(body: object): Request {
@@ -33,7 +33,7 @@ function makePostRequest(body: object): Request {
 
 beforeEach(() => {
   vi.mocked(query).mockReset();
-  vi.mocked(encrypt).mockClear();
+  vi.mocked(sealedBoxEncrypt).mockClear();
 });
 
 function mockRenegedClean() {
@@ -56,16 +56,15 @@ describe("POST /api/credentials", () => {
     const res = await POST(req as any, { params: Promise.resolve({}) });
     expect(res.status).toBe(201);
 
-    // Verify encrypt was called with the right values
-    expect(encrypt).toHaveBeenCalledWith("user@example.com");
-    expect(encrypt).toHaveBeenCalledWith("hunter2");
+    // Verify sealedBoxEncrypt was called with the right values
+    expect(sealedBoxEncrypt).toHaveBeenCalledWith("user@example.com");
+    expect(sealedBoxEncrypt).toHaveBeenCalledWith("hunter2");
 
-    // Finding 2.2: Verify the INSERT query received encrypt() return values, not plaintext
+    // Verify the INSERT query received sealedBoxEncrypt() return values, not plaintext
     const insertCall = vi.mocked(query).mock.calls[2];
     const params = insertCall[1] as unknown[];
-    // The mock encrypt returns Buffer.from("enc:<val>"), so params must be those Buffers
-    expect(params[2]).toEqual(Buffer.from("enc:user@example.com"));
-    expect(params[3]).toEqual(Buffer.from("enc:hunter2"));
+    expect(params[2]).toEqual(Buffer.from("sealed:user@example.com"));
+    expect(params[3]).toEqual(Buffer.from("sealed:hunter2"));
     // email_hash is stored alongside encrypted blobs
     expect(params[4]).toBe("hash_user@example.com");
     // Must NOT be the plaintext strings
@@ -85,14 +84,13 @@ describe("POST /api/credentials", () => {
     });
     await POST(req as any, { params: Promise.resolve({}) });
 
-    // The INSERT query should receive the encrypted shared creds + email_hash
+    // The INSERT query should receive the sealed blobs + email_hash
     const insertCall = vi.mocked(query).mock.calls[2];
     const params = insertCall[1] as unknown[];
     expect(params[0]).toBe("test-user");
     expect(params[1]).toBe("netflix");
-    // Encrypted values contain the original strings (our mock prepends "enc:")
-    expect(Buffer.from(params[2] as Buffer).toString()).toBe("enc:shared@example.com");
-    expect(Buffer.from(params[3] as Buffer).toString()).toBe("enc:shared-pass");
+    expect(Buffer.from(params[2] as Buffer).toString()).toBe("sealed:shared@example.com");
+    expect(Buffer.from(params[3] as Buffer).toString()).toBe("sealed:shared-pass");
     expect(params[4]).toBe("hash_shared@example.com");
   });
 
@@ -128,8 +126,8 @@ describe("POST /api/credentials", () => {
     // The second INSERT's params should have the new creds (6 calls total: 3 per POST)
     const lastInsert = vi.mocked(query).mock.calls[5];
     const params = lastInsert[1] as unknown[];
-    expect(Buffer.from(params[2] as Buffer).toString()).toBe("enc:shared@example.com");
-    expect(Buffer.from(params[3] as Buffer).toString()).toBe("enc:shared-pass");
+    expect(Buffer.from(params[2] as Buffer).toString()).toBe("sealed:shared@example.com");
+    expect(Buffer.from(params[3] as Buffer).toString()).toBe("sealed:shared-pass");
     expect(params[4]).toBe("hash_shared@example.com");
   });
 

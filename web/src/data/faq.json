@@ -2,7 +2,7 @@
   {
     "id": "why-trust",
     "question": "Why should I trust you with my usernames and passwords?",
-    "answer": "Straight talk from one bitcoiner to another: I built this because I wanted it, and I use it myself. If you want to get to know me first, DM me on Nostr:\n npub197wnmww44hz60kdry7mme3mqsk7tx683yl26f0n5t29lhxad7lhq3kh3pt\nFrom a technical perspective: your credentials are encrypted at rest with AES-256-GCM and destroyed immediately if you delete your account. They are never logged in plaintext. The codebase is open source so you can verify that yourself.\nhttps://github.com/unsaltedbutter-ai/waitlist"
+    "answer": "Straight talk from one bitcoiner to another: I built this because I wanted it, and I use it myself. If you want to get to know me first, DM me on Nostr:\n npub197wnmww44hz60kdry7mme3mqsk7tx683yl26f0n5t29lhxad7lhq3kh3pt\nFrom a technical perspective: your credentials are encrypted with libsodium sealed boxes (X25519 + XSalsa20-Poly1305). The encryption key lives on the web server, but the decryption key lives on a completely separate computer on a private network. Even if the database and web server were both compromised, your credentials could not be decrypted. They are never logged in plaintext and destroyed immediately if you delete your account.\nhttps://github.com/unsaltedbutter-ai/waitlist"
   },
   {
     "id": "how-contact",
@@ -62,7 +62,7 @@
   {
     "id": "credentials-safe",
     "question": "Are my streaming credentials safe?",
-    "answer": "Credentials are encrypted with AES-256-GCM before storage. A fresh browser profile is created for each action and destroyed immediately after."
+    "answer": "Credentials are encrypted using libsodium sealed boxes before storage. The decryption key is kept on a separate machine from the database, so a database breach alone cannot expose your passwords. A fresh browser profile is created for each action and destroyed immediately after."
   },
   {
     "id": "how-join",

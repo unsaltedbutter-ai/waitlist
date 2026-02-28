@@ -305,7 +305,7 @@ export default function OnboardingPage() {
         <div className="flex items-start gap-3 bg-green-500/8 border border-green-500/20 rounded-xl p-4">
           <svg className="w-4.5 h-4.5 mt-0.5 shrink-0 text-green-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
           <p className="text-sm text-muted leading-relaxed">
-            Your credentials are <span className="text-foreground font-medium">encrypted at rest</span> and only used when you explicitly ask us to act. We never share or access them otherwise.
+            Your credentials are <span className="text-foreground font-medium">encrypted with a key stored on a separate machine</span> and only used when you explicitly ask us to act. We never share or access them otherwise.
           </p>
         </div>
 

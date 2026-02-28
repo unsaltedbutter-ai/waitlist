@@ -12,12 +12,7 @@ vi.mock("@/lib/agent-auth", () => ({
     };
   }),
 }));
-vi.mock("@/lib/crypto", () => ({
-  decrypt: vi.fn((buf: Buffer) => `decrypted-${buf.toString()}`),
-}));
-
 import { query } from "@/lib/db";
-import { decrypt } from "@/lib/crypto";
 import { GET } from "../route";
 
 function makeRequest(npub: string, service: string): Request {
@@ -78,14 +73,12 @@ function mockNoCredentials() {
 
 beforeEach(() => {
   vi.mocked(query).mockReset();
-  vi.mocked(decrypt).mockReset();
-  vi.mocked(decrypt).mockImplementation((buf: Buffer) => `decrypted-${buf.toString()}`);
 });
 
 describe("GET /api/agent/credentials/[npub]/[service]", () => {
   // --- Happy path ---
 
-  it("active job exists, credentials exist: returns decrypted email + password (200)", async () => {
+  it("active job exists, credentials exist: returns sealed blobs as base64 (200)", async () => {
     mockUserFound();
     mockActiveJob();
     mockCredentialsFound();
@@ -94,11 +87,15 @@ describe("GET /api/agent/credentials/[npub]/[service]", () => {
     expect(res.status).toBe(200);
 
     const data = await res.json();
-    expect(data.email).toBe("decrypted-encrypted-email");
-    expect(data.password).toBe("decrypted-encrypted-password");
+    // Returns base64-encoded sealed box ciphertext (orchestrator decrypts with private key)
+    expect(data.email_sealed).toBe(Buffer.from("encrypted-email").toString("base64"));
+    expect(data.password_sealed).toBe(Buffer.from("encrypted-password").toString("base64"));
+    // Must NOT return plaintext fields
+    expect(data.email).toBeUndefined();
+    expect(data.password).toBeUndefined();
   });
 
-  it("job in awaiting_otp status: returns credentials (200)", async () => {
+  it("job in awaiting_otp status: returns sealed blobs (200)", async () => {
     mockUserFound();
     // The query matches 'dispatched', 'active', and 'awaiting_otp', so any match works
     mockActiveJob();
@@ -108,11 +105,11 @@ describe("GET /api/agent/credentials/[npub]/[service]", () => {
     expect(res.status).toBe(200);
 
     const data = await res.json();
-    expect(data.email).toBeDefined();
-    expect(data.password).toBeDefined();
+    expect(data.email_sealed).toBeDefined();
+    expect(data.password_sealed).toBeDefined();
   });
 
-  it("job in dispatched status: returns credentials (200)", async () => {
+  it("job in dispatched status: returns sealed blobs (200)", async () => {
     mockUserFound();
     // dispatched jobs should also be allowed (agent needs creds to start work)
     mockActiveJob();
@@ -122,8 +119,8 @@ describe("GET /api/agent/credentials/[npub]/[service]", () => {
     expect(res.status).toBe(200);
 
     const data = await res.json();
-    expect(data.email).toBeDefined();
-    expect(data.password).toBeDefined();
+    expect(data.email_sealed).toBeDefined();
+    expect(data.password_sealed).toBeDefined();
   });
 
   // --- Auth/gating ---
@@ -197,8 +194,8 @@ describe("GET /api/agent/credentials/[npub]/[service]", () => {
     expect(res.status).toBe(200);
 
     const data = await res.json();
-    expect(data.email).toBe("decrypted-email-data");
-    expect(data.password).toBe("decrypted-pass-data");
+    expect(data.email_sealed).toBe(Buffer.from("email-data").toString("base64"));
+    expect(data.password_sealed).toBe(Buffer.from("pass-data").toString("base64"));
   });
 
   it("URL-encoded hex npub: proper decoding", async () => {
@@ -333,15 +330,15 @@ describe("GET /api/agent/credentials/[npub]/[service]", () => {
     expect(credCall[1]).toEqual(["user-uuid-42", "paramount"]);
   });
 
-  it("calls decrypt with the raw buffer values from the database", async () => {
+  it("returns base64 encoding of raw buffer values from the database", async () => {
     mockUserFound();
     mockActiveJob();
     mockCredentialsFound("raw-email-bytes", "raw-password-bytes");
 
-    await callGET("aabb".repeat(16), "netflix");
+    const res = await callGET("aabb".repeat(16), "netflix");
+    const data = await res.json();
 
-    expect(decrypt).toHaveBeenCalledTimes(2);
-    expect(decrypt).toHaveBeenCalledWith(Buffer.from("raw-email-bytes"));
-    expect(decrypt).toHaveBeenCalledWith(Buffer.from("raw-password-bytes"));
+    expect(data.email_sealed).toBe(Buffer.from("raw-email-bytes").toString("base64"));
+    expect(data.password_sealed).toBe(Buffer.from("raw-password-bytes").toString("base64"));
   });
 });

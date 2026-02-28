@@ -82,16 +82,34 @@ BTC only via BTCPay Server (self-hosted Lightning Network). 3,000 sats per cance
 
 Nostr-only authentication. NIP-07 browser extension for web login, OTP via Nostr DM for credential verification. JWT sessions.
 
+## Credential Encryption
+
+Credentials are encrypted using libsodium sealed boxes (X25519 + XSalsa20-Poly1305). The VPS holds only the public key (can encrypt but not decrypt). The orchestrator on the home network holds the private key.
+
+### Generating a new keypair
+
+```bash
+python3 scripts/generate-credential-keys.py
+```
+
+This creates `~/.unsaltedbutter/credential.key` (32-byte private key, chmod 600) and prints the public key hex. Then:
+
+1. Add the public key hex to VPS `.env.production` as `CREDENTIAL_PUBLIC_KEY=<hex>`
+2. The private key path defaults to `~/.unsaltedbutter/credential.key` on the orchestrator (override with `CREDENTIAL_PRIVATE_KEY_PATH` in `orchestrator.env`)
+3. Restart both the VPS app and the orchestrator
+
+If you need to rotate keys: generate a new pair, update the VPS env, then re-encrypt existing credentials using a migration script that decrypts with the old key and re-encrypts with the new public key.
+
 ## Tests
 
 ```bash
-# Web app (797 tests)
+# Web app (839 tests)
 cd web && npm test
 
-# Orchestrator (433 tests)
+# Orchestrator (553 tests)
 cd orchestrator && python -m pytest
 
-# Agent (186 tests)
+# Agent (271 tests)
 cd agent && python -m pytest
 ```
 
@@ -101,7 +119,7 @@ cd agent && python -m pytest
 - No Redis, no Sentry, no Datadog, no Stripe.
 - All BTC held by company. Diamond hands.
 - Fresh Chrome profile per action, deleted after.
-- Credentials encrypted at rest (AES-256-GCM), destroyed on account deletion.
+- Credentials encrypted at rest (libsodium sealed boxes), decryption key on separate machine, destroyed on account deletion.
 
 ## License
 

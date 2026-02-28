@@ -23,8 +23,8 @@ vi.mock("@/lib/queries", () => ({
 }));
 
 vi.mock("@/lib/crypto", () => ({
-  encrypt: vi.fn(() => Buffer.from("encrypted")),
-  decrypt: vi.fn(() => "decrypted"),
+  sealedBoxEncrypt: vi.fn(async () => Buffer.from("sealed")),
+  hashEmail: vi.fn(() => "hash_test"),
 }));
 
 vi.mock("@/lib/btcpay-invoice", () => ({

@@ -63,7 +63,7 @@ unsaltedbutter.ai/
 - **Inference**: Qwen3-VL-32B via llama.cpp on Mac Studio (OpenAI-compatible HTTP)
 - **Payments**: BTCPay Server (self-hosted, Lightning Network): BTC only, no Stripe
 - **Auth**: Nostr only (NIP-07 + OTP via bot), JWT sessions
-- **Encryption**: AES-256-GCM, local keyfile (never in DB or env vars)
+- **Encryption**: libsodium sealed boxes (X25519), public key on VPS, private key on orchestrator only
 
 ## Critical Rules (see CONSTRAINTS.md for full list)
 

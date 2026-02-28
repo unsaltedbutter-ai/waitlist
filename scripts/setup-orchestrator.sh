@@ -181,9 +181,11 @@ main() {
     echo "Dependencies installed."
 
     # 5. Verify key packages
-    local sdk_ver
+    local sdk_ver nacl_ver
     sdk_ver="$("$VENV_DIR/bin/pip" show nostr-sdk 2>/dev/null | grep '^Version:' | awk '{print $2}')"
+    nacl_ver="$("$VENV_DIR/bin/pip" show PyNaCl 2>/dev/null | grep '^Version:' | awk '{print $2}')"
     echo "  nostr-sdk: $sdk_ver"
+    echo "  PyNaCl:    $nacl_ver"
 
     # 6. Env files
     mkdir -p "$ENV_DIR"
@@ -243,11 +245,26 @@ main() {
     echo "Config:     $ENV_FILE"
     echo ""
 
+    # Check credential key
+    local cred_key="$ENV_DIR/credential.key"
+    if [ -f "$cred_key" ]; then
+        echo "CredKey: $cred_key (exists)"
+    else
+        echo "CredKey: NOT FOUND (generate with: python3 scripts/generate-credential-keys.py)"
+        NEEDS_CONFIG=true
+    fi
+
     if [ "$NEEDS_CONFIG" = true ]; then
         echo "NEXT STEPS:"
         echo "  1. Edit $SHARED_ENV_FILE (Nostr identity, relays, VPS URL)"
         echo "  2. Edit $ENV_FILE (orchestrator-specific: agent URL, callback port)"
-        echo "  3. Run: cd $COMPONENT_DIR && venv/bin/python orchestrator.py"
+        if [ ! -f "$cred_key" ]; then
+            echo "  3. Generate credential keypair: python3 scripts/generate-credential-keys.py"
+            echo "     Then add CREDENTIAL_PUBLIC_KEY to VPS .env.production"
+            echo "  4. Run: cd $COMPONENT_DIR && venv/bin/python orchestrator.py"
+        else
+            echo "  3. Run: cd $COMPONENT_DIR && venv/bin/python orchestrator.py"
+        fi
     else
         echo "Run: cd $COMPONENT_DIR && venv/bin/python orchestrator.py"
     fi

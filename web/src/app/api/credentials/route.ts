@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { withAuth } from "@/lib/auth";
 import { query } from "@/lib/db";
-import { encrypt, hashEmail } from "@/lib/crypto";
+import { sealedBoxEncrypt, hashEmail } from "@/lib/crypto";
 
 export const POST = withAuth(async (req: NextRequest, { userId }) => {
   let body: { serviceId: string; email: string; password: string };
@@ -49,8 +49,8 @@ export const POST = withAuth(async (req: NextRequest, { userId }) => {
       );
     }
 
-    const emailEnc = encrypt(email);
-    const passwordEnc = encrypt(password);
+    const emailEnc = await sealedBoxEncrypt(email);
+    const passwordEnc = await sealedBoxEncrypt(password);
 
     await query(
       `INSERT INTO streaming_credentials

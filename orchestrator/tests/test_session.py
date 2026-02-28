@@ -84,6 +84,19 @@ async def timers(db: Database):
     await queue.stop()
 
 
+class FakeDecryptor:
+    """Mock CredentialDecryptor that returns predictable plaintext."""
+
+    def decrypt(self, sealed_b64: str) -> str:
+        return f"decrypted:{sealed_b64}"
+
+    def decrypt_credentials(self, data: dict) -> dict:
+        return {
+            "email": data["email_sealed"],
+            "password": data["password_sealed"],
+        }
+
+
 @pytest_asyncio.fixture
 async def deps(db, timers):
     """Return a dict of all Session dependencies with mocks where needed."""
@@ -92,6 +105,7 @@ async def deps(db, timers):
     send_dm = AsyncMock()
     send_operator_dm = AsyncMock()
     config = FakeConfig()
+    decryptor = FakeDecryptor()
 
     session = Session(
         db=db,
@@ -101,6 +115,7 @@ async def deps(db, timers):
         config=config,
         send_dm=send_dm,
         send_operator_dm=send_operator_dm,
+        credential_decryptor=decryptor,
     )
     return {
         "session": session,
@@ -161,7 +176,7 @@ async def test_handle_yes(deps):
     send_dm = deps["send_dm"]
 
     await db.upsert_job(_make_job())
-    api.get_credentials.return_value = {"email": "a@b.com", "password": "pw"}
+    api.get_credentials.return_value = {"email_sealed": "a@b.com", "password_sealed": "pw"}
     agent.execute.return_value = True
 
     await s.handle_yes("npub1alice", "job-1")
@@ -229,7 +244,7 @@ async def test_handle_yes_passes_plan_display_name(deps):
         plan_id="disney_plus_bundle_trio_premium",
         plan_display_name="Disney Bundle Trio Premium",
     ))
-    api.get_credentials.return_value = {"email": "a@b.com", "password": "pw"}
+    api.get_credentials.return_value = {"email_sealed": "a@b.com", "password_sealed": "pw"}
     agent.execute.return_value = True
 
     await s.handle_yes("npub1alice", "job-1")
@@ -258,7 +273,7 @@ async def test_otp_confirm_yes_happy_path(deps):
     await db.upsert_job(_make_job())
     await db.upsert_session("npub1alice", OTP_CONFIRM, job_id="job-1")
 
-    api.get_credentials.return_value = {"email": "a@b.com", "password": "pw"}
+    api.get_credentials.return_value = {"email_sealed": "a@b.com", "password_sealed": "pw"}
     agent.execute.return_value = True
 
     await s.handle_otp_confirm_yes("npub1alice")
@@ -302,7 +317,7 @@ async def test_otp_confirm_yes_resume_passes_plan_id(deps):
     ))
     await db.upsert_session("npub1alice", OTP_CONFIRM, job_id="job-1")
 
-    api.get_credentials.return_value = {"email": "a@b.com", "password": "pw"}
+    api.get_credentials.return_value = {"email_sealed": "a@b.com", "password_sealed": "pw"}
     agent.execute.return_value = True
 
     await s.handle_otp_confirm_yes("npub1alice")
@@ -352,7 +367,7 @@ async def test_otp_confirm_yes_agent_rejects(deps):
     await db.upsert_job(_make_job())
     await db.upsert_session("npub1alice", OTP_CONFIRM, job_id="job-1")
 
-    api.get_credentials.return_value = {"email": "a@b.com", "password": "pw"}
+    api.get_credentials.return_value = {"email_sealed": "a@b.com", "password_sealed": "pw"}
     agent.execute.return_value = False
 
     await s.handle_otp_confirm_yes("npub1alice")
@@ -1054,7 +1069,7 @@ async def test_otp_confirm_yes_schedules_otp_timeout(deps):
 
     await db.upsert_job(_make_job())
     await db.upsert_session("npub1alice", OTP_CONFIRM, job_id="job-1")
-    api.get_credentials.return_value = {"email": "a@b.com", "password": "pw"}
+    api.get_credentials.return_value = {"email_sealed": "a@b.com", "password_sealed": "pw"}
     agent.execute.return_value = True
 
     await s.handle_otp_confirm_yes("npub1alice")

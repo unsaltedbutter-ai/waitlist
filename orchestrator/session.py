@@ -13,6 +13,7 @@ import messages
 from agent_client import AgentClient
 from api_client import ApiClient
 from config import Config
+from credential_crypto import CredentialDecryptor
 from db import Database
 from timers import TimerQueue, OTP_TIMEOUT, PAYMENT_EXPIRY
 
@@ -39,6 +40,7 @@ class Session:
         config: Config,
         send_dm: Callable[[str, str], Awaitable[None]],
         send_operator_dm: Callable[[str], Awaitable[None]],
+        credential_decryptor: CredentialDecryptor | None = None,
     ) -> None:
         self._db = db
         self._api = api
@@ -47,6 +49,7 @@ class Session:
         self._config = config
         self._send_dm = send_dm
         self._send_operator_dm = send_operator_dm
+        self._credential_decryptor = credential_decryptor
         # In-memory tracking for pending credential requests (keyed by user_npub)
         self._pending_credentials: dict[str, str] = {}
 
@@ -145,14 +148,21 @@ class Session:
         action = job["action"]
         log.info("handle_yes: %s %s, local status=%s", action, service_id, job.get("status"))
 
-        # Fetch credentials from VPS API
-        creds = await self._api.get_credentials(user_npub, service_id)
-        if creds is None:
+        # Fetch sealed credentials from VPS API
+        sealed = await self._api.get_credentials(user_npub, service_id)
+        if sealed is None:
             await self._send_dm(
                 user_npub,
                 messages.no_credentials(service_id, self._config.base_url),
             )
             return
+
+        # Decrypt sealed blobs locally
+        if self._credential_decryptor is None:
+            log.error("handle_yes: credential_decryptor not configured")
+            await self._send_dm(user_npub, messages.error_generic())
+            return
+        creds = self._credential_decryptor.decrypt_credentials(sealed)
 
         # Create session in EXECUTING state
         await self._db.upsert_session(
@@ -178,10 +188,10 @@ class Session:
         # Update local job status to active
         await self._db.update_job_status(job_id, "active")
 
-        # Remap VPS credential keys to agent convention
+        # Map to agent convention
         agent_creds = {
-            'email': creds.get('email', ''),
-            'pass': creds.get('password', ''),
+            'email': creds['email'],
+            'pass': creds['password'],
         }
 
         # Dispatch to agent
@@ -223,15 +233,23 @@ class Session:
         service_id = job["service_id"]
         action = job["action"]
 
-        # Fetch credentials from VPS API
-        creds = await self._api.get_credentials(user_npub, service_id)
-        if creds is None:
+        # Fetch sealed credentials from VPS API
+        sealed = await self._api.get_credentials(user_npub, service_id)
+        if sealed is None:
             await self._send_dm(
                 user_npub,
                 messages.no_credentials(service_id, self._config.base_url),
             )
             await self._db.delete_session(user_npub)
             return
+
+        # Decrypt sealed blobs locally
+        if self._credential_decryptor is None:
+            log.error("handle_otp_confirm_yes: credential_decryptor not configured")
+            await self._send_dm(user_npub, messages.error_generic())
+            await self._db.delete_session(user_npub)
+            return
+        creds = self._credential_decryptor.decrypt_credentials(sealed)
 
         # Update session state to EXECUTING
         await self._db.upsert_session(
@@ -255,10 +273,10 @@ class Session:
         # Update local job status to active
         await self._db.update_job_status(job_id, "active")
 
-        # Remap VPS credential keys to agent convention
+        # Map to agent convention
         agent_creds = {
-            'email': creds.get('email', ''),
-            'pass': creds.get('password', ''),
+            'email': creds['email'],
+            'pass': creds['password'],
         }
 
         # Dispatch to agent

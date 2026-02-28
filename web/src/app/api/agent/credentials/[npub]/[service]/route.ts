@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { withAgentAuth } from "@/lib/agent-auth";
 import { query } from "@/lib/db";
-import { decrypt } from "@/lib/crypto";
 import { getUserByNpub } from "@/lib/queries";
 
 const SERVICE_ID_REGEX = /^[a-z][a-z0-9_]{1,30}$/;
@@ -42,7 +41,7 @@ export const GET = withAgentAuth(async (_req: NextRequest, { params }) => {
       );
     }
 
-    // Look up credentials
+    // Look up credentials (sealed box ciphertext, not decryptable on VPS)
     const credResult = await query<{ email_enc: Buffer; password_enc: Buffer }>(
       "SELECT email_enc, password_enc FROM streaming_credentials WHERE user_id = $1 AND service_id = $2",
       [userId, service]
@@ -56,10 +55,12 @@ export const GET = withAgentAuth(async (_req: NextRequest, { params }) => {
     }
 
     const row = credResult.rows[0];
-    const email = decrypt(row.email_enc);
-    const password = decrypt(row.password_enc);
 
-    return NextResponse.json({ email, password });
+    // Return raw sealed box ciphertext as base64 (orchestrator decrypts with private key)
+    return NextResponse.json({
+      email_sealed: Buffer.from(row.email_enc).toString("base64"),
+      password_sealed: Buffer.from(row.password_enc).toString("base64"),
+    });
   } catch (err) {
     console.error("Agent credentials lookup error:", err);
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });
