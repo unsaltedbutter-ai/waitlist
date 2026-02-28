@@ -204,6 +204,8 @@ CREATE TABLE action_logs (
     step_count       INT,
     inference_count  INT,
     playbook_version INT,
+    otp_required     BOOLEAN NOT NULL DEFAULT FALSE,
+    error_code       TEXT DEFAULT NULL,
     error_message    TEXT,
     screenshots      JSONB,
     created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW()
