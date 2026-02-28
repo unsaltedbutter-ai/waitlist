@@ -60,11 +60,14 @@ export const GET = withOperator(async (_req: NextRequest, { params }) => {
     step_count: number | null;
     inference_count: number | null;
     playbook_version: number | null;
+    otp_required: boolean;
+    error_code: string | null;
     error_message: string | null;
     created_at: string;
   }>(
     `SELECT id, flow_type, success, duration_seconds, step_count,
-            inference_count, playbook_version, error_message, created_at
+            inference_count, playbook_version, otp_required, error_code,
+            error_message, created_at
      FROM action_logs
      WHERE job_id = $1
      ORDER BY created_at ASC`,

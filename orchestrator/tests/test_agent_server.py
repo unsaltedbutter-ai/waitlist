@@ -149,6 +149,7 @@ async def test_result_callback_success(aio_client: AioTestClient) -> None:
         error: str | None,
         duration_seconds: int,
         error_code: str | None = None,
+        stats: dict | None = None,
     ) -> None:
         received.append((job_id, success, access_end_date, error, duration_seconds))
 
@@ -184,6 +185,7 @@ async def test_result_callback_failure(aio_client: AioTestClient) -> None:
         error: str | None,
         duration_seconds: int,
         error_code: str | None = None,
+        stats: dict | None = None,
     ) -> None:
         received.append((job_id, success, access_end_date, error, duration_seconds))
 
@@ -217,6 +219,7 @@ async def test_result_callback_passes_error_code(aio_client: AioTestClient) -> N
         error: str | None,
         duration_seconds: int,
         error_code: str | None,
+        stats: dict | None = None,
     ) -> None:
         received.append((job_id, success, error, error_code))
 
@@ -253,6 +256,7 @@ async def test_result_callback_null_error_code(aio_client: AioTestClient) -> Non
         error: str | None,
         duration_seconds: int,
         error_code: str | None,
+        stats: dict | None = None,
     ) -> None:
         received.append(error_code)
 
@@ -302,6 +306,7 @@ async def test_result_duration_defaults_to_zero(aio_client: AioTestClient) -> No
         error: str | None,
         duration_seconds: int,
         error_code: str | None = None,
+        stats: dict | None = None,
     ) -> None:
         received.append(duration_seconds)
 
@@ -336,6 +341,7 @@ async def test_result_callback_error_returns_500(aio_client: AioTestClient) -> N
         error: str | None,
         duration_seconds: int,
         error_code: str | None = None,
+        stats: dict | None = None,
     ) -> None:
         raise RuntimeError("db down")
 

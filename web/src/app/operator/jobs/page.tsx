@@ -13,6 +13,7 @@ import {
   tdMuted,
   cacheColor,
 } from "../_components";
+import TrendsSection from "../_trend-charts";
 
 // Statuses where the operator can cancel the job
 const CANCELLABLE = new Set(["pending", "dispatched", "outreach_sent", "snoozed"]);
@@ -536,6 +537,9 @@ export default function JobsPage() {
           </p>
         )}
       </section>
+
+      {/* Trends */}
+      <TrendsSection />
 
       {/* Playbook Cache Hit Rate */}
       <section>

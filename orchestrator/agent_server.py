@@ -17,7 +17,7 @@ log = logging.getLogger(__name__)
 # Callback type aliases for clarity.
 OtpCallback = Callable[[str, str, str | None], Awaitable[None]]
 CredentialCallback = Callable[[str, str, str], Awaitable[None]]
-ResultCallback = Callable[[str, bool, str | None, str | None, int, str | None], Awaitable[None]]
+ResultCallback = Callable[[str, bool, str | None, str | None, int, str | None, dict | None], Awaitable[None]]
 CliDispatchCallback = Callable[[str, str, str, dict, str], Awaitable[str]]
 
 
@@ -71,7 +71,7 @@ class AgentCallbackServer:
 
         callback(job_id: str, success: bool, access_end_date: str | None,
                  error: str | None, duration_seconds: int,
-                 error_code: str | None)
+                 error_code: str | None, stats: dict | None)
         Called when a cancel/resume job completes on the agent.
         """
         self._result_callback = callback
@@ -167,6 +167,12 @@ class AgentCallbackServer:
 
         if self._result_callback:
             try:
+                stats = {
+                    "step_count": data.get("step_count", 0),
+                    "inference_count": data.get("inference_count", 0),
+                    "playbook_version": data.get("playbook_version", 0),
+                    "otp_required": data.get("otp_required", False),
+                }
                 await self._result_callback(
                     job_id,
                     success,
@@ -174,6 +180,7 @@ class AgentCallbackServer:
                     data.get("error"),
                     data.get("duration_seconds", 0),
                     data.get("error_code"),
+                    stats,
                 )
             except Exception:
                 log.exception("Result callback error for job %s", job_id)

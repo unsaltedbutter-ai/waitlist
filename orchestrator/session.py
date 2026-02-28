@@ -408,6 +408,7 @@ class Session:
         error: str | None,
         duration_seconds: int,
         error_code: str | None = None,
+        stats: dict | None = None,
     ) -> None:
         """Agent callback: job finished. EXECUTING/AWAITING_OTP/AWAITING_CREDENTIAL -> INVOICE_SENT or IDLE."""
         log.info(
@@ -490,6 +491,21 @@ class Session:
                 )
         else:
             await self._fail_job(user_npub, job, error, error_code=error_code)
+
+        # Write action log to VPS (fire-and-forget, must not block user flow)
+        if not job_id.startswith("cli-"):
+            try:
+                log_payload = {
+                    "success": success,
+                    "duration_seconds": duration_seconds,
+                    "error_code": error_code,
+                    "error_message": error,
+                }
+                if stats:
+                    log_payload.update(stats)
+                await self._api.write_action_log(job_id, log_payload)
+            except Exception:
+                log.warning("Failed to write action log for job %s", job_id[:8])
 
     async def handle_payment_received(
         self, job_id: str, amount_sats: int

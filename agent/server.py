@@ -477,6 +477,10 @@ class Agent:
                 "error": result.error_message or None,
                 "error_code": result.error_code or None,
                 "duration_seconds": int(result.duration_seconds),
+                "step_count": result.step_count,
+                "inference_count": result.inference_count,
+                "playbook_version": result.playbook_version,
+                "otp_required": result.otp_required,
             }
         else:
             payload = {
@@ -486,6 +490,10 @@ class Agent:
                 "error": fallback_error or "Unknown error",
                 "error_code": None,
                 "duration_seconds": int(time.monotonic() - active.started_at),
+                "step_count": 0,
+                "inference_count": 0,
+                "playbook_version": 0,
+                "otp_required": False,
             }
 
         url = f"{self._orchestrator_url}/callback/result"

@@ -335,6 +335,7 @@ class VLMExecutor:
             self.settle_delay = float(os.environ.get('SETTLE_DELAY', '2.5'))
         self.max_steps = max_steps
         self._debug = debug
+        self._otp_was_used = False
 
     def run(
         self,
@@ -373,6 +374,7 @@ class VLMExecutor:
                 inference_count=inference_count,
                 playbook_version=0,
                 error_message=error_message,
+                otp_required=self._otp_was_used,
                 **kw,
             )
 
@@ -982,6 +984,7 @@ class VLMExecutor:
         This call blocks until the user provides the OTP (up to 15 min).
         It does NOT hold gui_lock, so other jobs can use the GUI freely.
         """
+        self._otp_was_used = True
         if self._otp_callback is None or self._loop is None:
             log.warning('OTP needed but no callback configured')
             return None

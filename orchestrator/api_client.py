@@ -276,6 +276,19 @@ class ApiClient:
             log.warning("Failed to fetch action price from VPS")
         return None
 
+    # -- Action logs ---------------------------------------------------------
+
+    async def write_action_log(self, job_id: str, payload: dict) -> None:
+        """POST /api/agent/jobs/{id}/action-log. Writes execution stats to VPS."""
+        path = f"/api/agent/jobs/{job_id}/action-log"
+        body = json.dumps(payload)
+        resp = await self._request("POST", path, body=body)
+        if resp.status_code not in (200, 201):
+            log.warning(
+                "write_action_log failed for %s: HTTP %d",
+                job_id, resp.status_code,
+            )
+
     # -- Heartbeat -----------------------------------------------------------
 
     async def heartbeat(

@@ -48,6 +48,8 @@ interface ActionLog {
   step_count: number | null;
   inference_count: number | null;
   playbook_version: number | null;
+  otp_required: boolean;
+  error_code: string | null;
   error_message: string | null;
   created_at: string;
 }
@@ -329,6 +331,8 @@ export default function JobDetailPage() {
                   <th className={thClass}>Steps</th>
                   <th className={thClass}>Inference</th>
                   <th className={thClass}>Playbook</th>
+                  <th className={thClass}>OTP</th>
+                  <th className={thClass}>Error Code</th>
                   <th className={thClass}>Error</th>
                   <th className={thClass}>Time</th>
                 </tr>
@@ -351,6 +355,22 @@ export default function JobDetailPage() {
                     <td className={tdMuted}>{log.inference_count ?? "--"}</td>
                     <td className={tdMuted}>
                       {log.playbook_version != null ? `v${log.playbook_version}` : "--"}
+                    </td>
+                    <td className={tdMuted}>
+                      {log.otp_required ? (
+                        <span className="text-amber-400">Yes</span>
+                      ) : (
+                        "No"
+                      )}
+                    </td>
+                    <td className="px-3 py-2">
+                      {log.error_code ? (
+                        <span className="inline-block text-xs px-2 py-0.5 rounded border bg-red-900/50 text-red-300 border-red-700">
+                          {log.error_code}
+                        </span>
+                      ) : (
+                        <span className="text-sm text-muted">--</span>
+                      )}
                     </td>
                     <td className="px-3 py-2 text-xs text-red-400 max-w-xs truncate">
                       {log.error_message || "--"}

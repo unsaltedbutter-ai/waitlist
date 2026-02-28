@@ -48,6 +48,7 @@ class ExecutionResult:
     playbook_version: int
     error_message: str = ''
     error_code: str = ''  # structured: 'credential_invalid', 'captcha', ''
+    otp_required: bool = False
     billing_date: str | None = None
     step_results: list[dict] = field(default_factory=list)
     screenshots: list[dict] = field(default_factory=list)  # [{step, timestamp, path}]
