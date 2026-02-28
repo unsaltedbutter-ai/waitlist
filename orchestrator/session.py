@@ -191,6 +191,7 @@ class Session:
         accepted = await self._agent.execute(
             job_id, service_id, action, agent_creds,
             plan_id=plan_id, plan_display_name=plan_display_name,
+            user_npub=user_npub,
         )
         if not accepted:
             await self._fail_job(user_npub, job, "Agent rejected the job")
@@ -266,6 +267,7 @@ class Session:
         accepted = await self._agent.execute(
             job_id, service_id, action, agent_creds,
             plan_id=plan_id, plan_display_name=plan_display_name,
+            user_npub=user_npub,
         )
         if not accepted:
             await self._fail_job(user_npub, job, "Agent rejected the job")
@@ -628,6 +630,7 @@ class Session:
         accepted = await self._agent.execute(
             job_id, service, action, credentials,
             plan_id=plan_id, plan_display_name=plan_display_name or None,
+            user_npub=user_npub,
         )
         if not accepted:
             log.error("Agent rejected CLI job %s", job_id)

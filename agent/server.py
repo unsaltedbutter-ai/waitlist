@@ -64,6 +64,7 @@ class ActiveJob:
     action: str
     plan_id: str = ''
     plan_display_name: str = ''
+    user_npub: str = ''
     task: asyncio.Task | None = None
     otp_future: asyncio.Future | None = None
     credential_future: asyncio.Future | None = None
@@ -204,6 +205,7 @@ class Agent:
         credentials = data.get("credentials")
         plan_id = data.get("plan_id", "")
         plan_display_name = data.get("plan_display_name", "")
+        user_npub = data.get("user_npub", "")
 
         if not job_id or not service or not action or not credentials:
             return web.json_response(
@@ -232,6 +234,7 @@ class Agent:
             active = ActiveJob(
                 job_id=job_id, service=service, action=action,
                 plan_id=plan_id or '', plan_display_name=plan_display_name or '',
+                user_npub=user_npub or '',
             )
             self._active_jobs[job_id] = active
             log.info(
@@ -416,6 +419,7 @@ class Agent:
                 dict(credentials),  # defensive copy
                 active.job_id,
                 plan_tier,
+                active.user_npub,
             )
 
             if result.success:

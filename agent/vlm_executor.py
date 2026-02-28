@@ -343,6 +343,7 @@ class VLMExecutor:
         credentials: dict[str, str],
         job_id: str = '',
         plan_tier: str = '',
+        user_npub: str = '',
     ) -> ExecutionResult:
         """Execute a cancel/resume flow for the given service.
 
@@ -352,6 +353,7 @@ class VLMExecutor:
             credentials: Dict with 'email', 'pass', etc.
             job_id: Job identifier for logging and OTP requests.
             plan_tier: Plan tier for resume flows (e.g. 'premium').
+            user_npub: User npub for debug trace metadata.
 
         Returns:
             ExecutionResult with success/failure, duration, billing_date, etc.
@@ -383,7 +385,11 @@ class VLMExecutor:
         session = None
         billing_date = None
         error_message = ''
-        trace = DebugTrace(job_id, enabled=self._debug and bool(job_id))
+        trace_meta = {'service': service, 'action': action}
+        if user_npub:
+            trace_meta['user_npub'] = user_npub
+        trace = DebugTrace(job_id, enabled=self._debug and bool(job_id),
+                           metadata=trace_meta)
 
         try:
             # Launch Chrome (create_session handles its own gui_lock internally)

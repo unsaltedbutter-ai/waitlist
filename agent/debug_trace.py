@@ -113,9 +113,11 @@ class DebugTrace:
         job_id: str,
         base_dir: str | None = None,
         enabled: bool = True,
+        metadata: dict | None = None,
     ) -> None:
         self.job_id = job_id
         self.enabled = enabled
+        self._metadata = metadata or {}
         resolved_dir = base_dir or DEFAULT_DEBUG_DIR
         self._dir = Path(resolved_dir) / job_id if job_id else None
 
@@ -194,6 +196,8 @@ class DebugTrace:
                 'phase': phase,
                 'timestamp': time.time(),
             }
+            if step == 0 and self._metadata:
+                meta['job_metadata'] = self._metadata
             if vlm_response is not None:
                 meta['vlm_response'] = vlm_response
             if diagnostics is not None:

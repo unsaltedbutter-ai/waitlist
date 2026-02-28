@@ -238,6 +238,7 @@ async def test_handle_yes_passes_plan_display_name(deps):
         "job-1", "netflix", "resume", {"email": "a@b.com", "pass": "pw"},
         plan_id="disney_plus_bundle_trio_premium",
         plan_display_name="Disney Bundle Trio Premium",
+        user_npub="npub1alice",
     )
 
 
@@ -277,6 +278,7 @@ async def test_otp_confirm_yes_happy_path(deps):
     agent.execute.assert_awaited_once_with(
         "job-1", "netflix", "cancel", {"email": "a@b.com", "pass": "pw"},
         plan_id=None, plan_display_name=None,
+        user_npub="npub1alice",
     )
 
     # DM sent (executing message)
@@ -309,6 +311,7 @@ async def test_otp_confirm_yes_resume_passes_plan_id(deps):
         "job-1", "netflix", "resume", {"email": "a@b.com", "pass": "pw"},
         plan_id="disney_plus_bundle_trio_premium",
         plan_display_name="Disney Bundle Trio Premium",
+        user_npub="npub1alice",
     )
 
 

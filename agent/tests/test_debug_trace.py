@@ -83,6 +83,18 @@ class TestDebugTrace:
         assert data['vlm_response']['action'] == 'click'
         assert 'timestamp' in data
 
+    def test_step_000_includes_metadata(self, tmp_path):
+        meta = {'service': 'netflix', 'action': 'cancel', 'user_npub': 'npub1test'}
+        trace = DebugTrace('job-meta', base_dir=str(tmp_path), metadata=meta)
+        trace.save_step(0, _TINY_PNG, _SAMPLE_RESPONSE, phase='sign-in')
+        trace.save_step(1, _TINY_PNG, _SAMPLE_RESPONSE, phase='cancel')
+
+        step0 = json.loads((trace.trace_dir / 'step_000.json').read_text())
+        assert step0['job_metadata'] == meta
+
+        step1 = json.loads((trace.trace_dir / 'step_001.json').read_text())
+        assert 'job_metadata' not in step1
+
     def test_save_step_with_none_response(self, tmp_path):
         trace = DebugTrace('job-004', base_dir=str(tmp_path))
         trace.save_step(5, _TINY_PNG, None, phase='sign-in')
