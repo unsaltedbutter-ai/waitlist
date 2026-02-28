@@ -8,10 +8,14 @@ echo "======================================"
 git pull;
 cd ../unsaltedbutter-prompts;
 git pull;
+echo ="======================================"
+echo "========   Prompts: $(git rev-parse --short HEAD)   ========="
+echo "======================================="
+
 cd ../unsaltedbutter;
 
 echo ="======================================"
-echo "=============   $(git rev-parse --short HEAD)   ============="
+echo "==========   Apps: $(git rev-parse --short HEAD)   =========="
 echo "======================================="
 
 launchctl kickstart -k gui/501/com.unsaltedbutter.orchestrator;
