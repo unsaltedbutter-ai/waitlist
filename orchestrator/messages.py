@@ -235,7 +235,7 @@ def invoice(amount_sats: int, bolt11: str) -> list[str]:
 
 def payment_received(amount_sats: int) -> str:
     """Payment confirmation."""
-    return f"Received {amount_sats:,} sats. It's been a pleasure doing business with you."
+    return "It's been a pleasure doing business with you."
     
 
 
