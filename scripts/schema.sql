@@ -163,6 +163,7 @@ CREATE TABLE jobs (
     status_updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     billing_date      DATE,                                   -- renewal date we're trying to beat
     access_end_date   DATE,                                   -- captured from cancel confirmation screen
+    access_end_date_approximate BOOLEAN NOT NULL DEFAULT false, -- true when using +14 day fallback
     outreach_count    INT NOT NULL DEFAULT 0,
     next_outreach_at  TIMESTAMPTZ,
     amount_sats       INT,                                    -- frozen when work completes

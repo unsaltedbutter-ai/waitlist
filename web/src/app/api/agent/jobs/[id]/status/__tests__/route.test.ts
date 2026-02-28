@@ -914,7 +914,7 @@ describe("PATCH /api/agent/jobs/[id]/status", () => {
 
   // -- access_end_date fallback --
 
-  it("cancel completion without access_end_date defaults to CURRENT_DATE + 14 days", async () => {
+  it("cancel completion without access_end_date defaults to CURRENT_DATE + 14 days and marks approximate", async () => {
     mockJobLookup("active");
     mockAtomicUpdate("completed_paid", { action: "cancel", user_id: "user-1", service_id: "netflix", access_end_date: null });
 
@@ -930,6 +930,8 @@ describe("PATCH /api/agent/jobs/[id]/status", () => {
     );
     expect(fallbackCall).toBeTruthy();
     expect(fallbackCall![1]).toEqual([JOB_ID]);
+    // Verify approximate flag is set in the same UPDATE
+    expect(fallbackCall![0]).toContain("access_end_date_approximate = true");
   });
 
   it("cancel completion with access_end_date does not apply fallback", async () => {

@@ -725,7 +725,7 @@ async def test_resume_service_alias_hbo():
 
 @pytest.mark.asyncio
 async def test_status_registered_user():
-    """Status for a registered user should show jobs and queue."""
+    """Status for a registered user should show jobs and queue service state."""
     router, deps = _make_router()
     deps["api"].get_user.return_value = {
         "user": {"debt_sats": 0},
@@ -733,7 +733,14 @@ async def test_status_registered_user():
             {"service_id": "netflix", "action": "cancel", "status": "active"}
         ],
         "queue": [
-            {"service_id": "hulu", "position": 1},
+            {
+                "service_id": "hulu",
+                "position": 1,
+                "next_billing_date": "2026-04-15",
+                "last_access_end_date": None,
+                "last_completed_action": None,
+                "access_end_date_approximate": None,
+            },
         ],
     }
 
@@ -744,6 +751,7 @@ async def test_status_registered_user():
     assert "Netflix" in msg
     assert "cancel" in msg
     assert "Hulu" in msg
+    assert "renews" in msg
 
 
 @pytest.mark.asyncio
@@ -762,6 +770,205 @@ async def test_status_with_debt():
     msg = deps["send_dm"].call_args[0][1]
     assert "3,000" in msg
     assert "No active jobs" in msg
+
+
+@pytest.mark.asyncio
+async def test_status_cancelled_with_days_left():
+    """Cancelled service with future access_end_date shows days left."""
+    from datetime import date, timedelta
+
+    router, deps = _make_router()
+    future = (date.today() + timedelta(days=12)).isoformat()
+    deps["api"].get_user.return_value = {
+        "user": {"debt_sats": 0},
+        "active_jobs": [],
+        "queue": [
+            {
+                "service_id": "netflix",
+                "position": 1,
+                "next_billing_date": None,
+                "last_access_end_date": future,
+                "last_completed_action": "cancel",
+                "access_end_date_approximate": False,
+            },
+        ],
+    }
+
+    await router.handle_dm(ALICE, "status")
+
+    msg = deps["send_dm"].call_args[0][1]
+    assert "Netflix: 12 days left" in msg
+    assert "~" not in msg.split("Netflix")[1].split("\n")[0]
+
+
+@pytest.mark.asyncio
+async def test_status_cancelled_approximate_days_left():
+    """Cancelled service with approximate access_end_date shows ~days left."""
+    from datetime import date, timedelta
+
+    router, deps = _make_router()
+    future = (date.today() + timedelta(days=8)).isoformat()
+    deps["api"].get_user.return_value = {
+        "user": {"debt_sats": 0},
+        "active_jobs": [],
+        "queue": [
+            {
+                "service_id": "hulu",
+                "position": 1,
+                "next_billing_date": None,
+                "last_access_end_date": future,
+                "last_completed_action": "cancel",
+                "access_end_date_approximate": True,
+            },
+        ],
+    }
+
+    await router.handle_dm(ALICE, "status")
+
+    msg = deps["send_dm"].call_args[0][1]
+    assert "Hulu: ~8 days left" in msg
+
+
+@pytest.mark.asyncio
+async def test_status_cancelled_past_end_date():
+    """Cancelled service past its access_end_date shows 'currently cancelled'."""
+    router, deps = _make_router()
+    deps["api"].get_user.return_value = {
+        "user": {"debt_sats": 0},
+        "active_jobs": [],
+        "queue": [
+            {
+                "service_id": "netflix",
+                "position": 1,
+                "next_billing_date": None,
+                "last_access_end_date": "2025-01-01",
+                "last_completed_action": "cancel",
+                "access_end_date_approximate": False,
+            },
+        ],
+    }
+
+    await router.handle_dm(ALICE, "status")
+
+    msg = deps["send_dm"].call_args[0][1]
+    assert "Netflix: currently cancelled" in msg
+
+
+@pytest.mark.asyncio
+async def test_status_cancelled_no_end_date():
+    """Cancelled service with no access_end_date shows 'currently cancelled'."""
+    router, deps = _make_router()
+    deps["api"].get_user.return_value = {
+        "user": {"debt_sats": 0},
+        "active_jobs": [],
+        "queue": [
+            {
+                "service_id": "peacock",
+                "position": 1,
+                "next_billing_date": None,
+                "last_access_end_date": None,
+                "last_completed_action": "cancel",
+                "access_end_date_approximate": None,
+            },
+        ],
+    }
+
+    await router.handle_dm(ALICE, "status")
+
+    msg = deps["send_dm"].call_args[0][1]
+    assert "Peacock: currently cancelled" in msg
+
+
+@pytest.mark.asyncio
+async def test_status_active_with_billing_date():
+    """Active service with billing date shows renewal date."""
+    router, deps = _make_router()
+    deps["api"].get_user.return_value = {
+        "user": {"debt_sats": 0},
+        "active_jobs": [],
+        "queue": [
+            {
+                "service_id": "disney_plus",
+                "position": 1,
+                "next_billing_date": "2026-03-15",
+                "last_access_end_date": None,
+                "last_completed_action": None,
+                "access_end_date_approximate": None,
+            },
+        ],
+    }
+
+    await router.handle_dm(ALICE, "status")
+
+    msg = deps["send_dm"].call_args[0][1]
+    assert "Disney+: renews ~Mar 15" in msg
+
+
+@pytest.mark.asyncio
+async def test_status_active_no_billing_date():
+    """Active service without billing date shows 'active'."""
+    router, deps = _make_router()
+    deps["api"].get_user.return_value = {
+        "user": {"debt_sats": 0},
+        "active_jobs": [],
+        "queue": [
+            {
+                "service_id": "max",
+                "position": 1,
+                "next_billing_date": None,
+                "last_access_end_date": None,
+                "last_completed_action": None,
+                "access_end_date_approximate": None,
+            },
+        ],
+    }
+
+    await router.handle_dm(ALICE, "status")
+
+    msg = deps["send_dm"].call_args[0][1]
+    assert "Max: active" in msg
+
+
+@pytest.mark.asyncio
+async def test_status_skips_services_with_active_jobs():
+    """Services with active jobs should not appear in the service state section."""
+    router, deps = _make_router()
+    deps["api"].get_user.return_value = {
+        "user": {"debt_sats": 0},
+        "active_jobs": [
+            {"service_id": "netflix", "action": "cancel", "status": "active"}
+        ],
+        "queue": [
+            {
+                "service_id": "netflix",
+                "position": 1,
+                "next_billing_date": "2026-03-15",
+                "last_access_end_date": None,
+                "last_completed_action": None,
+                "access_end_date_approximate": None,
+            },
+            {
+                "service_id": "hulu",
+                "position": 2,
+                "next_billing_date": "2026-04-01",
+                "last_access_end_date": None,
+                "last_completed_action": None,
+                "access_end_date_approximate": None,
+            },
+        ],
+    }
+
+    await router.handle_dm(ALICE, "status")
+
+    msg = deps["send_dm"].call_args[0][1]
+    # Netflix active job is shown in the jobs section
+    assert "Netflix cancel: active" in msg
+    # Hulu should appear in service state, not Netflix (since Netflix has active job)
+    assert "Hulu: renews" in msg
+    # Netflix should NOT appear a second time in the service section
+    lines = msg.split("\n")
+    netflix_service_lines = [l for l in lines if "Netflix: renews" in l]
+    assert len(netflix_service_lines) == 0
 
 
 @pytest.mark.asyncio

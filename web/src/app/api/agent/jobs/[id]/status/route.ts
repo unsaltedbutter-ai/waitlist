@@ -158,7 +158,7 @@ export const PATCH = withAgentAuth(async (_req: NextRequest, { body, params }) =
         // Fallback: if access_end_date is still NULL, default to cancel date + 14 days
         if (!updatedJob.access_end_date) {
           await query(
-            "UPDATE jobs SET access_end_date = (CURRENT_DATE + INTERVAL '14 days')::date WHERE id = $1",
+            "UPDATE jobs SET access_end_date = (CURRENT_DATE + INTERVAL '14 days')::date, access_end_date_approximate = true WHERE id = $1",
             [jobId]
           );
         }

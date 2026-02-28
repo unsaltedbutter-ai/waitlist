@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { withAgentAuth } from "@/lib/agent-auth";
 import { query } from "@/lib/db";
-import { TERMINAL_STATUSES } from "@/lib/constants";
+import { TERMINAL_STATUSES, COMPLETED_STATUSES } from "@/lib/constants";
 import { getUserByNpub } from "@/lib/queries";
 
 export const GET = withAgentAuth(async (_req: NextRequest, { params }) => {
@@ -31,21 +31,48 @@ export const GET = withAgentAuth(async (_req: NextRequest, { params }) => {
       [user.id]
     );
 
-    // Get queue order
+    // Get queue order with service state from latest completed job
+    const terminalParams = TERMINAL_STATUSES.map((_, i) => `$${i + 2}`).join(", ");
+    const completedPlaceholders = COMPLETED_STATUSES.map(
+      (_, i) => `$${TERMINAL_STATUSES.length + 2 + i}`
+    ).join(", ");
+
     const queueResult = await query<{
       service_id: string;
       position: number;
       plan_id: string | null;
+      next_billing_date: string | null;
+      last_access_end_date: string | null;
+      last_completed_action: string | null;
+      access_end_date_approximate: boolean | null;
     }>(
-      `SELECT service_id, position, plan_id
-       FROM rotation_queue
-       WHERE user_id = $1
-       ORDER BY position`,
-      [user.id]
+      `SELECT rq.service_id, rq.position, rq.plan_id,
+              rq.next_billing_date::text AS next_billing_date,
+              lj.last_access_end_date, lj.last_completed_action,
+              lj.access_end_date_approximate
+       FROM rotation_queue rq
+       LEFT JOIN LATERAL (
+         SELECT j.access_end_date::text AS last_access_end_date,
+                j.action AS last_completed_action,
+                j.access_end_date_approximate
+         FROM jobs j
+         WHERE j.user_id = rq.user_id AND j.service_id = rq.service_id
+           AND j.status IN (${completedPlaceholders})
+         ORDER BY j.created_at DESC
+         LIMIT 1
+       ) lj ON TRUE
+       WHERE rq.user_id = $1
+         AND NOT EXISTS (
+           SELECT 1 FROM jobs j2
+           WHERE j2.user_id = rq.user_id AND j2.service_id = rq.service_id
+             AND j2.status NOT IN (${terminalParams})
+         )
+       ORDER BY rq.position`,
+      [user.id, ...TERMINAL_STATUSES, ...COMPLETED_STATUSES]
     );
 
     // Get active (non-terminal) jobs
-    const placeholders = TERMINAL_STATUSES.map((_, i) => `$${i + 2}`).join(", ");
+    const activeJobPlaceholders = TERMINAL_STATUSES.map((_, i) => `$${i + 2}`).join(", ");
     const activeJobsResult = await query<{
       id: string;
       service_id: string;
@@ -56,7 +83,7 @@ export const GET = withAgentAuth(async (_req: NextRequest, { params }) => {
     }>(
       `SELECT id, service_id, action, status, invoice_id, amount_sats
        FROM jobs
-       WHERE user_id = $1 AND status NOT IN (${placeholders})
+       WHERE user_id = $1 AND status NOT IN (${activeJobPlaceholders})
        ORDER BY created_at DESC`,
       [user.id, ...TERMINAL_STATUSES]
     );
@@ -77,6 +104,10 @@ export const GET = withAgentAuth(async (_req: NextRequest, { params }) => {
         service_id: r.service_id,
         position: r.position,
         plan_id: r.plan_id,
+        next_billing_date: r.next_billing_date,
+        last_access_end_date: r.last_access_end_date,
+        last_completed_action: r.last_completed_action,
+        access_end_date_approximate: r.access_end_date_approximate,
       })),
       active_jobs: activeJobsResult.rows.map((r) => ({
         id: r.id,

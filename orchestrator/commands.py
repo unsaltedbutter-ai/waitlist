@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Awaitable, Callable
+from datetime import date, datetime
 
 import messages
 from api_client import ApiClient
@@ -350,11 +351,48 @@ class CommandRouter:
         else:
             lines.append("No active jobs")
 
-        if queue:
-            q_str = ", ".join(
-                messages.display_name(q["service_id"]) for q in queue
-            )
-            lines.append(f"Queue: {q_str}")
+        # Service state section (queue items not covered by active jobs)
+        service_lines = []
+        active_service_ids = {j["service_id"] for j in active_jobs}
+        today = date.today()
+        for q in queue:
+            sid = q["service_id"]
+            if sid in active_service_ids:
+                continue
+            name = messages.display_name(sid)
+            last_action = q.get("last_completed_action")
+            access_end = q.get("last_access_end_date")
+            approximate = q.get("access_end_date_approximate", False)
+            billing = q.get("next_billing_date")
+
+            if last_action == "cancel" and access_end:
+                try:
+                    end_date = datetime.strptime(access_end, "%Y-%m-%d").date()
+                    days = (end_date - today).days
+                except (ValueError, TypeError):
+                    days = 0
+                if days > 0:
+                    prefix = "~" if approximate else ""
+                    service_lines.append(f"{name}: {prefix}{days} days left")
+                else:
+                    service_lines.append(f"{name}: currently cancelled")
+            elif last_action == "cancel":
+                service_lines.append(f"{name}: currently cancelled")
+            elif billing:
+                try:
+                    bd = datetime.strptime(billing, "%Y-%m-%d").date()
+                    service_lines.append(
+                        f"{name}: renews ~{bd.strftime('%b %-d')}"
+                    )
+                except (ValueError, TypeError):
+                    service_lines.append(f"{name}: active")
+            else:
+                service_lines.append(f"{name}: active")
+
+        if service_lines:
+            lines.append("")
+            lines.append("Your services:")
+            lines.extend(service_lines)
 
         await self._send_dm(sender_npub, "\n".join(lines))
 

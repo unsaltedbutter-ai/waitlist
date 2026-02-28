@@ -48,8 +48,24 @@ function mockServices(services: { service_id: string; display_name: string }[]) 
   vi.mocked(query).mockResolvedValueOnce(mockQueryResult(services));
 }
 
-function mockQueue(items: { service_id: string; position: number; plan_id: string | null }[]) {
-  vi.mocked(query).mockResolvedValueOnce(mockQueryResult(items));
+function mockQueue(items: {
+  service_id: string;
+  position: number;
+  plan_id: string | null;
+  next_billing_date?: string | null;
+  last_access_end_date?: string | null;
+  last_completed_action?: string | null;
+  access_end_date_approximate?: boolean | null;
+}[]) {
+  vi.mocked(query).mockResolvedValueOnce(mockQueryResult(
+    items.map((q) => ({
+      next_billing_date: null,
+      last_access_end_date: null,
+      last_completed_action: null,
+      access_end_date_approximate: null,
+      ...q,
+    }))
+  ));
 }
 
 function mockActiveJobs(jobs: { id: string; service_id: string; action: string; status: string; invoice_id?: string | null; amount_sats?: number | null }[]) {
@@ -66,8 +82,23 @@ describe("GET /api/agent/users/[npub]", () => {
       { service_id: "hulu", display_name: "Hulu" },
     ]);
     mockQueue([
-      { service_id: "netflix", position: 1, plan_id: "netflix_standard" },
-      { service_id: "hulu", position: 2, plan_id: null },
+      {
+        service_id: "netflix",
+        position: 1,
+        plan_id: "netflix_standard",
+        next_billing_date: "2026-04-01",
+        last_access_end_date: null,
+        last_completed_action: null,
+        access_end_date_approximate: null,
+      },
+      {
+        service_id: "hulu",
+        position: 2,
+        plan_id: null,
+        last_access_end_date: "2026-03-15",
+        last_completed_action: "cancel",
+        access_end_date_approximate: true,
+      },
     ]);
     mockActiveJobs([
       { id: "job-1", service_id: "netflix", action: "cancel", status: "active", invoice_id: "inv-1", amount_sats: 3000 },
@@ -91,6 +122,12 @@ describe("GET /api/agent/users/[npub]", () => {
     expect(data.queue).toHaveLength(2);
     expect(data.queue[0].position).toBe(1);
     expect(data.queue[0].plan_id).toBe("netflix_standard");
+    expect(data.queue[0].next_billing_date).toBe("2026-04-01");
+    expect(data.queue[0].last_access_end_date).toBeNull();
+
+    expect(data.queue[1].last_access_end_date).toBe("2026-03-15");
+    expect(data.queue[1].last_completed_action).toBe("cancel");
+    expect(data.queue[1].access_end_date_approximate).toBe(true);
 
     expect(data.active_jobs).toHaveLength(1);
     expect(data.active_jobs[0].action).toBe("cancel");
