@@ -37,6 +37,7 @@ from db import Database
 from job_manager import JobManager
 from nostr_handler import NostrHandler
 from notifications import NotificationHandler
+from credential_crypto import CredentialDecryptor
 from session import Session
 from timers import TimerQueue
 
@@ -230,6 +231,10 @@ async def run(config: Config) -> None:
     send_dm = nostr_handler.send_dm
     send_operator_dm = nostr_handler.send_operator_dm
 
+    # -- Credential decryptor --
+    decryptor = CredentialDecryptor(config.credential_private_key_path)
+    log.info("Credential decryptor loaded from %s", config.credential_private_key_path)
+
     # -- Session --
     session = Session(
         db=db,
@@ -239,6 +244,7 @@ async def run(config: Config) -> None:
         config=config,
         send_dm=send_dm,
         send_operator_dm=send_operator_dm,
+        credential_decryptor=decryptor,
     )
 
     # -- Job manager --
