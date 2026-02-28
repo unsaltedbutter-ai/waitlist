@@ -371,41 +371,46 @@ if ! $INIT_MODE; then
     ${SSH_CMD} bash << 'REMOTE_PREFLIGHT'
 set -euo pipefail
 
+GREEN='\033[0;32m'
+RED='\033[0;31m'
+YELLOW='\033[1;33m'
+NC='\033[0m'
+
 REMOTE_DIR="/home/butter/unsaltedbutter"
 ENV_FILE="${REMOTE_DIR}/web/.env.production"
 
 if [[ ! -f "${ENV_FILE}" ]]; then
-    echo "ERROR: ${ENV_FILE} does not exist. Run with --init first."
+    echo -e "${RED}[✗]${NC} ${ENV_FILE} does not exist. Run with --init first."
     exit 1
 fi
 
 # Check permissions are not more permissive than 600
 PERMS=$(stat -c '%a' "${ENV_FILE}" 2>/dev/null || stat -f '%Lp' "${ENV_FILE}" 2>/dev/null)
 if [[ "${PERMS}" != "600" ]]; then
-    echo "ERROR: ${ENV_FILE} has permissions ${PERMS} (expected 600)."
-    echo "Fix with: chmod 600 ${ENV_FILE}"
+    echo -e "${RED}[✗]${NC} .env.production has permissions ${PERMS} (expected 600). Fix: chmod 600 ${ENV_FILE}"
     exit 1
 fi
-echo ".env.production permissions: ${PERMS} OK"
+echo -e "${GREEN}[✓]${NC} .env.production permissions: ${PERMS}"
 
 # Check VPS_NOSTR_PRIVKEY_FILE is set and points to a readable file
 PRIVKEY_FILE=$(grep '^VPS_NOSTR_PRIVKEY_FILE=' "${ENV_FILE}" | head -1 | cut -d'=' -f2-)
 if [[ -z "${PRIVKEY_FILE}" ]]; then
-    echo "ERROR: VPS_NOSTR_PRIVKEY_FILE is not set in ${ENV_FILE}."
-    echo "Add: VPS_NOSTR_PRIVKEY_FILE=/home/butter/.unsaltedbutter/nostr-vps.privkey"
+    echo -e "${RED}[✗]${NC} VPS_NOSTR_PRIVKEY_FILE is not set in .env.production."
+    echo "    Add: VPS_NOSTR_PRIVKEY_FILE=/home/butter/.unsaltedbutter/nostr-vps.privkey"
     exit 1
 fi
 if [[ ! -r "${PRIVKEY_FILE}" ]]; then
-    echo "ERROR: VPS_NOSTR_PRIVKEY_FILE=${PRIVKEY_FILE} is not readable."
-    echo "Create the key file first (see deploy docs)."
+    echo -e "${RED}[✗]${NC} VPS_NOSTR_PRIVKEY_FILE=${PRIVKEY_FILE} is not readable."
+    echo "    Create the key file first (see deploy docs)."
     exit 1
 fi
-echo "VPS_NOSTR_PRIVKEY_FILE: ${PRIVKEY_FILE} OK"
+echo -e "${GREEN}[✓]${NC} VPS_NOSTR_PRIVKEY_FILE: ${PRIVKEY_FILE}"
 
-# Warn if the defunct VPS_NOSTR_PRIVKEY env var is still present
+# Fail if the defunct VPS_NOSTR_PRIVKEY env var is still present (secret leak risk)
 if grep -q '^VPS_NOSTR_PRIVKEY=' "${ENV_FILE}"; then
-    echo "WARNING: .env.production still contains VPS_NOSTR_PRIVKEY (defunct)."
-    echo "This env var is no longer used. Remove it and use VPS_NOSTR_PRIVKEY_FILE instead."
+    echo -e "${RED}[✗]${NC} .env.production contains VPS_NOSTR_PRIVKEY (defunct, secret in env is a security risk)."
+    echo "    Remove that line and use VPS_NOSTR_PRIVKEY_FILE instead."
+    exit 1
 fi
 
 REMOTE_PREFLIGHT
