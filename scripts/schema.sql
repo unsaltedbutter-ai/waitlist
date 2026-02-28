@@ -121,6 +121,7 @@ CREATE TABLE streaming_credentials (
     service_id          TEXT NOT NULL REFERENCES streaming_services(id),
     email_enc           BYTEA NOT NULL,                       -- AES-256-GCM (IV || ciphertext || tag)
     password_enc        BYTEA NOT NULL,                       -- AES-256-GCM (IV || ciphertext || tag)
+    email_hash          VARCHAR(64),                          -- SHA-256 of normalized email (for blocklist checks)
     credential_failures INT NOT NULL DEFAULT 0,               -- consecutive login failures (reset on cred update)
     last_failure_at     TIMESTAMPTZ,                          -- timestamp of most recent credential failure
     created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),

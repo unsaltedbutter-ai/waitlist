@@ -6,7 +6,6 @@ vi.mock("@/lib/db", () => ({
 }));
 vi.mock("@/lib/crypto", () => ({
   encrypt: vi.fn((val: string) => Buffer.from(`enc:${val}`)),
-  decrypt: vi.fn((buf: Buffer) => buf.toString().replace("enc:", "")),
   hashEmail: vi.fn((email: string) => "hash_" + email.trim().toLowerCase()),
 }));
 vi.mock("@/lib/auth", () => ({
@@ -21,7 +20,7 @@ vi.mock("@/lib/auth", () => ({
 }));
 
 import { query } from "@/lib/db";
-import { encrypt, decrypt } from "@/lib/crypto";
+import { encrypt } from "@/lib/crypto";
 import { POST, GET } from "../route";
 
 function makePostRequest(body: object): Request {
@@ -67,6 +66,8 @@ describe("POST /api/credentials", () => {
     // The mock encrypt returns Buffer.from("enc:<val>"), so params must be those Buffers
     expect(params[2]).toEqual(Buffer.from("enc:user@example.com"));
     expect(params[3]).toEqual(Buffer.from("enc:hunter2"));
+    // email_hash is stored alongside encrypted blobs
+    expect(params[4]).toBe("hash_user@example.com");
     // Must NOT be the plaintext strings
     expect(params[2]).not.toBe("user@example.com");
     expect(params[3]).not.toBe("hunter2");
@@ -84,7 +85,7 @@ describe("POST /api/credentials", () => {
     });
     await POST(req as any, { params: Promise.resolve({}) });
 
-    // The INSERT query should receive the encrypted shared creds
+    // The INSERT query should receive the encrypted shared creds + email_hash
     const insertCall = vi.mocked(query).mock.calls[2];
     const params = insertCall[1] as unknown[];
     expect(params[0]).toBe("test-user");
@@ -92,6 +93,7 @@ describe("POST /api/credentials", () => {
     // Encrypted values contain the original strings (our mock prepends "enc:")
     expect(Buffer.from(params[2] as Buffer).toString()).toBe("enc:shared@example.com");
     expect(Buffer.from(params[3] as Buffer).toString()).toBe("enc:shared-pass");
+    expect(params[4]).toBe("hash_shared@example.com");
   });
 
   it("upserts on conflict — second POST overwrites first", async () => {
@@ -128,6 +130,7 @@ describe("POST /api/credentials", () => {
     const params = lastInsert[1] as unknown[];
     expect(Buffer.from(params[2] as Buffer).toString()).toBe("enc:shared@example.com");
     expect(Buffer.from(params[3] as Buffer).toString()).toBe("enc:shared-pass");
+    expect(params[4]).toBe("hash_shared@example.com");
   });
 
   it("missing serviceId → 400", async () => {
@@ -208,18 +211,16 @@ describe("POST /api/credentials", () => {
 });
 
 describe("GET /api/credentials", () => {
-  it("returns decrypted emails for all stored credentials", async () => {
+  it("returns serviceId and serviceName for all stored credentials (no email)", async () => {
     vi.mocked(query).mockResolvedValueOnce(
       mockQueryResult([
         {
           service_id: "netflix",
           service_name: "Netflix",
-          email_enc: Buffer.from("enc:user@example.com"),
         },
         {
           service_id: "hulu",
           service_name: "Hulu",
-          email_enc: Buffer.from("enc:user@example.com"),
         },
       ])
     );
@@ -233,8 +234,9 @@ describe("GET /api/credentials", () => {
     expect(data.credentials[0]).toEqual({
       serviceId: "netflix",
       serviceName: "Netflix",
-      email: "user@example.com",
     });
+    // No email field returned
+    expect(data.credentials[0].email).toBeUndefined();
   });
 
   it("returns empty array when no credentials exist", async () => {
@@ -244,29 +246,6 @@ describe("GET /api/credentials", () => {
     const res = await GET(req as any, { params: Promise.resolve({}) });
     const data = await res.json();
     expect(data.credentials).toEqual([]);
-  });
-
-  // Finding 3.1: decrypt() throws on corrupted data (e.g. rotated key)
-  it("returns 500 when decrypt throws on a row", async () => {
-    vi.mocked(decrypt).mockImplementationOnce(() => {
-      throw new Error("Decryption failed: bad key or corrupted data");
-    });
-
-    vi.mocked(query).mockResolvedValueOnce(
-      mockQueryResult([
-        {
-          service_id: "netflix",
-          service_name: "Netflix",
-          email_enc: Buffer.from("corrupted-ciphertext"),
-        },
-      ])
-    );
-
-    const req = new Request("http://localhost/api/credentials");
-    const res = await GET(req as any, { params: Promise.resolve({}) });
-    expect(res.status).toBe(500);
-    const data = await res.json();
-    expect(data.error).toBe("Internal server error");
   });
 
   // Finding 4.1: database connection failure on GET (no try/catch in route)

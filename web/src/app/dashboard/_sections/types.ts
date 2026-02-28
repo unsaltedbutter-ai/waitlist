@@ -27,7 +27,6 @@ export interface ServiceOption {
 export interface CachedCredential {
   serviceId: string;
   serviceName: string;
-  email: string;
 }
 
 export function flowTypeLabel(flowType: string): string {

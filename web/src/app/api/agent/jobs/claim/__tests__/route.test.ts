@@ -5,10 +5,7 @@ vi.mock("@/lib/db", () => ({
   query: vi.fn(),
   transaction: vi.fn(),
 }));
-vi.mock("@/lib/crypto", () => ({
-  decrypt: vi.fn((buf: Buffer) => buf.toString().replace("enc:", "")),
-  hashEmail: vi.fn((email: string) => "hash_" + email.trim().toLowerCase()),
-}));
+// No crypto mock needed: claim route reads email_hash directly from DB
 vi.mock("@/lib/agent-auth", () => ({
   withAgentAuth: vi.fn((handler: Function) => {
     return async (req: Request, segmentData: any) => {
@@ -64,20 +61,19 @@ function makeClaimedRow(id: string, userId: string, serviceId: string, npub: str
 // Mock the pre-check flow: pending jobs query, then per-job credential + reneged checks
 function mockCleanPendingJobs(
   pendingJobs: { id: string; user_id: string; service_id: string }[],
-  credentialEmails: Record<string, string>,
+  credentialHashes: Record<string, string>,
   blockedHashes: string[] = []
 ) {
   // First call: SELECT pending jobs
   vi.mocked(query).mockResolvedValueOnce(mockQueryResult(pendingJobs));
 
-  // For each pending job: credential lookup, then reneged check
+  // For each pending job: credential lookup (email_hash), then reneged check
   for (const job of pendingJobs) {
-    const email = credentialEmails[`${job.user_id}:${job.service_id}`];
-    if (email) {
+    const hash = credentialHashes[`${job.user_id}:${job.service_id}`];
+    if (hash) {
       vi.mocked(query).mockResolvedValueOnce(
-        mockQueryResult([{ email_enc: Buffer.from(`enc:${email}`) }])
+        mockQueryResult([{ email_hash: hash }])
       );
-      const hash = "hash_" + email.trim().toLowerCase();
       if (blockedHashes.includes(hash)) {
         vi.mocked(query).mockResolvedValueOnce(
           mockQueryResult([{ total_debt_sats: 3000 }])
@@ -98,8 +94,8 @@ describe("POST /api/agent/jobs/claim", () => {
       { id: UUID_2, user_id: "user-2", service_id: "hulu" },
     ];
     mockCleanPendingJobs(pendingJobs, {
-      "user-1:netflix": "a@example.com",
-      "user-2:hulu": "b@example.com",
+      "user-1:netflix": "hash_a@example.com",
+      "user-2:hulu": "hash_b@example.com",
     });
 
     const claimedRows = [
@@ -127,7 +123,7 @@ describe("POST /api/agent/jobs/claim", () => {
     // Only UUID_1 is pending, UUID_2 is not
     mockCleanPendingJobs(
       [{ id: UUID_1, user_id: "user-1", service_id: "netflix" }],
-      { "user-1:netflix": "a@example.com" }
+      { "user-1:netflix": "hash_a@example.com" }
     );
 
     const claimedRows = [makeClaimedRow(UUID_1, "user-1", "netflix", "npub1abc")];
@@ -166,8 +162,8 @@ describe("POST /api/agent/jobs/claim", () => {
     mockCleanPendingJobs(
       pendingJobs,
       {
-        "user-1:netflix": "deadbeat@example.com",
-        "user-2:hulu": "clean@example.com",
+        "user-1:netflix": "hash_deadbeat@example.com",
+        "user-2:hulu": "hash_clean@example.com",
       },
       ["hash_deadbeat@example.com"]
     );
@@ -195,7 +191,7 @@ describe("POST /api/agent/jobs/claim", () => {
     ];
     mockCleanPendingJobs(
       pendingJobs,
-      { "user-1:netflix": "deadbeat@example.com" },
+      { "user-1:netflix": "hash_deadbeat@example.com" },
       ["hash_deadbeat@example.com"]
     );
 
@@ -262,7 +258,7 @@ describe("POST /api/agent/jobs/claim", () => {
   it("uses a transaction for clean jobs", async () => {
     mockCleanPendingJobs(
       [{ id: UUID_1, user_id: "user-1", service_id: "netflix" }],
-      { "user-1:netflix": "clean@example.com" }
+      { "user-1:netflix": "hash_clean@example.com" }
     );
 
     vi.mocked(transaction).mockImplementationOnce(async (cb) => {

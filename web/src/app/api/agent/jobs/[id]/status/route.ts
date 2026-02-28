@@ -3,7 +3,6 @@ import { withAgentAuth } from "@/lib/agent-auth";
 import { query, transaction } from "@/lib/db";
 import { UUID_REGEX } from "@/lib/constants";
 import { parseJsonBody } from "@/lib/parse-json-body";
-import { decrypt, hashEmail } from "@/lib/crypto";
 import { recordStatusChange } from "@/lib/job-history";
 
 // Valid status transitions: from -> [allowed targets]
@@ -196,14 +195,13 @@ export const PATCH = withAgentAuth(async (_req: NextRequest, { body, params }) =
 
     if (newStatus === "completed_reneged" && updatedJob.amount_sats) {
       await transaction(async (txQuery) => {
-        const credResult = await txQuery<{ email_enc: Buffer }>(
-          "SELECT email_enc FROM streaming_credentials WHERE user_id = $1 AND service_id = $2",
+        const credResult = await txQuery<{ email_hash: string | null }>(
+          "SELECT email_hash FROM streaming_credentials WHERE user_id = $1 AND service_id = $2",
           [updatedJob.user_id, updatedJob.service_id]
         );
 
-        if (credResult.rows.length > 0) {
-          const email = decrypt(credResult.rows[0].email_enc);
-          const hash = hashEmail(email);
+        if (credResult.rows.length > 0 && credResult.rows[0].email_hash) {
+          const hash = credResult.rows[0].email_hash;
 
           await txQuery(
             "UPDATE jobs SET email_hash = $2 WHERE id = $1",

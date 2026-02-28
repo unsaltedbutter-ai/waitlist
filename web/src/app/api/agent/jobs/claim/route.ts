@@ -3,7 +3,6 @@ import { withAgentAuth } from "@/lib/agent-auth";
 import { query, transaction } from "@/lib/db";
 import { UUID_REGEX } from "@/lib/constants";
 import { parseJsonBody } from "@/lib/parse-json-body";
-import { decrypt, hashEmail } from "@/lib/crypto";
 import { recordStatusChange } from "@/lib/job-history";
 
 export const POST = withAgentAuth(async (_req: NextRequest, { body }) => {
@@ -50,14 +49,13 @@ export const POST = withAgentAuth(async (_req: NextRequest, { body }) => {
     const cleanIds: string[] = [];
 
     for (const job of pendingJobs.rows) {
-      const credResult = await query<{ email_enc: Buffer }>(
-        "SELECT email_enc FROM streaming_credentials WHERE user_id = $1 AND service_id = $2",
+      const credResult = await query<{ email_hash: string | null }>(
+        "SELECT email_hash FROM streaming_credentials WHERE user_id = $1 AND service_id = $2",
         [job.user_id, job.service_id]
       );
 
-      if (credResult.rows.length > 0) {
-        const email = decrypt(credResult.rows[0].email_enc);
-        const hash = hashEmail(email);
+      if (credResult.rows.length > 0 && credResult.rows[0].email_hash) {
+        const hash = credResult.rows[0].email_hash;
         const reneged = await query<{ total_debt_sats: number }>(
           "SELECT total_debt_sats FROM reneged_emails WHERE email_hash = $1 AND total_debt_sats > 0",
           [hash]

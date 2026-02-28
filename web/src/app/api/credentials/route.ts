@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { withAuth } from "@/lib/auth";
 import { query } from "@/lib/db";
-import { encrypt, decrypt, hashEmail } from "@/lib/crypto";
+import { encrypt, hashEmail } from "@/lib/crypto";
 
 export const POST = withAuth(async (req: NextRequest, { userId }) => {
   let body: { serviceId: string; email: string; password: string };
@@ -54,15 +54,16 @@ export const POST = withAuth(async (req: NextRequest, { userId }) => {
 
     await query(
       `INSERT INTO streaming_credentials
-         (user_id, service_id, email_enc, password_enc)
-       VALUES ($1, $2, $3, $4)
+         (user_id, service_id, email_enc, password_enc, email_hash)
+       VALUES ($1, $2, $3, $4, $5)
        ON CONFLICT (user_id, service_id) DO UPDATE SET
          email_enc = EXCLUDED.email_enc,
          password_enc = EXCLUDED.password_enc,
+         email_hash = EXCLUDED.email_hash,
          credential_failures = 0,
          last_failure_at = NULL,
          updated_at = NOW()`,
-      [userId, serviceId, emailEnc, passwordEnc]
+      [userId, serviceId, emailEnc, passwordEnc, emailHash]
     );
 
     return NextResponse.json({ success: true }, { status: 201 });
@@ -75,7 +76,7 @@ export const POST = withAuth(async (req: NextRequest, { userId }) => {
 export const GET = withAuth(async (_req: NextRequest, { userId }) => {
   try {
     const result = await query(
-      `SELECT sc.service_id, ss.display_name AS service_name, sc.email_enc
+      `SELECT sc.service_id, ss.display_name AS service_name
        FROM streaming_credentials sc
        JOIN streaming_services ss ON ss.id = sc.service_id
        WHERE sc.user_id = $1
@@ -86,7 +87,6 @@ export const GET = withAuth(async (_req: NextRequest, { userId }) => {
     const credentials = result.rows.map((row) => ({
       serviceId: row.service_id,
       serviceName: row.service_name,
-      email: decrypt(row.email_enc),
     }));
 
     return NextResponse.json({ credentials });

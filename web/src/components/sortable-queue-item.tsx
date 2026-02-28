@@ -16,7 +16,7 @@ export interface SortableQueueItemProps {
   onExpandPanel: (panel: "credentials" | "remove" | null) => void;
   onUpdateCredentials: (data: { serviceId: string; email: string; password: string }) => Promise<void>;
   onRemoveService: (serviceId: string) => Promise<void>;
-  credentialEmail?: string;
+  hasCredentials?: boolean;
   credentialLoading?: boolean;
   credentialError?: boolean;
   updatingCredentials?: boolean;
@@ -34,7 +34,7 @@ export function SortableQueueItem({
   onExpandPanel,
   onUpdateCredentials,
   onRemoveService,
-  credentialEmail,
+  hasCredentials,
   credentialLoading,
   credentialError,
   updatingCredentials,
@@ -139,16 +139,18 @@ export function SortableQueueItem({
       {expandedPanel === "credentials" && (
         <div className="border-t border-border px-4 py-3">
           {credentialLoading ? (
-            <p className="text-sm text-muted">Decrypting credentials...</p>
+            <p className="text-sm text-muted">Loading...</p>
           ) : (
             <>
               {credentialError && (
-                <p className="text-amber-400 text-xs mb-2">Could not load current email.</p>
+                <p className="text-amber-400 text-xs mb-2">Could not load credential status.</p>
+              )}
+              {hasCredentials && (
+                <p className="text-green-400 text-xs mb-2">Credentials saved. Enter new values to update.</p>
               )}
               <ServiceCredentialForm
                 serviceId={item.service_id}
                 serviceName={item.service_name}
-                initialEmail={credentialEmail}
                 onSubmit={onUpdateCredentials}
                 submitting={updatingCredentials}
                 submitLabel="Update credentials"

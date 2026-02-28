@@ -5,10 +5,7 @@ vi.mock("@/lib/db", () => ({
   query: vi.fn(),
   transaction: vi.fn(),
 }));
-vi.mock("@/lib/crypto", () => ({
-  decrypt: vi.fn((buf: Buffer) => buf.toString().replace("enc:", "")),
-  hashEmail: vi.fn((email: string) => "hash_" + email.trim()),
-}));
+// No crypto mock needed: status route reads email_hash directly from DB
 vi.mock("@/lib/agent-auth", () => ({
   withAgentAuth: vi.fn((handler: Function) => {
     return async (req: Request, segmentData: any) => {
@@ -708,7 +705,7 @@ describe("PATCH /api/agent/jobs/[id]/status", () => {
       const txQuery = vi.fn().mockImplementation((sql: string, params: unknown[]) => {
         capturedCalls.push({ sql, params });
         if (sql.includes("streaming_credentials")) {
-          return mockQueryResult([{ email_enc: Buffer.from("enc:attacker@***REDACTED***.com") }]);
+          return mockQueryResult([{ email_hash: "hash_attacker@example.com" }]);
         }
         return mockQueryResult([]);
       });
@@ -726,7 +723,7 @@ describe("PATCH /api/agent/jobs/[id]/status", () => {
     const jobHashCall = capturedCalls.find((c) => c.sql.includes("UPDATE jobs SET email_hash"));
     expect(jobHashCall).toBeTruthy();
     expect(jobHashCall!.params[0]).toBe(JOB_ID);
-    expect(jobHashCall!.params[1]).toBe("hash_attacker@***REDACTED***.com");
+    expect(jobHashCall!.params[1]).toBe("hash_attacker@example.com");
 
     // Verify debt_sats incremented
     const debtCall = capturedCalls.find((c) => c.sql.includes("UPDATE users SET debt_sats"));
@@ -737,7 +734,7 @@ describe("PATCH /api/agent/jobs/[id]/status", () => {
     // Verify reneged_emails upsert
     const renegedCall = capturedCalls.find((c) => c.sql.includes("INSERT INTO reneged_emails"));
     expect(renegedCall).toBeTruthy();
-    expect(renegedCall!.params[0]).toBe("hash_attacker@***REDACTED***.com");
+    expect(renegedCall!.params[0]).toBe("hash_attacker@example.com");
     expect(renegedCall!.params[1]).toBe(3000);
   });
 
@@ -762,7 +759,7 @@ describe("PATCH /api/agent/jobs/[id]/status", () => {
       const txQuery = vi.fn().mockImplementation((sql: string, params: unknown[]) => {
         capturedCalls.push({ sql, params });
         if (sql.includes("streaming_credentials")) {
-          return mockQueryResult([{ email_enc: Buffer.from("enc:test@example.com") }]);
+          return mockQueryResult([{ email_hash: "hash_test@example.com" }]);
         }
         return mockQueryResult([]);
       });
@@ -799,6 +796,33 @@ describe("PATCH /api/agent/jobs/[id]/status", () => {
     expect(res.status).toBe(200);
 
     // Only the credential lookup should have been called (no debt/reneged queries)
+    expect(capturedCalls).toHaveLength(1);
+    expect(capturedCalls[0].sql).toContain("streaming_credentials");
+  });
+
+  it("completed_reneged skips reneg when email_hash is null", async () => {
+    mockJobLookup("active");
+    mockAtomicUpdate("completed_reneged", { amount_sats: 3000, user_id: "user-1", service_id: "netflix" });
+
+    const capturedCalls: { sql: string; params: unknown[] }[] = [];
+    vi.mocked(transaction).mockImplementationOnce(async (cb) => {
+      const txQuery = vi.fn().mockImplementation((sql: string, params: unknown[]) => {
+        capturedCalls.push({ sql, params });
+        if (sql.includes("streaming_credentials")) {
+          return mockQueryResult([{ email_hash: null }]);
+        }
+        return mockQueryResult([]);
+      });
+      return cb(txQuery as any);
+    });
+
+    const res = await PATCH(
+      makeRequest({ status: "completed_reneged", amount_sats: 3000 }) as any,
+      { params: Promise.resolve({ id: JOB_ID }) }
+    );
+    expect(res.status).toBe(200);
+
+    // Only the credential lookup should have been called
     expect(capturedCalls).toHaveLength(1);
     expect(capturedCalls[0].sql).toContain("streaming_credentials");
   });

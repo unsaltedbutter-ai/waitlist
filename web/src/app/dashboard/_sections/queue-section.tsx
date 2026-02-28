@@ -302,9 +302,9 @@ export function QueueSection({
 
   // ---------- Helpers for rendering ----------
 
-  function getCredentialEmail(serviceId: string): string | undefined {
-    if (!credentialCache) return undefined;
-    return credentialCache.find((c) => c.serviceId === serviceId)?.email;
+  function hasCredentials(serviceId: string): boolean {
+    if (!credentialCache) return false;
+    return credentialCache.some((c) => c.serviceId === serviceId);
   }
 
   function renderQueueItem(item: EnrichedQueueItem, pinned: boolean) {
@@ -320,7 +320,7 @@ export function QueueSection({
         onExpandPanel={(panel) => handleExpandPanel(item.service_id, panel)}
         onUpdateCredentials={handleUpdateCredentials}
         onRemoveService={handleRemoveService}
-        credentialEmail={getCredentialEmail(item.service_id)}
+        hasCredentials={hasCredentials(item.service_id)}
         credentialLoading={credentialLoading && isExpanded && currentPanel === "credentials"}
         credentialError={credentialError && isExpanded && currentPanel === "credentials"}
         updatingCredentials={updatingCredentials}
