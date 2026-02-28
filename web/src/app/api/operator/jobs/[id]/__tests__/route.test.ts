@@ -59,7 +59,6 @@ const sampleLog = {
   duration_seconds: 45,
   step_count: 8,
   inference_count: 3,
-  playbook_version: 1,
   error_message: null,
   created_at: "2026-02-18T11:30:00Z",
 };

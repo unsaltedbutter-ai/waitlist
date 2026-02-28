@@ -11,7 +11,6 @@ import {
   thClass,
   tdClass,
   tdMuted,
-  cacheColor,
 } from "../_components";
 import TrendsSection from "../_trend-charts";
 
@@ -541,45 +540,6 @@ export default function JobsPage() {
       {/* Trends */}
       <TrendsSection />
 
-      {/* Playbook Cache Hit Rate */}
-      <section>
-        <SectionHeader>Playbook Cache Hit Rate</SectionHeader>
-        {metrics.playbook_cache.length > 0 ? (
-          <div className="overflow-x-auto">
-            <table className="w-full">
-              <thead>
-                <tr className="border-b border-border">
-                  <th className={thClass}>Service</th>
-                  <th className={thClass}>7d</th>
-                  <th className={thClass}>14d</th>
-                </tr>
-              </thead>
-              <tbody>
-                {metrics.playbook_cache.map((r) => (
-                  <tr
-                    key={r.service_name}
-                    className="border-b border-border/50"
-                  >
-                    <td className={tdClass}>{r.service_name}</td>
-                    <td
-                      className={`px-3 py-2 text-sm font-medium ${cacheColor(r.pct_7d)}`}
-                    >
-                      {r.pct_7d}%
-                    </td>
-                    <td
-                      className={`px-3 py-2 text-sm font-medium ${cacheColor(r.pct_14d)}`}
-                    >
-                      {r.pct_14d}%
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        ) : (
-          <p className="text-muted text-sm">No playbook data yet.</p>
-        )}
-      </section>
     </div>
   );
 }

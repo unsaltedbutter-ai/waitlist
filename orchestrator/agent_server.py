@@ -170,7 +170,6 @@ class AgentCallbackServer:
                 stats = {
                     "step_count": data.get("step_count", 0),
                     "inference_count": data.get("inference_count", 0),
-                    "playbook_version": data.get("playbook_version", 0),
                     "otp_required": data.get("otp_required", False),
                 }
                 await self._result_callback(

@@ -25,12 +25,6 @@ export interface PerfRow {
   avg_steps: number;
 }
 
-export interface CacheRow {
-  service_name: string;
-  pct_7d: number;
-  pct_14d: number;
-}
-
 export interface ProblemJobRow {
   id: string;
   service_name: string;
@@ -71,7 +65,6 @@ export interface Metrics {
     "7d": PerfRow[];
     "30d": PerfRow[];
   };
-  playbook_cache: CacheRow[];
   business: {
     total_users: number;
     active_jobs: Record<string, number>;
@@ -96,12 +89,6 @@ export function formatDate(iso: string): string {
 
 export function formatSats(n: number): string {
   return n.toLocaleString("en-US");
-}
-
-export function cacheColor(pct: number): string {
-  if (pct >= 80) return "text-green-400";
-  if (pct >= 50) return "text-amber-400";
-  return "text-red-400";
 }
 
 export function severityStyle(severity: string): string {

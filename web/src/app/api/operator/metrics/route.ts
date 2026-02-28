@@ -8,8 +8,6 @@ export const GET = withOperator(async (_req: NextRequest) => {
       jobsToday,
       perf7d,
       perf30d,
-      cache7d,
-      cache14d,
       totalUsers,
       jobsByStatus,
       satsIn,
@@ -60,37 +58,7 @@ export const GET = withOperator(async (_req: NextRequest) => {
         GROUP BY ss.display_name, al.flow_type
       `),
 
-      // Section 3: Cache Hit Rate 7d
-      query(`
-        SELECT
-          ss.display_name AS service_name,
-          ROUND(AVG(
-            CASE WHEN al.step_count > 0
-              THEN (al.step_count - al.inference_count)::numeric / al.step_count
-              ELSE 0 END
-          ) * 100, 1) AS cache_hit_pct
-        FROM action_logs al
-        JOIN streaming_services ss ON ss.id = al.service_id
-        WHERE al.created_at > NOW() - INTERVAL '7 days'
-        GROUP BY ss.display_name
-      `),
-
-      // Section 3: Cache Hit Rate 14d
-      query(`
-        SELECT
-          ss.display_name AS service_name,
-          ROUND(AVG(
-            CASE WHEN al.step_count > 0
-              THEN (al.step_count - al.inference_count)::numeric / al.step_count
-              ELSE 0 END
-          ) * 100, 1) AS cache_hit_pct
-        FROM action_logs al
-        JOIN streaming_services ss ON ss.id = al.service_id
-        WHERE al.created_at > NOW() - INTERVAL '14 days'
-        GROUP BY ss.display_name
-      `),
-
-      // Section 4: Business, total users
+      // Section 3: Business, total users
       query(`SELECT COUNT(*)::int AS count FROM users`),
 
       // Section 4: Business, jobs by status (active/recent)
@@ -165,27 +133,6 @@ export const GET = withOperator(async (_req: NextRequest) => {
         avg_steps: Number(r.avg_steps) || 0,
       }));
 
-    // Transform cache hit rates: merge 7d and 14d by service
-    const cacheMap: Record<string, { pct_7d: number; pct_14d: number }> = {};
-    for (const row of cache7d.rows) {
-      cacheMap[row.service_name] = {
-        pct_7d: Number(row.cache_hit_pct) || 0,
-        pct_14d: 0,
-      };
-    }
-    for (const row of cache14d.rows) {
-      if (!cacheMap[row.service_name]) {
-        cacheMap[row.service_name] = { pct_7d: 0, pct_14d: 0 };
-      }
-      cacheMap[row.service_name].pct_14d = Number(row.cache_hit_pct) || 0;
-    }
-    const playbookCache = Object.entries(cacheMap).map(
-      ([service_name, rates]) => ({
-        service_name,
-        ...rates,
-      })
-    );
-
     // Active jobs by status
     const activeJobs: Record<string, number> = {};
     for (const row of jobsByStatus.rows) {
@@ -201,7 +148,6 @@ export const GET = withOperator(async (_req: NextRequest) => {
         "7d": formatPerf(perf7d.rows),
         "30d": formatPerf(perf30d.rows),
       },
-      playbook_cache: playbookCache,
       business: {
         total_users: totalUsers.rows[0]?.count ?? 0,
         active_jobs: activeJobs,

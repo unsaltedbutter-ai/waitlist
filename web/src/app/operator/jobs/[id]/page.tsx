@@ -47,7 +47,6 @@ interface ActionLog {
   duration_seconds: number | null;
   step_count: number | null;
   inference_count: number | null;
-  playbook_version: number | null;
   otp_required: boolean;
   error_code: string | null;
   error_message: string | null;
@@ -330,7 +329,6 @@ export default function JobDetailPage() {
                   <th className={thClass}>Duration</th>
                   <th className={thClass}>Steps</th>
                   <th className={thClass}>Inference</th>
-                  <th className={thClass}>Playbook</th>
                   <th className={thClass}>OTP</th>
                   <th className={thClass}>Error Code</th>
                   <th className={thClass}>Error</th>
@@ -353,9 +351,6 @@ export default function JobDetailPage() {
                     </td>
                     <td className={tdMuted}>{log.step_count ?? "--"}</td>
                     <td className={tdMuted}>{log.inference_count ?? "--"}</td>
-                    <td className={tdMuted}>
-                      {log.playbook_version != null ? `v${log.playbook_version}` : "--"}
-                    </td>
                     <td className={tdMuted}>
                       {log.otp_required ? (
                         <span className="text-amber-400">Yes</span>

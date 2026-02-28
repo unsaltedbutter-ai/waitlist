@@ -68,7 +68,6 @@ class TestExecutionResult:
             job_id='j1', service='netflix', flow='cancel',
             success=True, duration_seconds=45.2,
             step_count=5, inference_count=3,
-            playbook_version=2,
         )
         assert result.success is True
         assert result.error_message == ''
@@ -80,7 +79,6 @@ class TestExecutionResult:
             job_id='j2', service='hulu', flow='cancel',
             success=False, duration_seconds=12.0,
             step_count=2, inference_count=1,
-            playbook_version=1,
             error_message='Step 1 failed: timeout',
         )
         assert result.success is False

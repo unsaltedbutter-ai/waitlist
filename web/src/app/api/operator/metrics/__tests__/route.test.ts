@@ -23,26 +23,24 @@ function makeRequest(): Request {
 }
 
 /**
- * Set up mock return values for all 10 parallel queries in the metrics route.
+ * Set up mock return values for all 8 parallel queries in the metrics route.
  * Order must match the Promise.all in route.ts:
- *   0: jobsToday, 1: perf7d, 2: perf30d, 3: cache7d, 4: cache14d,
- *   5: totalUsers, 6: jobsByStatus, 7: satsIn, 8: debtTotal, 9: deadLetter
+ *   0: jobsToday, 1: perf7d, 2: perf30d,
+ *   3: totalUsers, 4: jobsByStatus, 5: satsIn, 6: debtTotal, 7: deadLetter
  */
 function mockAllQueries(overrides?: Partial<Record<number, unknown[]>>) {
   const defaults: unknown[][] = [
     [], // 0: jobsToday
     [], // 1: perf7d
     [], // 2: perf30d
-    [], // 3: cache7d
-    [], // 4: cache14d
-    [{ count: 0 }], // 5: totalUsers
-    [], // 6: jobsByStatus
-    [{ sats_in: "0" }], // 7: satsIn
-    [{ total_debt: "0" }], // 8: debtTotal
-    [], // 9: deadLetter
+    [{ count: 0 }], // 3: totalUsers
+    [], // 4: jobsByStatus
+    [{ sats_in: "0" }], // 5: satsIn
+    [{ total_debt: "0" }], // 6: debtTotal
+    [], // 7: deadLetter
   ];
 
-  for (let i = 0; i < 10; i++) {
+  for (let i = 0; i < 8; i++) {
     const rows = overrides?.[i] ?? defaults[i];
     vi.mocked(query).mockResolvedValueOnce(mockQueryResult(rows as any[]));
   }
@@ -64,7 +62,6 @@ describe("GET /api/operator/metrics", () => {
     const data = await res.json();
     expect(data).toHaveProperty("jobs_today");
     expect(data).toHaveProperty("agent_performance");
-    expect(data).toHaveProperty("playbook_cache");
     expect(data).toHaveProperty("business");
     expect(data).toHaveProperty("problem_jobs");
 
@@ -91,7 +88,6 @@ describe("GET /api/operator/metrics", () => {
     expect(data.jobs_today.by_service).toEqual([]);
     expect(data.agent_performance["7d"]).toEqual([]);
     expect(data.agent_performance["30d"]).toEqual([]);
-    expect(data.playbook_cache).toEqual([]);
     expect(data.business.total_users).toBe(0);
     expect(data.business.active_jobs).toEqual({});
     expect(data.business.sats_in_30d).toBe(0);
@@ -205,55 +201,15 @@ describe("GET /api/operator/metrics", () => {
     expect(data.agent_performance["7d"][0].success_rate).toBe(0);
   });
 
-  it("merges cache hit rates from 7d and 14d windows", async () => {
-    mockAllQueries({
-      3: [
-        { service_name: "Netflix", cache_hit_pct: "72.5" },
-        { service_name: "Hulu", cache_hit_pct: "60.0" },
-      ],
-      4: [
-        { service_name: "Netflix", cache_hit_pct: "68.3" },
-        { service_name: "Disney+", cache_hit_pct: "55.0" },
-      ],
-    });
-
-    const res = await GET(makeRequest() as any, {
-      params: Promise.resolve({}),
-    });
-    const data = await res.json();
-
-    expect(data.playbook_cache).toHaveLength(3);
-
-    const netflix = data.playbook_cache.find(
-      (c: { service_name: string }) => c.service_name === "Netflix"
-    );
-    expect(netflix.pct_7d).toBe(72.5);
-    expect(netflix.pct_14d).toBe(68.3);
-
-    // Hulu only has 7d data
-    const hulu = data.playbook_cache.find(
-      (c: { service_name: string }) => c.service_name === "Hulu"
-    );
-    expect(hulu.pct_7d).toBe(60.0);
-    expect(hulu.pct_14d).toBe(0);
-
-    // Disney+ only has 14d data
-    const disney = data.playbook_cache.find(
-      (c: { service_name: string }) => c.service_name === "Disney+"
-    );
-    expect(disney.pct_7d).toBe(0);
-    expect(disney.pct_14d).toBe(55.0);
-  });
-
   it("returns business metrics from scalar queries", async () => {
     mockAllQueries({
-      5: [{ count: 42 }],
-      6: [
+      3: [{ count: 42 }],
+      4: [
         { status: "pending", count: 5 },
         { status: "dispatched", count: 3 },
       ],
-      7: [{ sats_in: "150000" }],
-      8: [{ total_debt: "9000" }],
+      5: [{ sats_in: "150000" }],
+      6: [{ total_debt: "9000" }],
     });
 
     const res = await GET(makeRequest() as any, {
@@ -270,9 +226,9 @@ describe("GET /api/operator/metrics", () => {
 
   it("handles null/missing scalar values gracefully", async () => {
     mockAllQueries({
-      5: [],          // no rows at all
-      7: [{ sats_in: null }],
-      8: [{ total_debt: null }],
+      3: [],          // no rows at all
+      5: [{ sats_in: null }],
+      6: [{ total_debt: null }],
     });
 
     const res = await GET(makeRequest() as any, {
@@ -287,7 +243,7 @@ describe("GET /api/operator/metrics", () => {
 
   it("transforms problem jobs (dead letter) correctly", async () => {
     mockAllQueries({
-      9: [
+      7: [
         {
           id: "job-1",
           service_name: "Netflix",
@@ -321,12 +277,12 @@ describe("GET /api/operator/metrics", () => {
     expect(data.problem_jobs[1].status).toBe("user_abandon");
   });
 
-  it("fires exactly 10 parallel queries", async () => {
+  it("fires exactly 8 parallel queries", async () => {
     mockAllQueries();
 
     await GET(makeRequest() as any, { params: Promise.resolve({}) });
 
-    expect(query).toHaveBeenCalledTimes(10);
+    expect(query).toHaveBeenCalledTimes(8);
   });
 
   it("returns 500 when a DB query fails", async () => {

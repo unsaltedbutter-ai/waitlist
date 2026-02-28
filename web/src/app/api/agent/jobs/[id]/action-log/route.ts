@@ -8,7 +8,6 @@ interface ActionLogBody {
   duration_seconds: number;
   step_count: number;
   inference_count: number;
-  playbook_version: number;
   otp_required: boolean;
   error_code: string | null;
   error_message: string | null;
@@ -39,8 +38,8 @@ export const POST = withAgentAuth(
       `INSERT INTO action_logs (
         job_id, user_id, service_id, flow_type, success,
         duration_seconds, step_count, inference_count,
-        playbook_version, otp_required, error_code, error_message
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+        otp_required, error_code, error_message
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
       [
         jobId,
         job.user_id,
@@ -50,7 +49,6 @@ export const POST = withAgentAuth(
         data.duration_seconds ?? null,
         data.step_count ?? null,
         data.inference_count ?? null,
-        data.playbook_version ?? null,
         data.otp_required ?? false,
         data.error_code ?? null,
         data.error_message ?? null,

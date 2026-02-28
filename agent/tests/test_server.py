@@ -496,7 +496,6 @@ class TestReportResult:
                 duration_seconds=42.0,
                 step_count=5,
                 inference_count=3,
-                playbook_version=0,
                 error_message="Sign-in failed: credentials rejected by service",
                 error_code="credential_invalid",
             )
@@ -529,7 +528,6 @@ class TestReportResult:
                 duration_seconds=10.0,
                 step_count=2,
                 inference_count=1,
-                playbook_version=0,
                 error_message="Max steps reached",
             )
 

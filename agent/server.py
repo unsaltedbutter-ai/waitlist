@@ -479,7 +479,6 @@ class Agent:
                 "duration_seconds": int(result.duration_seconds),
                 "step_count": result.step_count,
                 "inference_count": result.inference_count,
-                "playbook_version": result.playbook_version,
                 "otp_required": result.otp_required,
             }
         else:
@@ -492,7 +491,6 @@ class Agent:
                 "duration_seconds": int(time.monotonic() - active.started_at),
                 "step_count": 0,
                 "inference_count": 0,
-                "playbook_version": 0,
                 "otp_required": False,
             }
 

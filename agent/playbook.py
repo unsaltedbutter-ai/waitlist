@@ -45,7 +45,6 @@ class ExecutionResult:
     duration_seconds: float
     step_count: int
     inference_count: int
-    playbook_version: int
     error_message: str = ''
     error_code: str = ''  # structured: 'credential_invalid', 'captcha', ''
     otp_required: bool = False

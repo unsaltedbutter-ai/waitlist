@@ -372,7 +372,6 @@ class VLMExecutor:
                 duration_seconds=time.monotonic() - t0,
                 step_count=step_count,
                 inference_count=inference_count,
-                playbook_version=0,
                 error_message=error_message,
                 otp_required=self._otp_was_used,
                 **kw,

@@ -17,7 +17,6 @@ DROP TABLE IF EXISTS reneged_emails CASCADE;
 DROP TABLE IF EXISTS job_status_history CASCADE;
 DROP TABLE IF EXISTS transactions CASCADE;
 DROP TABLE IF EXISTS operator_alerts CASCADE;
-DROP TABLE IF EXISTS action_metrics CASCADE;
 DROP TABLE IF EXISTS action_logs CASCADE;
 DROP TABLE IF EXISTS jobs CASCADE;
 DROP TABLE IF EXISTS user_consents CASCADE;
@@ -203,29 +202,11 @@ CREATE TABLE action_logs (
     duration_seconds INT,
     step_count       INT,
     inference_count  INT,
-    playbook_version INT,
     otp_required     BOOLEAN NOT NULL DEFAULT FALSE,
     error_code       TEXT DEFAULT NULL,
     error_message    TEXT,
     screenshots      JSONB,
     created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
--- ============================================================
--- ACTION METRICS (aggregated stats per service per flow)
--- ============================================================
-
-CREATE TABLE action_metrics (
-    id                   UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    service_id           TEXT NOT NULL REFERENCES streaming_services(id),
-    flow_type            TEXT NOT NULL CHECK (flow_type IN ('cancel', 'resume')),
-    avg_duration_seconds FLOAT,
-    avg_steps            FLOAT,
-    p95_duration_seconds FLOAT,
-    success_rate         FLOAT,
-    sample_count         INT DEFAULT 0,
-    last_updated         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    UNIQUE(service_id, flow_type)
 );
 
 -- ============================================================
