@@ -1,6 +1,12 @@
 import { query } from "@/lib/db";
 import { checkEmailBlocklist } from "@/lib/reneged";
 import { VALID_ACTIONS } from "@/lib/constants";
+import {
+  CREDENTIAL_STRIKE_LIMIT,
+  CREDENTIAL_COOLDOWN_SECS,
+  USER_ABANDON_LIMIT,
+  USER_ABANDON_COOLDOWN_SECS,
+} from "@/lib/abuse-thresholds";
 
 interface OnDemandSuccess {
   ok: true;
@@ -48,21 +54,40 @@ export async function createOnDemandJob(
     };
   }
 
-  // 3. Check user debt
-  const userResult = await query<{ debt_sats: number }>(
-    "SELECT debt_sats FROM users WHERE id = $1",
+  // 3. Check user debt + abandon cooldown
+  const userResult = await query<{
+    debt_sats: number;
+    abandon_count: number;
+    last_abandon_at: string | null;
+  }>(
+    "SELECT debt_sats, abandon_count, last_abandon_at FROM users WHERE id = $1",
     [userId]
   );
   if (userResult.rows.length === 0) {
     return { ok: false, status: 404, error: "User not found" };
   }
-  if (userResult.rows[0].debt_sats > 0) {
+  const user = userResult.rows[0];
+  if (user.debt_sats > 0) {
     return {
       ok: false,
       status: 403,
       error: "Outstanding debt",
-      debt_sats: userResult.rows[0].debt_sats,
+      debt_sats: user.debt_sats,
     };
+  }
+
+  // 3b. Check abandon cooldown
+  if (user.abandon_count >= USER_ABANDON_LIMIT && user.last_abandon_at) {
+    const cooldownEnd =
+      new Date(user.last_abandon_at).getTime() +
+      USER_ABANDON_COOLDOWN_SECS * 1000;
+    if (Date.now() < cooldownEnd) {
+      return {
+        ok: false,
+        status: 429,
+        error: "Too many abandoned jobs. Please try again later.",
+      };
+    }
   }
 
   // 4. Verify service exists in streaming_services
@@ -74,13 +99,39 @@ export async function createOnDemandJob(
     return { ok: false, status: 400, error: `Invalid service: ${serviceId}` };
   }
 
-  // 5. Verify credentials exist
-  const credResult = await query<{ id: string }>(
-    "SELECT id FROM streaming_credentials WHERE user_id = $1 AND service_id = $2",
+  // 5. Verify credentials exist + check credential strikes
+  const credResult = await query<{
+    id: string;
+    credential_failures: number;
+    last_failure_at: string | null;
+  }>(
+    "SELECT id, credential_failures, last_failure_at FROM streaming_credentials WHERE user_id = $1 AND service_id = $2",
     [userId, serviceId]
   );
   if (credResult.rows.length === 0) {
     return { ok: false, status: 400, error: "No credentials for this service" };
+  }
+
+  // 5b. Check credential failure strikes
+  const cred = credResult.rows[0];
+  if (cred.credential_failures >= CREDENTIAL_STRIKE_LIMIT) {
+    return {
+      ok: false,
+      status: 429,
+      error: "Credentials blocked after repeated failures. Please update your credentials and try again.",
+    };
+  }
+  if (cred.credential_failures >= 2 && cred.last_failure_at) {
+    const cooldownEnd =
+      new Date(cred.last_failure_at).getTime() +
+      CREDENTIAL_COOLDOWN_SECS * 1000;
+    if (Date.now() < cooldownEnd) {
+      return {
+        ok: false,
+        status: 429,
+        error: "Please wait before retrying. Update your credentials on the dashboard first.",
+      };
+    }
   }
 
   // 6. Check email blocklist (catches npub-hopping with same email)

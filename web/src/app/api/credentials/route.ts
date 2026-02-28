@@ -58,7 +58,10 @@ export const POST = withAuth(async (req: NextRequest, { userId }) => {
        VALUES ($1, $2, $3, $4)
        ON CONFLICT (user_id, service_id) DO UPDATE SET
          email_enc = EXCLUDED.email_enc,
-         password_enc = EXCLUDED.password_enc`,
+         password_enc = EXCLUDED.password_enc,
+         credential_failures = 0,
+         last_failure_at = NULL,
+         updated_at = NOW()`,
       [userId, serviceId, emailEnc, passwordEnc]
     );
 

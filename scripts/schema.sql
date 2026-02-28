@@ -36,6 +36,8 @@ CREATE TABLE users (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     nostr_npub      TEXT NOT NULL UNIQUE,                     -- primary auth (Nostr hex pubkey)
     debt_sats       INT NOT NULL DEFAULT 0,                   -- outstanding unpaid amount
+    abandon_count   INT NOT NULL DEFAULT 0,                   -- consecutive user_abandon jobs (reset on success)
+    last_abandon_at TIMESTAMPTZ,                              -- timestamp of most recent abandon
     onboarded_at    TIMESTAMPTZ,                              -- set when user completes onboarding
     created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -114,13 +116,15 @@ VALUES
 -- ============================================================
 
 CREATE TABLE streaming_credentials (
-    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id         UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    service_id      TEXT NOT NULL REFERENCES streaming_services(id),
-    email_enc       BYTEA NOT NULL,                           -- AES-256-GCM (IV || ciphertext || tag)
-    password_enc    BYTEA NOT NULL,                           -- AES-256-GCM (IV || ciphertext || tag)
-    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id             UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    service_id          TEXT NOT NULL REFERENCES streaming_services(id),
+    email_enc           BYTEA NOT NULL,                       -- AES-256-GCM (IV || ciphertext || tag)
+    password_enc        BYTEA NOT NULL,                       -- AES-256-GCM (IV || ciphertext || tag)
+    credential_failures INT NOT NULL DEFAULT 0,               -- consecutive login failures (reset on cred update)
+    last_failure_at     TIMESTAMPTZ,                          -- timestamp of most recent credential failure
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     UNIQUE(user_id, service_id)
 );
 

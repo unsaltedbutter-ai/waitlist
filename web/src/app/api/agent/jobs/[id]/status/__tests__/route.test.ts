@@ -7,7 +7,7 @@ vi.mock("@/lib/db", () => ({
 }));
 vi.mock("@/lib/crypto", () => ({
   decrypt: vi.fn((buf: Buffer) => buf.toString().replace("enc:", "")),
-  hashEmail: vi.fn((email: string) => "hash_" + email.trim().toLowerCase()),
+  hashEmail: vi.fn((email: string) => "hash_" + email.trim()),
 }));
 vi.mock("@/lib/agent-auth", () => ({
   withAgentAuth: vi.fn((handler: Function) => {

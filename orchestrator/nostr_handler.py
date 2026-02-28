@@ -33,6 +33,7 @@ from nostr_sdk import (
 )
 
 import zap_handler
+from db import _redact_sensitive
 
 if TYPE_CHECKING:
     from api_client import ApiClient
@@ -217,7 +218,7 @@ class NostrHandler(HandleNotification):
         )
 
         sender_npub = sender_pk.to_bech32()
-        log.info("[nip04] DM from %s (%s): %s", sender_npub, sender_hex[:16], plaintext[:100])
+        log.info("[nip04] DM from %s (%s): %s", sender_npub, sender_hex[:16], _redact_sensitive(plaintext)[:100])
         await self._db.log_message("inbound", sender_hex, plaintext)
 
         if sender_hex == self._config.vps_bot_pubkey:
@@ -248,7 +249,7 @@ class NostrHandler(HandleNotification):
         sender_npub = sender.to_bech32()
         plaintext = rumor.content()
 
-        log.info("[nip17] DM from %s (%s): %s", sender_npub, sender_hex[:16], plaintext[:100])
+        log.info("[nip17] DM from %s (%s): %s", sender_npub, sender_hex[:16], _redact_sensitive(plaintext)[:100])
         await self._db.log_message("inbound", sender_hex, plaintext)
 
         if sender_hex == self._config.vps_bot_pubkey:

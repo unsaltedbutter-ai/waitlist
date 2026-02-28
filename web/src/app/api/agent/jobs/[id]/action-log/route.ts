@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { withAgentAuth } from "@/lib/agent-auth";
 import { parseJsonBody } from "@/lib/parse-json-body";
 import { query } from "@/lib/db";
+import { CREDENTIAL_ALERT_THRESHOLD } from "@/lib/abuse-thresholds";
 
 interface ActionLogBody {
   success: boolean;
@@ -54,6 +55,36 @@ export const POST = withAgentAuth(
         data.error_message ?? null,
       ]
     );
+
+    // Increment credential failure counter when login fails
+    if (data.error_code === "credential_invalid") {
+      await query(
+        `UPDATE streaming_credentials
+         SET credential_failures = credential_failures + 1,
+             last_failure_at = NOW()
+         WHERE user_id = $1 AND service_id = $2`,
+        [job.user_id, job.service_id]
+      );
+
+      // Alert operator after threshold
+      const credCheck = await query<{ credential_failures: number }>(
+        "SELECT credential_failures FROM streaming_credentials WHERE user_id = $1 AND service_id = $2",
+        [job.user_id, job.service_id]
+      );
+      if (
+        credCheck.rows.length > 0 &&
+        credCheck.rows[0].credential_failures >= CREDENTIAL_ALERT_THRESHOLD
+      ) {
+        await query(
+          `INSERT INTO operator_alerts (alert_type, severity, title, message, related_user_id)
+           VALUES ('credential_abuse', 'warning', 'Repeated credential failures', $1, $2)`,
+          [
+            `User has ${credCheck.rows[0].credential_failures} consecutive credential failures for ${job.service_id}`,
+            job.user_id,
+          ]
+        );
+      }
+    }
 
     return NextResponse.json({ ok: true }, { status: 201 });
   }

@@ -6,6 +6,15 @@ vi.mock("@/lib/create-on-demand-job", () => ({
 vi.mock("@/lib/nostr-push", () => ({
   pushJobsReady: vi.fn().mockResolvedValue(undefined),
 }));
+vi.mock("@/lib/rate-limit", () => ({
+  createRateLimiter: () => ({
+    check: () => ({ allowed: true, remaining: 99 }),
+  }),
+}));
+vi.mock("@/lib/abuse-thresholds", () => ({
+  ONDEMAND_RATE_LIMIT: 5,
+  ONDEMAND_RATE_WINDOW_SECS: 3600,
+}));
 vi.mock("@/lib/auth", () => ({
   withAuth: vi.fn((handler: Function) => {
     return async (req: Request, segmentData: any) => {

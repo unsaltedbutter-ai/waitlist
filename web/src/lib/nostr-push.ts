@@ -27,15 +27,16 @@ function getRelays(): string[] {
 
 function getPrivKey(): string | null {
   const keyFile = process.env.VPS_NOSTR_PRIVKEY_FILE;
-  if (keyFile) {
-    try {
-      return readFileSync(keyFile, "utf8").trim();
-    } catch (err) {
-      console.warn("Failed to read VPS_NOSTR_PRIVKEY_FILE:", (err as Error).message);
-      return null;
-    }
+  if (!keyFile) {
+    console.warn("[nostr-push] VPS_NOSTR_PRIVKEY_FILE not set. Set this to the path of your Nostr private key file.");
+    return null;
   }
-  return process.env.VPS_NOSTR_PRIVKEY ?? null;
+  try {
+    return readFileSync(keyFile, "utf8").trim();
+  } catch (err) {
+    console.warn("Failed to read VPS_NOSTR_PRIVKEY_FILE:", (err as Error).message);
+    return null;
+  }
 }
 
 function getPrivkeyBytes(): Uint8Array | null {

@@ -66,11 +66,11 @@ let pushAutoInvite: typeof import("@/lib/nostr-push").pushAutoInvite;
 let _resetPool: typeof import("@/lib/nostr-push")._resetPool;
 
 beforeEach(async () => {
-  vi.stubEnv("VPS_NOSTR_PRIVKEY", TEST_PRIVKEY);
-  vi.stubEnv("VPS_NOSTR_PRIVKEY_FILE", "");
+  vi.stubEnv("VPS_NOSTR_PRIVKEY_FILE", "/etc/nostr/privkey");
   vi.stubEnv("ORCHESTRATOR_NPUB", TEST_NPUB);
   vi.stubEnv("NOSTR_RELAYS", "wss://relay1.test,wss://relay2.test");
 
+  mockReadFileSync.mockReturnValue(TEST_PRIVKEY);
   mockWrapEvent.mockReturnValue({ ...FAKE_WRAPPED_EVENT });
   mockDecode.mockReturnValue({ type: "npub", data: TEST_RECIPIENT_HEX });
   mockGetPublicKey.mockReturnValue("aa".repeat(32));
@@ -212,14 +212,14 @@ describe("nostr-push", () => {
   });
 
   describe("missing env vars", () => {
-    it("warns and returns early when VPS_NOSTR_PRIVKEY is missing", async () => {
-      vi.stubEnv("VPS_NOSTR_PRIVKEY", "");
+    it("warns and returns early when VPS_NOSTR_PRIVKEY_FILE is not set", async () => {
+      vi.stubEnv("VPS_NOSTR_PRIVKEY_FILE", "");
       const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
 
       await pushNewUser("npub1test");
 
       expect(warnSpy).toHaveBeenCalledWith(
-        expect.stringContaining("VPS_NOSTR_PRIVKEY not set")
+        expect.stringContaining("VPS_NOSTR_PRIVKEY_FILE not set")
       );
       expect(mockPublish).not.toHaveBeenCalled();
     });
@@ -385,14 +385,17 @@ describe("nostr-push", () => {
       expect(mockPublish).not.toHaveBeenCalled();
     });
 
-    it("falls back to env var when VPS_NOSTR_PRIVKEY_FILE is not set", async () => {
+    it("warns when VPS_NOSTR_PRIVKEY_FILE is not set (no env var fallback)", async () => {
       vi.stubEnv("VPS_NOSTR_PRIVKEY_FILE", "");
-      vi.stubEnv("VPS_NOSTR_PRIVKEY", TEST_PRIVKEY);
+      const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
 
       await pushNewUser("npub1test");
 
       expect(mockReadFileSync).not.toHaveBeenCalled();
-      expect(mockPublish).toHaveBeenCalledTimes(1);
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining("VPS_NOSTR_PRIVKEY_FILE not set")
+      );
+      expect(mockPublish).not.toHaveBeenCalled();
     });
   });
 
@@ -400,19 +403,19 @@ describe("nostr-push", () => {
     it("decodes nsec1 private key via nip19", async () => {
       const nsecKey = "nsec1testfakensec";
       const decodedBytes = new Uint8Array(32);
-      vi.stubEnv("VPS_NOSTR_PRIVKEY", nsecKey);
+      mockReadFileSync.mockReturnValue(nsecKey);
       mockDecode
         .mockReturnValueOnce({ type: "npub", data: TEST_RECIPIENT_HEX })  // for getRecipientPubkey
         .mockReturnValueOnce({ type: "nsec", data: decodedBytes });       // for getPrivkeyBytes
 
       await pushNewUser("npub1test");
 
-      // decode called for both ORCHESTRATOR_NPUB (npub) and VPS_NOSTR_PRIVKEY (nsec)
+      // decode called for both ORCHESTRATOR_NPUB (npub) and the nsec from file
       expect(mockDecode).toHaveBeenCalledWith(nsecKey);
     });
 
     it("returns null when nsec decode gives wrong type", async () => {
-      vi.stubEnv("VPS_NOSTR_PRIVKEY", "nsec1bad");
+      mockReadFileSync.mockReturnValue("nsec1bad");
       mockDecode.mockReturnValue({ type: "npub", data: "wrong" });
       const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
 

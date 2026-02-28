@@ -177,6 +177,23 @@ export const PATCH = withAgentAuth(async (_req: NextRequest, { body, params }) =
       );
     }
 
+    // Track user_abandon events for abuse prevention
+    if (newStatus === "user_abandon") {
+      await query(
+        `UPDATE users SET abandon_count = abandon_count + 1, last_abandon_at = NOW(), updated_at = NOW()
+         WHERE id = $1`,
+        [updatedJob.user_id]
+      );
+    }
+
+    // Reset abandon count on any successful completion
+    if (completedStatuses.includes(newStatus)) {
+      await query(
+        "UPDATE users SET abandon_count = 0, last_abandon_at = NULL, updated_at = NOW() WHERE id = $1",
+        [updatedJob.user_id]
+      );
+    }
+
     if (newStatus === "completed_reneged" && updatedJob.amount_sats) {
       await transaction(async (txQuery) => {
         const credResult = await txQuery<{ email_enc: Buffer }>(

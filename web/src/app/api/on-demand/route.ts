@@ -2,8 +2,27 @@ import { NextRequest, NextResponse } from "next/server";
 import { withAuth } from "@/lib/auth";
 import { createOnDemandJob } from "@/lib/create-on-demand-job";
 import { pushJobsReady } from "@/lib/nostr-push";
+import { createRateLimiter } from "@/lib/rate-limit";
+import {
+  ONDEMAND_RATE_LIMIT,
+  ONDEMAND_RATE_WINDOW_SECS,
+} from "@/lib/abuse-thresholds";
+
+const jobLimiter = createRateLimiter(
+  ONDEMAND_RATE_LIMIT,
+  ONDEMAND_RATE_WINDOW_SECS * 1000
+);
 
 export const POST = withAuth(async (req: NextRequest, { userId }) => {
+  // Per-user rate limit on job submissions
+  const { allowed } = jobLimiter.check(userId);
+  if (!allowed) {
+    return NextResponse.json(
+      { error: "Too many job requests. Please try again later." },
+      { status: 429 }
+    );
+  }
+
   let body: { serviceId?: string; action?: string };
   try {
     body = await req.json();
