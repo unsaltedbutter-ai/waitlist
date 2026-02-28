@@ -87,7 +87,7 @@ describe("POST /api/agent/invoices", () => {
     // Verify job was updated with invoice_id and DB-sourced amount
     const updateCall = txQuery.mock.calls[0];
     expect(updateCall[0]).toContain("UPDATE jobs SET invoice_id");
-    expect(updateCall[1]).toEqual(["btcpay-inv-1", 3000, jobId]);
+    expect(updateCall[1]).toEqual(["btcpay-inv-1", 3000, jobId, null]);
 
     // Verify transaction row was created with DB-sourced amount
     const txInsertCall = txQuery.mock.calls[1];

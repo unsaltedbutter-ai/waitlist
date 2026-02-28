@@ -10,6 +10,7 @@ export const POST = withAgentAuth(async (_req: NextRequest, { body: rawBody }) =
     job_id?: string;
     amount_sats?: number;
     user_npub?: string;
+    access_end_date?: string;
   }>(rawBody);
   if (error) return error;
 
@@ -103,8 +104,8 @@ export const POST = withAgentAuth(async (_req: NextRequest, { body: rawBody }) =
     // Store invoice_id on job and create transaction row atomically
     await transaction(async (txQuery) => {
       await txQuery(
-        "UPDATE jobs SET invoice_id = $1, amount_sats = $2 WHERE id = $3",
-        [invoice.id, amount_sats, job_id]
+        "UPDATE jobs SET invoice_id = $1, amount_sats = $2, access_end_date = COALESCE($4, access_end_date) WHERE id = $3",
+        [invoice.id, amount_sats, job_id, parsed.access_end_date ?? null]
       );
       await txQuery(
         `INSERT INTO transactions (job_id, user_id, service_id, action, amount_sats, status)

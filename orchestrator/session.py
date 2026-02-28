@@ -456,9 +456,10 @@ class Session:
                 if access_end_date:
                     update_kwargs["access_end_date"] = access_end_date
 
-                # Create invoice via VPS API
+                # Create invoice via VPS API (also sets access_end_date)
                 invoice_data = await self._api.create_invoice(
-                    job_id, self._config.action_price_sats, user_npub
+                    job_id, self._config.action_price_sats, user_npub,
+                    access_end_date=access_end_date,
                 )
 
                 # Update local job with invoice_id and amount

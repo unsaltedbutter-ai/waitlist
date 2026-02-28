@@ -225,18 +225,22 @@ class ApiClient:
     # -- Invoices ------------------------------------------------------------
 
     async def create_invoice(
-        self, job_id: str, amount_sats: int, user_npub: str
+        self, job_id: str, amount_sats: int, user_npub: str,
+        access_end_date: str | None = None,
     ) -> dict:
         """POST /api/agent/invoices.
 
         Returns {"invoice_id": ..., "bolt11": ..., "amount_sats": ...}.
         """
         path = "/api/agent/invoices"
-        body = json.dumps({
+        payload: dict = {
             "job_id": job_id,
             "amount_sats": amount_sats,
             "user_npub": user_npub,
-        })
+        }
+        if access_end_date:
+            payload["access_end_date"] = access_end_date
+        body = json.dumps(payload)
         resp = await self._request("POST", path, body=body)
         resp.raise_for_status()
         return resp.json()
