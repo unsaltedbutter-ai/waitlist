@@ -61,8 +61,10 @@ def test_load_valid_config(env: None) -> None:
     assert cfg.operator_pubkey == _HEX_OPERATOR
 
 
-def test_load_missing_required(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_load_missing_required(env: None, monkeypatch: pytest.MonkeyPatch) -> None:
     """Omitting any single required field raises ValueError."""
+    # Prevent load_dotenv from re-setting vars from disk files
+    monkeypatch.setattr("config.load_dotenv", lambda *a, **kw: None)
     for omit_key in _REQUIRED_ENV:
         # Set all required vars
         for key, value in _REQUIRED_ENV.items():

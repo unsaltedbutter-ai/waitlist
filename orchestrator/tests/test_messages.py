@@ -264,7 +264,10 @@ class TestPayment:
         assert parts[1] == "lnbc1m..."
 
     def test_payment_received(self) -> None:
-        msg = payment_received(3000)
+        import random
+        amount = random.randint(500, 5000)
+        msg = payment_received(amount)
+        assert f"{amount:,}" in msg
         assert "pleasure" in msg
 
     def test_payment_expired(self) -> None:

@@ -840,10 +840,13 @@ async def test_payment_received(deps):
     db = deps["db"]
     send_dm = deps["send_dm"]
 
+    import random
+    amount = random.randint(500, 5000)
+
     await db.upsert_job(_make_job(status="active"))
     await db.upsert_session("npub1alice", INVOICE_SENT, job_id="job-1")
 
-    await s.handle_payment_received("job-1", 3000)
+    await s.handle_payment_received("job-1", amount)
 
     # Session deleted
     assert await db.get_session("npub1alice") is None
@@ -852,10 +855,10 @@ async def test_payment_received(deps):
     job = await db.get_job("job-1")
     assert job["status"] == "completed_paid"
 
-    # DM thanks
+    # DM thanks with amount
     send_dm.assert_awaited_once()
     msg = send_dm.call_args[0][1]
-    assert "3,000" in msg
+    assert f"{amount:,}" in msg
 
 
 # ------------------------------------------------------------------
