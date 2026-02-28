@@ -369,29 +369,34 @@ class CommandRouter:
             approximate = q.get("access_end_date_approximate", False)
             billing = q.get("next_billing_date")
 
-            if last_action == "cancel" and access_end:
-                try:
-                    end_date = datetime.strptime(access_end, "%Y-%m-%d").date()
-                    days = (end_date - today).days
-                except (ValueError, TypeError):
-                    days = 0
-                if days > 0:
-                    prefix = "~" if approximate else ""
-                    service_lines.append(f"{name}: {prefix}{days} days left")
+            if last_action == "cancel":
+                if access_end:
+                    try:
+                        end_date = datetime.strptime(access_end, "%Y-%m-%d").date()
+                        days = (end_date - today).days
+                    except (ValueError, TypeError):
+                        days = 0
+                    if days > 0:
+                        prefix = "~" if approximate else ""
+                        service_lines.append(f"{name}: {prefix}{days} days left")
+                    else:
+                        service_lines.append(f"{name}: currently cancelled")
                 else:
                     service_lines.append(f"{name}: currently cancelled")
-            elif last_action == "cancel":
-                service_lines.append(f"{name}: currently cancelled")
-            elif billing:
-                try:
-                    bd = datetime.strptime(billing, "%Y-%m-%d").date()
-                    service_lines.append(
-                        f"{name}: renews ~{bd.strftime('%b %-d')}"
-                    )
-                except (ValueError, TypeError):
-                    service_lines.append(f"{name}: active")
             else:
-                service_lines.append(f"{name}: active")
+                # Resume, or no completed action yet: show renewal date
+                renew_date = access_end or billing
+                if renew_date:
+                    try:
+                        rd = datetime.strptime(renew_date, "%Y-%m-%d").date()
+                        prefix = "~" if (not access_end and billing) else ""
+                        service_lines.append(
+                            f"{name}: renews {prefix}{rd.strftime('%b %-d')}"
+                        )
+                    except (ValueError, TypeError):
+                        service_lines.append(f"{name}: active")
+                else:
+                    service_lines.append(f"{name}: active")
 
         if service_lines:
             lines.append("")
