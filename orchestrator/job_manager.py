@@ -240,15 +240,19 @@ class JobManager:
             self._config.outreach_interval_seconds,
         )
 
-        # Schedule implied_skip timer at billing_date (if known)
+        # Schedule implied_skip timer at billing_date and last_chance 1 day before
         billing_date = job.get("billing_date")
         if billing_date:
             try:
                 bd = datetime.fromisoformat(billing_date)
                 if bd.tzinfo is None:
                     bd = bd.replace(tzinfo=timezone.utc)
-                if bd > datetime.now(timezone.utc):
+                now = datetime.now(timezone.utc)
+                if bd > now:
                     await self._timers.schedule(IMPLIED_SKIP, job_id, bd)
+                    lc = bd - timedelta(days=1)
+                    if lc > now:
+                        await self._timers.schedule(LAST_CHANCE, job_id, lc)
             except (ValueError, TypeError):
                 log.warning(
                     "Could not parse billing_date %s for job %s",
@@ -329,8 +333,12 @@ class JobManager:
                     bd = datetime.fromisoformat(billing_date)
                     if bd.tzinfo is None:
                         bd = bd.replace(tzinfo=timezone.utc)
-                    if bd > datetime.now(timezone.utc):
+                    now = datetime.now(timezone.utc)
+                    if bd > now:
                         await self._timers.schedule(IMPLIED_SKIP, job_id, bd)
+                        lc = bd - timedelta(days=1)
+                        if lc > now:
+                            await self._timers.schedule(LAST_CHANCE, job_id, lc)
                 except (ValueError, TypeError):
                     log.warning(
                         "Could not parse billing_date %s for job %s",
