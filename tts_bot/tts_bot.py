@@ -109,7 +109,9 @@ class TTSBot:
         zap_filter = Filter().kind(Kind(9735)).pubkey(our_pubkey).since(
             Timestamp.now()
         )
-        await self._client.subscribe([dm_filter, gift_filter, zap_filter], None)
+        await self._client.subscribe(dm_filter)
+        await self._client.subscribe(gift_filter)
+        await self._client.subscribe(zap_filter)
 
         log.info("Connected to %d relays", len(self._config.nostr_relays))
 
