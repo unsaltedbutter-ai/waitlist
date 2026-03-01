@@ -1,0 +1,9 @@
+# TTS Agent requirements (runs on Mac Studio)
+# NOTE: Also depends on the agent package (sibling dir) for browser/input code.
+# The setup script installs agent/requirements.txt and adds the project root to PYTHONPATH.
+aiohttp>=3.9.0
+httpx>=0.27.0
+python-dotenv>=1.0.0
+pyautogui>=0.9.54
+pyobjc-framework-Quartz>=10.0
+pyobjc-framework-Cocoa>=10.0
