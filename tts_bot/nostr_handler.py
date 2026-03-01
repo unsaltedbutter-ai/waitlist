@@ -352,8 +352,8 @@ class NostrHandler:
                 voice=self._config.default_voice,
             )
 
-            # Estimate duration from MP3 size (128kbps = 16KB/s)
-            duration_seconds = max(1, len(mp3_bytes) // 16000)
+            # Estimate duration from MP3 size (64kbps CBR = 8KB/s)
+            duration_seconds = max(1, len(mp3_bytes) // 8000)
 
             upload_result = await self._api.upload_audio(
                 audio_cache_id=audio_cache_id,

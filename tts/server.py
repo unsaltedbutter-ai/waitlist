@@ -8,7 +8,7 @@ Pipeline:
   1. Text chunked at sentence boundaries (target ~250 tokens/chunk)
   2. Each chunk synthesized via Kokoro (24kHz 16-bit mono WAV)
   3. Chunks stitched into a single WAV
-  4. WAV encoded to MP3 128kbps via ffmpeg
+  4. WAV encoded to MP3 via ffmpeg (bitrate configurable, default 64k CBR)
   5. MP3 bytes returned in response
 """
 
@@ -155,6 +155,7 @@ async def health():
         "model_loaded": model_loaded,
         "voices": _get_allowed_voices(),
         "default_voice": os.environ.get("AUDIO_TTS_DEFAULT_VOICE", "af_heart"),
+        "mp3_bitrate": _get_mp3_bitrate(),
     }
 
 
@@ -175,8 +176,14 @@ def _numpy_to_wav(audio: "np.ndarray") -> bytes:
     return buf.getvalue()
 
 
+def _get_mp3_bitrate() -> str:
+    """Get MP3 bitrate from env. Default 64k (CBR, optimal for mono speech)."""
+    return os.environ.get("AUDIO_MP3_BITRATE", "64k").strip()
+
+
 def _wav_to_mp3(wav_bytes: bytes) -> bytes:
-    """Encode WAV to MP3 128kbps via ffmpeg."""
+    """Encode WAV to MP3 via ffmpeg (CBR, bitrate from AUDIO_MP3_BITRATE)."""
+    bitrate = _get_mp3_bitrate()
     result = subprocess.run(
         [
             "ffmpeg",
@@ -184,7 +191,7 @@ def _wav_to_mp3(wav_bytes: bytes) -> bytes:
             "-f", "wav",
             "-i", "pipe:0",
             "-codec:a", "libmp3lame",
-            "-b:a", "128k",
+            "-b:a", bitrate,
             "-f", "mp3",
             "pipe:1",
         ],
