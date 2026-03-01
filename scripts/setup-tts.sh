@@ -277,7 +277,10 @@ print('All imports OK (kokoro, fastapi, uvicorn, numpy)')
     echo "Config:     $ENV_FILE"
     echo ""
 
-    echo "Run: cd $PROJECT_ROOT && tts/venv/bin/python -m tts.server"
+    echo "Run:"
+    echo "  cd $PROJECT_ROOT"
+    echo "  source tts/venv/bin/activate"
+    echo "  python tts/server.py"
     echo ""
     echo "Note: First request will download and load the Kokoro model (~600 MB)."
     echo "      Subsequent requests use the cached model."

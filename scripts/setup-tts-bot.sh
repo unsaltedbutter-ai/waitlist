@@ -222,9 +222,15 @@ main() {
         echo "NEXT STEPS:"
         echo "  1. Edit $SHARED_ENV_FILE (Nostr identity, relays, VPS URL)"
         echo "  2. Edit $ENV_FILE (TTS Bot Nostr nsec, VPS bot pubkey, pricing)"
-        echo "  3. Run: cd $PROJECT_ROOT && tts_bot/venv/bin/python -m tts_bot.tts_bot"
+        echo "  3. Run:"
+        echo "       cd $PROJECT_ROOT"
+        echo "       source tts_bot/venv/bin/activate"
+        echo "       python tts_bot/tts_bot.py"
     else
-        echo "Run: cd $PROJECT_ROOT && tts_bot/venv/bin/python -m tts_bot.tts_bot"
+        echo "Run:"
+        echo "  cd $PROJECT_ROOT"
+        echo "  source tts_bot/venv/bin/activate"
+        echo "  python tts_bot/tts_bot.py"
     fi
 }
 

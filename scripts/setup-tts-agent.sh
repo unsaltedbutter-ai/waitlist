@@ -249,9 +249,15 @@ main() {
         echo "  1. Edit $SHARED_ENV_FILE (VPS URL, HMAC secret)"
         echo "  2. Edit $ENV_FILE (TTS_URL, port)"
         echo "  3. Grant Accessibility + Screen Recording permissions in System Settings"
-        echo "  4. Run: cd $PROJECT_ROOT && tts_agent/venv/bin/python -m tts_agent.server"
+        echo "  4. Run:"
+        echo "       cd $PROJECT_ROOT"
+        echo "       source tts_agent/venv/bin/activate"
+        echo "       python tts_agent/server.py"
     else
-        echo "Run: cd $PROJECT_ROOT && tts_agent/venv/bin/python -m tts_agent.server"
+        echo "Run:"
+        echo "  cd $PROJECT_ROOT"
+        echo "  source tts_agent/venv/bin/activate"
+        echo "  python tts_agent/server.py"
     fi
     echo ""
     echo "Reminder: TTS Agent requires Accessibility and Screen Recording permissions"
