@@ -20,7 +20,8 @@ VENV_DIR="$COMPONENT_DIR/venv"
 ENV_DIR="$HOME/.unsaltedbutter"
 SHARED_ENV_FILE="$ENV_DIR/shared.env"
 ENV_FILE="$ENV_DIR/tts.env"
-PYTHON_VERSION="3.13"
+# kokoro requires Python >=3.10,<3.13 so TTS uses 3.12
+PYTHON_VERSION="3.12"
 BREW_FORMULA="python@${PYTHON_VERSION}"
 
 # System-level brew packages required
