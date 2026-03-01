@@ -64,10 +64,10 @@ interface TrendsData {
 const SERVICE_COLORS: Record<string, string> = {
   netflix: "#e50914",
   hulu: "#1ce783",
-  disney_plus: "#113ccf",
+  disney_plus: "#2f7d8c",
   paramount: "#0064ff",
   peacock: "#000000",
-  max: "#002be7",
+  max: "#2e0070",
 };
 
 function getColor(serviceId: string): string {
