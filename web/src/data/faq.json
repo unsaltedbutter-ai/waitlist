@@ -62,7 +62,7 @@
   {
     "id": "credentials-safe",
     "question": "Are my streaming credentials safe?",
-    "answer": "Credentials are encrypted using libsodium sealed boxes before storage. The decryption key is kept on a separate machine from the database, so a database breach alone cannot expose your passwords. A fresh browser profile is created for each action and destroyed immediately after."
+    "answer": "Credentials are encrypted using libsodium sealed boxes before storage. The decryption key is kept on a separate machine, so a database breach alone cannot expose your passwords."
   },
   {
     "id": "how-join",
