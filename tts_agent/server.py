@@ -117,7 +117,11 @@ class TTSAgent:
                 )
 
             # Extract post body via VLM
-            post_text = await extract_post_text(clipboard_text)
+            post_text = await extract_post_text(
+                clipboard_text,
+                vlm_url=self._config.vlm_url,
+                vlm_model=self._config.vlm_model,
+            )
             if not post_text:
                 return web.json_response(
                     {"error": "Could not extract post text from page"},
@@ -212,7 +216,10 @@ async def run() -> None:
     for sig in (signal.SIGINT, signal.SIGTERM):
         loop.add_signal_handler(sig, _signal_handler)
 
-    log.info("TTS Agent %s running (port=%d)", GIT_HASH, config.port)
+    log.info(
+        "TTS Agent %s running (port=%d, vlm=%s, model=%s)",
+        GIT_HASH, config.port, config.vlm_url, config.vlm_model,
+    )
 
     await shutdown.wait()
     log.info("Shutting down...")

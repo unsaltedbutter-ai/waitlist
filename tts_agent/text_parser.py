@@ -75,6 +75,7 @@ MAX_CLIPBOARD_CHARS = 100_000
 async def extract_post_text(
     clipboard_text: str,
     vlm_url: str = DEFAULT_VLM_URL,
+    vlm_model: str = "qwen",
 ) -> str | None:
     """Send clipboard dump to VLM, return extracted post body or None.
 
@@ -96,7 +97,7 @@ async def extract_post_text(
             resp = await client.post(
                 f"{vlm_url}/v1/chat/completions",
                 json={
-                    "model": "qwen",
+                    "model": vlm_model,
                     "messages": [{"role": "user", "content": prompt}],
                     "temperature": 0.1,
                     "max_tokens": 16384,

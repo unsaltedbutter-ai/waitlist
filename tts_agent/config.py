@@ -32,6 +32,10 @@ class Config:
     # TTS service
     tts_url: str
 
+    # VLM (text extraction)
+    vlm_url: str
+    vlm_model: str
+
     # Server
     host: str
     port: int
@@ -63,6 +67,8 @@ class Config:
             api_base_url=os.environ["API_BASE_URL"].strip(),
             hmac_secret=os.environ["AGENT_HMAC_SECRET"].strip(),
             tts_url=os.environ.get("TTS_URL", "http://localhost:8424").strip(),
+            vlm_url=os.environ.get("VLM_URL", "http://localhost:8080").strip(),
+            vlm_model=os.environ.get("VLM_MODEL", "qwen").strip(),
             host=os.environ.get("TTS_AGENT_HOST", "0.0.0.0").strip(),
             port=int(os.environ.get("TTS_AGENT_PORT", "8425")),
             log_level=os.environ.get("LOG_LEVEL", "INFO").strip().upper(),

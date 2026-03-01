@@ -17,6 +17,7 @@ import json
 import logging
 import os
 import signal
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -42,6 +43,17 @@ from nostr_sdk import (
     SecretKey,
     Timestamp,
 )
+
+# Git hash for version logging
+try:
+    GIT_HASH = subprocess.run(
+        ["git", "rev-parse", "--short", "HEAD"],
+        capture_output=True,
+        text=True,
+        timeout=5,
+    ).stdout.strip() or "unknown"
+except Exception:
+    GIT_HASH = "unknown"
 
 from tts_bot.api_client import AudioApiClient
 from tts_bot.config import Config
@@ -355,7 +367,7 @@ async def run() -> None:
     for sig in (signal.SIGINT, signal.SIGTERM):
         loop.add_signal_handler(sig, _signal_handler)
 
-    log.info("TTS Bot running")
+    log.info("TTS Bot %s running", GIT_HASH)
 
     # Run event loop in background
     event_task = asyncio.create_task(bot.run_event_loop())

@@ -31,6 +31,17 @@ from pydantic import BaseModel
 
 log = logging.getLogger(__name__)
 
+# Git hash for version logging
+try:
+    GIT_HASH = subprocess.run(
+        ["git", "rev-parse", "--short", "HEAD"],
+        capture_output=True,
+        text=True,
+        timeout=5,
+    ).stdout.strip() or "unknown"
+except Exception:
+    GIT_HASH = "unknown"
+
 app = FastAPI(title="UnsaltedButter TTS Service", version="0.1.0")
 
 # Lazy-loaded model
@@ -152,6 +163,7 @@ async def health():
     model_loaded = _pipeline is not None
     return {
         "ok": True,
+        "version": GIT_HASH,
         "model_loaded": model_loaded,
         "voices": _get_allowed_voices(),
         "default_voice": os.environ.get("AUDIO_TTS_DEFAULT_VOICE", "af_heart"),
@@ -229,6 +241,10 @@ def main() -> None:
     port = int(os.environ.get("TTS_PORT", "8424"))
     host = os.environ.get("TTS_HOST", "0.0.0.0")
 
+    log.info(
+        "TTS Service %s starting (port=%d, bitrate=%s)",
+        GIT_HASH, port, _get_mp3_bitrate(),
+    )
     uvicorn.run(app, host=host, port=port, log_level=log_level)
 
 
