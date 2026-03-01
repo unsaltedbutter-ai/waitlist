@@ -17,8 +17,13 @@ import json
 import logging
 import os
 import signal
+import sys
 import time
 from pathlib import Path
+
+# Ensure project root is on sys.path so `tts_bot.*` and `shared.*` imports work
+# regardless of which directory the user runs `python tts_bot.py` from.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from dotenv import load_dotenv
 from nostr_sdk import (
@@ -28,7 +33,8 @@ from nostr_sdk import (
     HandleNotification,
     Keys,
     Kind,
-    Nip04,
+    nip04_decrypt,
+    nip04_encrypt,
     PublicKey,
     RelayMessage,
     SecretKey,
@@ -128,7 +134,7 @@ class TTSBot:
 
         try:
             recipient_pk = PublicKey.parse(recipient_npub)
-            encrypted = Nip04.encrypt(
+            encrypted = nip04_encrypt(
                 self._keys.secret_key(), recipient_pk, content,
             )
 
@@ -201,7 +207,7 @@ class TTSBot:
         sender_npub = sender_pk.to_hex()
 
         try:
-            content = Nip04.decrypt(
+            content = nip04_decrypt(
                 self._keys.secret_key(), sender_pk, event.content(),
             )
         except Exception:

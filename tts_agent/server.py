@@ -18,7 +18,12 @@ import logging
 import os
 import signal
 import subprocess
+import sys
 from pathlib import Path
+
+# Ensure project root is on sys.path so `tts_agent.*` imports work
+# regardless of which directory the user runs `python server.py` from.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from aiohttp import web
 from dotenv import load_dotenv

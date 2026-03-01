@@ -3,6 +3,9 @@ node_modules/
 web/node_modules/
 agent/venv/
 orchestrator/venv/
+tts/venv/
+tts_agent/venv/
+tts_bot/venv/
 __pycache__/
 *.pyc
 
