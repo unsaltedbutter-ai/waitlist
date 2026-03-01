@@ -96,6 +96,20 @@ class TTSBot:
             await self._client.add_relay(RelayUrl.parse(relay))
         await self._client.connect()
 
+        # Publish kind 0 profile metadata
+        from nostr_sdk import Metadata
+        meta_dict: dict = {
+            "name": self._config.bot_name,
+            "about": self._config.bot_about,
+        }
+        if self._config.bot_picture:
+            meta_dict["picture"] = self._config.bot_picture
+        if self._config.bot_lud16:
+            meta_dict["lud16"] = self._config.bot_lud16
+        metadata = Metadata.from_json(json.dumps(meta_dict))
+        await self._client.set_metadata(metadata)
+        log.info("Published kind 0 profile")
+
         # Subscribe to DMs (NIP-04 Kind 4, addressed to us)
         our_pubkey = self._keys.public_key()
         dm_filter = Filter().kind(Kind(4)).pubkey(our_pubkey).since(
