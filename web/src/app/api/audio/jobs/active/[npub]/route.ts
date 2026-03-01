@@ -15,8 +15,14 @@ export const GET = withAgentAuth(
       return NextResponse.json({ error: "Missing npub" }, { status: 400 });
     }
 
-    const result = await query<{ id: string; status: string }>(
-      `SELECT id, status FROM audio_jobs
+    const result = await query<{
+      id: string;
+      status: string;
+      amount_sats: number;
+      was_cached: boolean;
+      audio_cache_id: string | null;
+    }>(
+      `SELECT id, status, amount_sats, was_cached, audio_cache_id FROM audio_jobs
        WHERE requester_npub = $1
          AND status NOT IN ('completed', 'failed', 'refunded')
        ORDER BY created_at DESC
@@ -28,10 +34,31 @@ export const GET = withAgentAuth(
       return NextResponse.json({ has_active: false });
     }
 
+    const job = result.rows[0];
+
+    // Fetch tweet text/author from cache for zap handler
+    let tweet_text: string | null = null;
+    let tweet_author: string | null = null;
+    if (job.audio_cache_id) {
+      const cacheResult = await query<{ tweet_text: string; tweet_author: string | null }>(
+        "SELECT tweet_text, tweet_author FROM audio_cache WHERE id = $1",
+        [job.audio_cache_id]
+      );
+      if (cacheResult.rows.length > 0) {
+        tweet_text = cacheResult.rows[0].tweet_text;
+        tweet_author = cacheResult.rows[0].tweet_author;
+      }
+    }
+
     return NextResponse.json({
       has_active: true,
-      job_id: result.rows[0].id,
-      status: result.rows[0].status,
+      job_id: job.id,
+      status: job.status,
+      amount_sats: job.amount_sats,
+      was_cached: job.was_cached,
+      audio_cache_id: job.audio_cache_id,
+      tweet_text,
+      tweet_author,
     });
   }
 );

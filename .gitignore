@@ -25,6 +25,7 @@ encryption.key
 agent/screenshots/
 *.png
 !web/public/butter-bot.png
+!web/public/tweetoutloud.png 
 
 # Build artifacts
 web/.next/

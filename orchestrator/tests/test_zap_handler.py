@@ -186,8 +186,8 @@ async def _run(
 ) -> None:
     """Run handle_zap_receipt with patched bolt11 decode and NostrEvent.from_json."""
     with (
-        patch("zap_handler.bolt11_lib.decode", return_value=invoice),
-        patch("zap_handler.NostrEvent.from_json", return_value=zap_req_event),
+        patch("shared.zap_verify.bolt11_lib.decode", return_value=invoice),
+        patch("shared.zap_verify.NostrEvent.from_json", return_value=zap_req_event),
     ):
         await zap_handler.handle_zap_receipt(
             receipt, send_dm, BOT_PK, PROVIDER_PK, api_client,
@@ -251,8 +251,8 @@ async def test_reject_bad_bolt11(api_client: AsyncMock, send_dm: AsyncMock) -> N
     zap_req = _make_9734_event(desc_json)
 
     with (
-        patch("zap_handler.bolt11_lib.decode", side_effect=ValueError("invalid")),
-        patch("zap_handler.NostrEvent.from_json", return_value=zap_req),
+        patch("shared.zap_verify.bolt11_lib.decode", side_effect=ValueError("invalid")),
+        patch("shared.zap_verify.NostrEvent.from_json", return_value=zap_req),
     ):
         await zap_handler.handle_zap_receipt(
             receipt, send_dm, BOT_PK, PROVIDER_PK, api_client,
@@ -305,8 +305,8 @@ async def test_reject_invalid_9734(api_client: AsyncMock, send_dm: AsyncMock) ->
     invoice = _bolt11_mock(description_hash=desc_hash)
 
     with (
-        patch("zap_handler.bolt11_lib.decode", return_value=invoice),
-        patch("zap_handler.NostrEvent.from_json", side_effect=Exception("invalid event")),
+        patch("shared.zap_verify.bolt11_lib.decode", return_value=invoice),
+        patch("shared.zap_verify.NostrEvent.from_json", side_effect=Exception("invalid event")),
     ):
         await zap_handler.handle_zap_receipt(
             receipt, send_dm, BOT_PK, PROVIDER_PK, api_client,

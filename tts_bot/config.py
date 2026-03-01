@@ -26,6 +26,7 @@ _REQUIRED_FIELDS = (
     "AGENT_HMAC_SECRET",
     "NOSTR_NSEC",
     "VPS_BOT_PUBKEY",
+    "ZAP_PROVIDER_PUBKEY",
 )
 
 _DEFAULT_RELAYS = "wss://relay.damus.io,wss://nos.lol,wss://relay.snort.social"
@@ -66,6 +67,9 @@ class Config:
     cache_discount_pct: int
     max_plays: int
     default_voice: str
+
+    # Zap validation
+    zap_provider_pubkey: str
 
     # Logging
     log_level: str
@@ -114,6 +118,9 @@ class Config:
             nostr_relays=relays,
             vps_bot_pubkey=_normalize_pubkey(
                 os.environ["VPS_BOT_PUBKEY"].strip()
+            ),
+            zap_provider_pubkey=_normalize_pubkey(
+                os.environ["ZAP_PROVIDER_PUBKEY"].strip()
             ),
             max_chars=int(os.environ.get("AUDIO_MAX_CHARS", "50000")),
             price_tiers=_parse_price_tiers(price_tiers_raw),

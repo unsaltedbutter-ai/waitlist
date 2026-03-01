@@ -192,3 +192,40 @@ class AudioApiClient:
         resp.raise_for_status()
         data = resp.json()
         return data.get("has_active", False)
+
+    async def get_pending_audio_job(self, requester_npub: str) -> dict | None:
+        """Get the pending_payment audio job for a user (if any).
+
+        Returns dict with job_id, status, amount_sats, audio_cache_id,
+        was_cached, tweet_text, tweet_author. Returns None if no active job.
+        """
+        path = f"/api/audio/jobs/active/{requester_npub}"
+        resp = await self._request("GET", path)
+        if resp.status_code == 404:
+            return None
+        resp.raise_for_status()
+        data = resp.json()
+        if not data.get("has_active"):
+            return None
+        if data.get("status") != "pending_payment":
+            return None
+        return data
+
+    async def confirm_audio_payment(
+        self, job_id: str, zap_event_id: str,
+    ) -> dict:
+        """POST /api/audio/jobs/{id}/paid. Mark audio job as paid via zap.
+
+        Returns job details dict on 200, raises on other errors.
+        Returns {"status_code": 409} on already-paid.
+        """
+        path = f"/api/audio/jobs/{job_id}/paid"
+        payload = {"zap_event_id": zap_event_id}
+        body = json.dumps(payload)
+        resp = await self._request("POST", path, body=body)
+        if resp.status_code == 409:
+            return {"status_code": 409}
+        resp.raise_for_status()
+        result = resp.json()
+        result["status_code"] = resp.status_code
+        return result

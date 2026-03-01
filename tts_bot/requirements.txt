@@ -3,3 +3,4 @@ nostr-sdk==0.44.2
 python-dotenv>=1.0.0
 httpx>=0.27.0
 aiohttp>=3.9.0
+bolt11>=2.1.0

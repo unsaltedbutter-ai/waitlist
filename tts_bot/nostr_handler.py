@@ -13,6 +13,7 @@ import asyncio
 import logging
 from typing import TYPE_CHECKING
 
+from shared.zap_verify import ValidatedZap
 from tts_bot import messages
 from tts_bot.url_parser import is_valid_tweet_id, parse_tweet_url
 
@@ -57,6 +58,84 @@ class NostrHandler:
         lock = self._get_user_lock(sender_npub)
         async with lock:
             await self._process_dm(sender_npub, content)
+
+    async def handle_zap(self, zap: ValidatedZap) -> None:
+        """Handle a validated NIP-57 zap receipt.
+
+        Matches the zap to a pending audio job, confirms payment via VPS,
+        then triggers synthesis (same path as handle_payment_received).
+        """
+        sender_hex = zap.sender_hex
+        amount_sats = zap.amount_sats
+        event_id = zap.event_id
+
+        # Look up sender's pending audio job
+        try:
+            job_data = await self._api.get_pending_audio_job(sender_hex)
+        except Exception:
+            log.exception("Failed to look up pending job for zapper %s", sender_hex[:16])
+            return
+
+        if job_data is None:
+            log.info(
+                "Zap %s from %s (%d sats), no pending audio job",
+                event_id[:16], sender_hex[:16], amount_sats,
+            )
+            try:
+                await self._send_dm(
+                    sender_hex,
+                    f"Received {amount_sats:,} sats but no open invoice found.",
+                )
+            except Exception:
+                log.debug("Could not DM zapper %s", sender_hex[:16])
+            return
+
+        job_amount = job_data.get("amount_sats", 0)
+        if amount_sats < job_amount:
+            log.info(
+                "Zap %s from %s: %d sats < %d sats required",
+                event_id[:16], sender_hex[:16], amount_sats, job_amount,
+            )
+            try:
+                await self._send_dm(
+                    sender_hex,
+                    f"Received {amount_sats:,} sats but your invoice requires {job_amount:,} sats.",
+                )
+            except Exception:
+                log.debug("Could not DM zapper %s", sender_hex[:16])
+            return
+
+        job_id = job_data["job_id"]
+
+        # Mark paid on VPS
+        try:
+            result = await self._api.confirm_audio_payment(job_id, event_id)
+        except Exception:
+            log.exception("Failed to confirm audio payment for job %s", job_id[:8])
+            try:
+                await self._send_dm(
+                    sender_hex,
+                    f"Received {amount_sats:,} sats but hit an error. We'll sort it out.",
+                )
+            except Exception:
+                pass
+            return
+
+        if result.get("status_code") == 409:
+            log.info("Audio job %s already paid (zap %s)", job_id[:8], event_id[:16])
+            return
+
+        log.info("Audio job %s marked paid via zap %s from %s", job_id[:8], event_id[:16], sender_hex[:16])
+
+        # Trigger synthesis (same path as handle_payment_received)
+        await self.handle_payment_received(
+            requester_npub=sender_hex,
+            audio_job_id=job_id,
+            audio_cache_id=result.get("audio_cache_id", job_data.get("audio_cache_id", "")),
+            tweet_text=result.get("tweet_text", job_data.get("tweet_text", "")),
+            tweet_author=result.get("tweet_author", job_data.get("tweet_author")),
+            was_cached=result.get("was_cached", job_data.get("was_cached", False)),
+        )
 
     async def _process_dm(self, sender_npub: str, content: str) -> None:
         """Inner DM processing (called under per-user lock)."""

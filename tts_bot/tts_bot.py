@@ -96,7 +96,11 @@ class TTSBot:
         gift_filter = Filter().kind(Kind(1059)).pubkey(our_pubkey).since(
             Timestamp.now()
         )
-        await self._client.subscribe([dm_filter, gift_filter], None)
+        # Subscribe to NIP-57 zap receipts (Kind 9735) tagged to us
+        zap_filter = Filter().kind(Kind(9735)).pubkey(our_pubkey).since(
+            Timestamp.now()
+        )
+        await self._client.subscribe([dm_filter, gift_filter, zap_filter], None)
 
         log.info("Connected to %d relays", len(self._config.nostr_relays))
 
@@ -184,6 +188,9 @@ class TTSBot:
         elif kind == 1059:
             # NIP-17 gift wrap (system push from VPS)
             await self._handle_gift_wrap(event)
+        elif kind == 9735:
+            # NIP-57 zap receipt
+            await self._handle_zap(event)
 
     async def _handle_nip04_dm(self, event: Event) -> None:
         """Decrypt and process a NIP-04 DM."""
@@ -235,6 +242,28 @@ class TTSBot:
         else:
             if self._handler:
                 await self._handler.handle_dm(sender_npub, content)
+
+    async def _handle_zap(self, event: Event) -> None:
+        """Validate and process a NIP-57 zap receipt."""
+        if not self._keys or not self._handler:
+            return
+
+        from shared.zap_verify import validate_zap_receipt
+
+        zap = validate_zap_receipt(
+            event,
+            bot_pubkey_hex=self._keys.public_key().to_hex(),
+            zap_provider_pubkey_hex=self._config.zap_provider_pubkey,
+        )
+        if zap is None:
+            return
+
+        log.info(
+            "Valid zap receipt %s from %s (%d sats)",
+            zap.event_id[:16], zap.sender_hex[:16], zap.amount_sats,
+        )
+
+        await self._handler.handle_zap(zap)
 
     async def _handle_system_push(self, content: str) -> None:
         """Handle a push notification from the VPS."""
