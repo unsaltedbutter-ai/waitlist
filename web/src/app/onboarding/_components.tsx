@@ -49,7 +49,7 @@ const SERVICE_ICON_MAP: Record<string, { bg: string; label: string }> = {
   hulu: { bg: "bg-[#1ce783]", label: "H" },
   disney_plus: { bg: "bg-[#2f7d8c]", label: "D+" },
   paramount: { bg: "bg-[#0064ff]", label: "P+" },
-  peacock: { bg: "bg-black border border-white/15", label: "\uD83E\uDD9A" },
+  peacock: { bg: "bg-[#c4a000]", label: "\uD83E\uDD9A" },
   max: { bg: "bg-[#2e0070]", label: "M" },
 };
 

@@ -66,7 +66,7 @@ const SERVICE_COLORS: Record<string, string> = {
   hulu: "#1ce783",
   disney_plus: "#2f7d8c",
   paramount: "#0064ff",
-  peacock: "#000000",
+  peacock: "#c4a000",
   max: "#2e0070",
 };
 
