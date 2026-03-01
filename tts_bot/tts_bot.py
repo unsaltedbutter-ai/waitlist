@@ -38,6 +38,7 @@ from nostr_sdk import (
     NostrSigner,
     PublicKey,
     RelayMessage,
+    RelayUrl,
     SecretKey,
     Timestamp,
 )
@@ -92,7 +93,7 @@ class TTSBot:
         signer = NostrSigner.keys(self._keys)
         self._client = Client(signer)
         for relay in self._config.nostr_relays:
-            await self._client.add_relay(relay)
+            await self._client.add_relay(RelayUrl.parse(relay))
         await self._client.connect()
 
         # Subscribe to DMs (NIP-04 Kind 4, addressed to us)
