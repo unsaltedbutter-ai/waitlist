@@ -162,11 +162,20 @@ export const PATCH = withAgentAuth(async (_req: NextRequest, { body, params }) =
           );
         }
       } else if (updatedJob.action === "resume") {
-        // Resume complete: next billing in 30 days
-        await query(
-          "UPDATE rotation_queue SET next_billing_date = CURRENT_DATE + 30 WHERE user_id = $1 AND service_id = $2",
-          [updatedJob.user_id, updatedJob.service_id]
-        );
+        // Resume complete: use the actual billing date captured from the
+        // service (access_end_date), falling back to +30 days if the agent
+        // didn't capture one.
+        if (updatedJob.access_end_date) {
+          await query(
+            "UPDATE rotation_queue SET next_billing_date = $3 WHERE user_id = $1 AND service_id = $2",
+            [updatedJob.user_id, updatedJob.service_id, updatedJob.access_end_date]
+          );
+        } else {
+          await query(
+            "UPDATE rotation_queue SET next_billing_date = CURRENT_DATE + 30 WHERE user_id = $1 AND service_id = $2",
+            [updatedJob.user_id, updatedJob.service_id]
+          );
+        }
       }
     } else if (skipStatuses.includes(newStatus) && updatedJob.action === "cancel") {
       // Skip on a cancel job: advance billing date by 30 days from current billing date
