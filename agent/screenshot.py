@@ -85,6 +85,19 @@ def capture_to_base64(window_id: int) -> str:
     return base64.b64encode(raw).decode('ascii')
 
 
+def png_dimensions(b64: str) -> tuple[int, int]:
+    """Extract (width, height) from a base64-encoded PNG without full decode.
+
+    Reads the IHDR chunk: bytes 16-19 are width, 20-23 are height (big-endian).
+    """
+    import struct
+    raw = base64.b64decode(b64[:200])  # IHDR is within the first ~33 bytes
+    if raw[:8] != b'\x89PNG\r\n\x1a\n':
+        raise ValueError('Not a valid PNG')
+    width, height = struct.unpack('>II', raw[16:24])
+    return width, height
+
+
 def b64_to_image(b64: str) -> 'Image.Image':
     """Decode a base64-encoded PNG into a PIL Image."""
     from PIL import Image

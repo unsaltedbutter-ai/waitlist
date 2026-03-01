@@ -527,6 +527,17 @@ class VLMExecutor:
                     log.warning('Job %s: %s', job_id, error_message)
                     return _result(False, error_message)
 
+                # Derive display scale from the actual screenshot rather
+                # than a cached Quartz value. screencapture captures at
+                # physical pixel resolution; bounds are in screen points.
+                try:
+                    raw_w, _ = ss.png_dimensions(raw_b64)
+                    bounds_w = session.bounds.get('width', 1)
+                    effective_scale = raw_w / bounds_w if bounds_w else 1.0
+                    coords.set_display_scale(effective_scale)
+                except (ValueError, Exception):
+                    pass  # keep existing override (tests use non-PNG stubs)
+
                 screenshot_b64, chrome_height_px = crop_browser_chrome(raw_b64)
 
                 # -------------------------------------------------------

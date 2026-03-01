@@ -5,31 +5,35 @@ The VLM sees a screenshot captured in physical pixels (e.g. 2x on Retina).
 It returns target coordinates in that image-pixel space.
 This module translates those to screen points for pyautogui.
 
-The display scale factor is auto-detected at import time via
-get_retina_scale(). Override with set_display_scale() for testing.
+The display scale is set per-screenshot by the executor (derived from
+screenshot pixel width / window bounds width). Override with
+set_display_scale() for testing; pass None to clear the override.
 """
 
-_display_scale: float | None = None
+_display_scale_override: float | None = None
 
 
 def _get_display_scale() -> float:
-    """Return the cached display scale, detecting it on first call."""
-    global _display_scale
-    if _display_scale is None:
-        try:
-            from agent.input.window import get_retina_scale
-            result = get_retina_scale()
-            # Guard against mocked Quartz in test environments
-            _display_scale = float(result) if isinstance(result, (int, float)) else 1.0
-        except Exception:
-            _display_scale = 1.0
-    return _display_scale
+    """Return the display scale override, or detect fresh from Quartz."""
+    if _display_scale_override is not None:
+        return _display_scale_override
+    try:
+        from agent.input.window import get_retina_scale
+        result = get_retina_scale()
+        return float(result) if isinstance(result, (int, float)) else 1.0
+    except Exception:
+        return 1.0
 
 
-def set_display_scale(scale: float) -> None:
-    """Override the display scale (for testing or non-primary displays)."""
-    global _display_scale
-    _display_scale = scale
+def set_display_scale(scale: float | None) -> None:
+    """Set or clear the display scale override.
+
+    The executor calls this each iteration with a value derived from the
+    actual screenshot dimensions. Tests call it with 1.0 in conftest.
+    Pass None to clear the override and fall back to Quartz detection.
+    """
+    global _display_scale_override
+    _display_scale_override = scale
 
 
 def image_to_screen(
