@@ -70,6 +70,92 @@ function getRecipientPubkey(): string | null {
   }
 }
 
+function getTtsBotPubkey(): string | null {
+  const value = process.env.TTS_BOT_NPUB;
+  if (!value) return null;
+  if (!value.startsWith("npub1")) {
+    return /^[0-9a-f]{64}$/i.test(value) ? value : null;
+  }
+  try {
+    const decoded = decode(value);
+    if (decoded.type !== "npub") return null;
+    return decoded.data;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Publish a NIP-17 gift-wrapped DM to a specific recipient.
+ *
+ * Best-effort: logs errors but never throws. The VPS should not crash
+ * if a relay is unreachable.
+ */
+async function sendPushDMTo(
+  recipientPubkey: string,
+  payload: Record<string, unknown>
+): Promise<void> {
+  const payloadType = payload.type ?? "unknown";
+
+  const privkey = getPrivkeyBytes();
+  if (!privkey) {
+    console.warn("[nostr-push] VPS_NOSTR_PRIVKEY not set, skipping push");
+    return;
+  }
+
+  const relays = getRelays();
+  if (relays.length === 0) {
+    console.warn("[nostr-push] No relays configured, skipping push");
+    return;
+  }
+
+  const senderPubkeyHex = getPublicKey(privkey);
+  const senderNpub = npubEncode(senderPubkeyHex);
+  const recipientNpub = recipientPubkey.length === 64 ? npubEncode(recipientPubkey) : recipientPubkey;
+
+  console.log(
+    `[nostr-push] Sending type=${payloadType} FROM ${senderNpub} TO ${recipientNpub} via ${relays.join(", ")}`
+  );
+
+  const message = JSON.stringify(payload);
+
+  let wrapped;
+  try {
+    wrapped = wrapEvent(privkey, { publicKey: recipientPubkey }, message);
+  } catch (err) {
+    console.error("[nostr-push] Failed to create gift-wrapped event:", err);
+    return;
+  }
+
+  const p = getPool();
+  const promises = p.publish(relays, wrapped);
+
+  const results = await Promise.allSettled(
+    promises.map((pub) =>
+      Promise.race([
+        pub,
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error("publish timeout")), PUBLISH_TIMEOUT_MS)
+        ),
+      ])
+    )
+  );
+
+  const succeeded = results.filter((r) => r.status === "fulfilled").length;
+  const failed = results.filter((r) => r.status === "rejected").length;
+
+  if (failed > 0) {
+    const errors = results
+      .filter((r): r is PromiseRejectedResult => r.status === "rejected")
+      .map((r) => String(r.reason));
+    console.warn(
+      `[nostr-push] Published to ${succeeded}/${relays.length} relays. Failures: ${errors.join(", ")}`
+    );
+  } else {
+    console.log(`[nostr-push] type=${payloadType} published to ${succeeded}/${relays.length} relays OK`);
+  }
+}
+
 /**
  * Publish a NIP-17 gift-wrapped DM to the orchestrator.
  *
@@ -211,6 +297,36 @@ export async function pushAutoInvite(npubHex: string, otpCode: string): Promise<
   await sendPushDM({
     type: "auto_invite",
     data: { npub_hex: npubHex, otp_code: otpCode },
+    timestamp: Date.now(),
+  });
+}
+
+export async function pushAudioPaymentReceived(
+  requesterNpub: string,
+  amountSats: number,
+  audioJobId: string,
+  audioCacheId: string,
+  tweetText: string,
+  tweetAuthor: string | null,
+  wasCached: boolean
+): Promise<void> {
+  const ttsBotPubkey = getTtsBotPubkey();
+  if (!ttsBotPubkey) {
+    console.warn("[nostr-push] TTS_BOT_NPUB not set, skipping audio push");
+    return;
+  }
+
+  await sendPushDMTo(ttsBotPubkey, {
+    type: "audio_payment_received",
+    data: {
+      requester_npub: requesterNpub,
+      amount_sats: amountSats,
+      audio_job_id: audioJobId,
+      audio_cache_id: audioCacheId,
+      tweet_text: tweetText,
+      tweet_author: tweetAuthor,
+      was_cached: wasCached,
+    },
     timestamp: Date.now(),
   });
 }

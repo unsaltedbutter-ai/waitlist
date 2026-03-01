@@ -10,6 +10,9 @@
 -- DROP EVERYTHING (reverse dependency order)
 -- ============================================================
 
+DROP TABLE IF EXISTS audio_purchases CASCADE;
+DROP TABLE IF EXISTS audio_jobs CASCADE;
+DROP TABLE IF EXISTS audio_cache CASCADE;
 DROP TABLE IF EXISTS system_heartbeats CASCADE;
 DROP TABLE IF EXISTS operator_audit_log CASCADE;
 DROP TABLE IF EXISTS revenue_ledger CASCADE;
@@ -292,6 +295,7 @@ CREATE TABLE revenue_ledger (
     action           TEXT NOT NULL,
     amount_sats      INT NOT NULL,
     payment_status   TEXT NOT NULL CHECK (payment_status IN ('paid', 'eventual')),
+    source           TEXT NOT NULL DEFAULT 'concierge',           -- 'concierge' or 'audio'
     job_completed_at TIMESTAMPTZ NOT NULL,
     recorded_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -343,6 +347,67 @@ CREATE TABLE job_status_history (
     to_status   TEXT NOT NULL,
     changed_by  TEXT NOT NULL DEFAULT 'system',
     created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- ============================================================
+-- AUDIO CACHE (extracted tweet text + optional MP3)
+-- ============================================================
+
+CREATE TABLE audio_cache (
+    id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    tweet_id          TEXT NOT NULL UNIQUE,        -- snowflake ID (internal only, never in URLs)
+    tweet_url         TEXT NOT NULL,
+    tweet_text        TEXT NOT NULL,               -- extracted text (populated on first extraction)
+    tweet_author      TEXT,
+    char_count        INT NOT NULL,                -- cached for pricing without re-counting
+    file_path         TEXT,                        -- NULL until TTS runs; relative: audio/{uuid}.mp3
+    file_size_bytes   INT,                         -- NULL until TTS runs
+    duration_seconds  INT,                         -- NULL until TTS runs
+    tts_model         TEXT,
+    tts_voice         TEXT,
+    created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    last_accessed_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- ============================================================
+-- AUDIO JOBS (one per purchase request)
+-- ============================================================
+
+CREATE TABLE audio_jobs (
+    id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    requester_npub    TEXT NOT NULL,
+    tweet_id          TEXT NOT NULL,
+    tweet_url         TEXT NOT NULL,
+    status            TEXT NOT NULL DEFAULT 'pending_payment'
+                      CHECK (status IN (
+                          'pending_payment', 'paid',
+                          'synthesizing', 'completed',
+                          'failed', 'refunded'
+                      )),
+    invoice_id        TEXT,
+    amount_sats       INT NOT NULL,
+    was_cached        BOOLEAN NOT NULL DEFAULT FALSE,
+    audio_cache_id    UUID REFERENCES audio_cache(id),
+    error_message     TEXT,
+    created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at        TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- ============================================================
+-- AUDIO PURCHASES (listen tokens, one per paid job)
+-- ============================================================
+
+CREATE TABLE audio_purchases (
+    id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    token             TEXT NOT NULL UNIQUE,         -- opaque URL-safe base62, 16 chars
+    audio_job_id      UUID NOT NULL REFERENCES audio_jobs(id),
+    audio_cache_id    UUID NOT NULL REFERENCES audio_cache(id),
+    requester_npub    TEXT NOT NULL,
+    plays_remaining   INT NOT NULL DEFAULT 3,
+    max_plays         INT NOT NULL DEFAULT 3,
+    refill_invoice_id TEXT,                        -- set when user requests a refill, cleared on payment
+    created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    last_played_at    TIMESTAMPTZ
 );
 
 -- ============================================================
@@ -400,3 +465,15 @@ CREATE INDEX idx_audit_log_created ON operator_audit_log(created_at DESC);
 
 -- Job status history
 CREATE INDEX idx_job_history_job ON job_status_history(job_id, created_at);
+
+-- Audio cache
+CREATE INDEX idx_audio_cache_lru ON audio_cache(last_accessed_at);
+
+-- Audio jobs
+CREATE INDEX idx_audio_jobs_invoice ON audio_jobs(invoice_id) WHERE invoice_id IS NOT NULL;
+CREATE INDEX idx_audio_jobs_tweet ON audio_jobs(tweet_id);
+CREATE INDEX idx_audio_jobs_requester ON audio_jobs(requester_npub, status);
+
+-- Audio purchases
+CREATE INDEX idx_audio_purchases_token ON audio_purchases(token);
+CREATE INDEX idx_audio_purchases_cache ON audio_purchases(audio_cache_id);

@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { query } from "@/lib/db";
 import { verifyInvoicePaid } from "@/lib/btcpay-invoice";
 import { confirmJobPayment } from "@/lib/confirm-payment";
-import { pushPaymentReceived } from "@/lib/nostr-push";
+import { pushPaymentReceived, pushAudioPaymentReceived } from "@/lib/nostr-push";
 
 function verifyWebhookSignature(
   rawBody: string,
@@ -50,6 +50,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: true });
   }
 
+  // 1. Check cancel/resume jobs table
   const jobResult = await query<{
     id: string;
     user_id: string;
@@ -60,12 +61,51 @@ export async function POST(req: NextRequest) {
     [invoiceId]
   );
 
-  if (jobResult.rows.length === 0) {
-    return NextResponse.json({ ok: true });
+  if (jobResult.rows.length > 0) {
+    return handleConciergePayment(invoiceId, jobResult.rows[0]);
   }
 
-  const job = jobResult.rows[0];
+  // 2. Check audio_jobs table
+  const audioJobResult = await query<{
+    id: string;
+    requester_npub: string;
+    tweet_id: string;
+    amount_sats: number;
+    was_cached: boolean;
+    audio_cache_id: string | null;
+  }>(
+    `SELECT id, requester_npub, tweet_id, amount_sats, was_cached, audio_cache_id
+     FROM audio_jobs WHERE invoice_id = $1`,
+    [invoiceId]
+  );
 
+  if (audioJobResult.rows.length > 0) {
+    return handleAudioPayment(invoiceId, audioJobResult.rows[0]);
+  }
+
+  // 3. Check audio_purchases for refill invoices
+  const refillResult = await query<{
+    id: string;
+    max_plays: number;
+  }>(
+    "SELECT id, max_plays FROM audio_purchases WHERE refill_invoice_id = $1",
+    [invoiceId]
+  );
+
+  if (refillResult.rows.length > 0) {
+    return handleAudioRefill(invoiceId, refillResult.rows[0]);
+  }
+
+  // No matching record found
+  return NextResponse.json({ ok: true });
+}
+
+// -- Cancel/resume payment (existing logic) ---------------------------------
+
+async function handleConciergePayment(
+  invoiceId: string,
+  job: { id: string; user_id: string; service_id: string; amount_sats: number | null }
+): Promise<NextResponse> {
   const verified = await verifyInvoicePaid(invoiceId);
   if (!verified) {
     console.warn(`[btcpay-webhook] Invoice ${invoiceId} not verified as paid via API`);
@@ -97,6 +137,93 @@ export async function POST(req: NextRequest) {
       });
     }
   }
+
+  return NextResponse.json({ ok: true });
+}
+
+// -- Audio payment ----------------------------------------------------------
+
+async function handleAudioPayment(
+  invoiceId: string,
+  audioJob: {
+    id: string;
+    requester_npub: string;
+    tweet_id: string;
+    amount_sats: number;
+    was_cached: boolean;
+    audio_cache_id: string | null;
+  }
+): Promise<NextResponse> {
+  const verified = await verifyInvoicePaid(invoiceId);
+  if (!verified) {
+    console.warn(`[btcpay-webhook] Audio invoice ${invoiceId} not verified as paid`);
+    return NextResponse.json({ error: "Invoice not verified" }, { status: 200 });
+  }
+
+  // Update job status to paid
+  await query(
+    "UPDATE audio_jobs SET status = 'paid', updated_at = NOW() WHERE id = $1",
+    [audioJob.id]
+  );
+
+  // Record revenue
+  await query(
+    `INSERT INTO revenue_ledger (service_id, action, amount_sats, payment_status, source, job_completed_at)
+     VALUES ('audio', 'tts', $1, 'paid', 'audio', NOW())`,
+    [audioJob.amount_sats]
+  );
+
+  // Get tweet text + author for the push (TTS bot needs it for synthesis)
+  const cacheResult = await query<{ tweet_text: string; tweet_author: string | null }>(
+    "SELECT tweet_text, tweet_author FROM audio_cache WHERE id = $1",
+    [audioJob.audio_cache_id]
+  );
+  const tweetText = cacheResult.rows[0]?.tweet_text ?? "";
+  const tweetAuthor = cacheResult.rows[0]?.tweet_author ?? null;
+
+  // Push to TTS Bot via Nostr
+  await pushAudioPaymentReceived(
+    audioJob.requester_npub,
+    audioJob.amount_sats,
+    audioJob.id,
+    audioJob.audio_cache_id ?? "",
+    tweetText,
+    tweetAuthor,
+    audioJob.was_cached
+  ).catch((err: unknown) => {
+    console.error("[btcpay-webhook] Failed to push audio payment notification:", err);
+  });
+
+  return NextResponse.json({ ok: true });
+}
+
+// -- Audio refill -----------------------------------------------------------
+
+async function handleAudioRefill(
+  invoiceId: string,
+  purchase: { id: string; max_plays: number }
+): Promise<NextResponse> {
+  const verified = await verifyInvoicePaid(invoiceId);
+  if (!verified) {
+    console.warn(`[btcpay-webhook] Refill invoice ${invoiceId} not verified as paid`);
+    return NextResponse.json({ error: "Invoice not verified" }, { status: 200 });
+  }
+
+  // Reset plays and clear refill invoice
+  await query(
+    `UPDATE audio_purchases
+     SET plays_remaining = max_plays, refill_invoice_id = NULL
+     WHERE id = $1`,
+    [purchase.id]
+  );
+
+  // Record revenue
+  const refillSats = parseInt(process.env.AUDIO_REFILL_SATS || "250");
+  await query(
+    `INSERT INTO revenue_ledger (service_id, action, amount_sats, payment_status, source, job_completed_at)
+     VALUES ('audio', 'refill', $1, 'paid', 'audio', NOW())`,
+    [refillSats]
+  );
 
   return NextResponse.json({ ok: true });
 }
