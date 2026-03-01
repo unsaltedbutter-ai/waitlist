@@ -35,6 +35,7 @@ from nostr_sdk import (
     Kind,
     nip04_decrypt,
     nip04_encrypt,
+    NostrSigner,
     PublicKey,
     RelayMessage,
     SecretKey,
@@ -88,7 +89,8 @@ class TTSBot:
         )
 
         # Connect to Nostr
-        self._client = Client(self._keys)
+        signer = NostrSigner.keys(self._keys)
+        self._client = Client(signer)
         for relay in self._config.nostr_relays:
             await self._client.add_relay(relay)
         await self._client.connect()
@@ -138,16 +140,13 @@ class TTSBot:
                 self._keys.secret_key(), recipient_pk, content,
             )
 
-            # Build Kind 4 event
+            # Build Kind 4 event and let Client sign via signer
             from nostr_sdk import EventBuilder, Tag
 
-            builder = EventBuilder(Kind(4), encrypted, [
-                Tag.public_key(recipient_pk),
+            builder = EventBuilder(Kind(4), encrypted).tags([
+                Tag.parse(["p", recipient_pk.to_hex()]),
             ])
-            event = builder.sign_with_keys(self._keys)
-
-            # Publish to all relays
-            await self._client.send_event(event)
+            await self._client.send_event_builder(builder)
             log.info(
                 "Sent DM to %s (%d chars)",
                 recipient_npub[:16], len(content),
